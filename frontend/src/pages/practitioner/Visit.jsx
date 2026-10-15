@@ -154,10 +154,10 @@ export default function Visit() {
         <AnimatePresence>{flash && <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2"><SuccessMark size={64} /></motion.div>}</AnimatePresence>
         {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg">{pending ? "Saving…" : primary.label}</motion.button>}
       </div>
-      <div className="space-y-2">
-        <div className="flex flex-wrap gap-2">
-          {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <ReadinessBadge readiness={appt.readiness} />}
-          {["assigned", "confirmed", "preparing", "en_route"].includes(appt.status) && <NavHandoff appt={appt} mapsUrl={mapsUrl} />}
+      <div className="space-y-3">
+        {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <div className="flex flex-wrap gap-2"><ReadinessBadge readiness={appt.readiness} /></div>}
+        {["assigned", "confirmed", "preparing", "en_route"].includes(appt.status) && <NavHandoff appt={appt} mapsUrl={mapsUrl} />}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {actions.filter((x) => x !== primary).map((a) => <button key={a.label} disabled={pending} onClick={() => tap(a)} data-testid={`lifecycle-${a.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-ghost h-12 flex-1">{a.label}</button>)}
           {["en_route", "preparing", "assigned"].includes(appt.status) && <button type="button" onClick={() => setLate(true)} data-testid="lifecycle-running-late-btn" className="nb-btn-ghost h-12 flex-1"><Clock className="h-4 w-4" />Running late</button>}
           <Link to={`/pro/visit/${appt.id}/messages`} data-testid="visit-message-client" className="nb-btn-ghost h-12 flex-1"><MessageCircle className="h-4 w-4" />Message client</Link>
@@ -167,7 +167,7 @@ export default function Visit() {
 
       {appt.status === "safety_hold" && <Notice tone="warn" icon={AlertTriangle} className="!bg-rose-50 !text-rose-900" testid="visit-safety-hold">This visit is on safety hold. The owner or a safety manager decides how it continues. No penalty is applied automatically.</Notice>}
       {SAFETY_STATUSES.includes(appt.status) && <SafetyCenter appt={appt} />}
-      <div className="nb-card rounded-[28px] p-5"><Stepper steps={["Prepare", "En route", "Arrived", "Session", "Done"]} current={["preparing", "en_route", "arrived", "in_session", "completed"].indexOf(appt.status)} testid="visit-stepper" /><p className="nb-label mt-4 flex items-center gap-2"><Timer className="h-4 w-4" />Visit timeline</p><OpsTimeline appt={appt} /></div>
+      <div className="nb-card rounded-[28px] p-5"><Stepper steps={["Prepare", "En route", "Arrived", "Session", "Done"]} current={appt.status === "safety_hold" ? ["preparing", "en_route", "arrived", "in_session"].indexOf(appt.events?.filter((e) => e.status !== "safety_hold").slice(-1)[0]?.status) : ["preparing", "en_route", "arrived", "in_session", "completed"].indexOf(appt.status)} testid="visit-stepper" /><p className="nb-label mt-4 flex items-center gap-2"><Timer className="h-4 w-4" />Visit timeline</p><OpsTimeline appt={appt} /></div>
       {late && (
         <div className="nb-card space-y-3 p-4" data-testid="visit-delay-sheet">
           <p className="font-semibold">Running late</p>

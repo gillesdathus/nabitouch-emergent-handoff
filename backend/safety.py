@@ -179,8 +179,11 @@ def build_safety_router(db, coll, add_audit, user_from, apply_transition):
             if outcome not in RESOLVE_TO:
                 raise HTTPException(400, "Choose how the visit continues")
             await apply_transition(appt, RESOLVE_TO[outcome], user.get("name") or "manager", note or f"Safety hold resolved: {outcome}")
-        saved = await db.nt_safety_events.find_one_and_update({"id": eid}, {"$set": {"status": "resolved", "resolvedAt": now_iso(), "resolvedBy": user.get("name"), "resolution": note, "outcome": outcome}},
-                                                              return_document=ReturnDocument.AFTER, projection={"_id": 0})
+        done = {"status": "resolved", "resolvedAt": now_iso(), "resolvedBy": user.get("name"), "resolution": note, "outcome": outcome}
+        saved = await db.nt_safety_events.find_one_and_update({"id": eid}, {"$set": done}, return_document=ReturnDocument.AFTER, projection={"_id": 0})
+        if appt and appt.get("status") == "safety_hold":
+            await db.nt_safety_events.update_many({"appointmentId": row["appointmentId"], "alert": True, "status": {"$ne": "resolved"}, "id": {"$ne": eid}},
+                                                  {"$set": {**done, "resolution": f"Closed with {row.get('ref')} safety hold" + (f": {note}" if note else "")}})
         await add_audit(user.get("name") or "manager", f"Safety alert {row.get('ref')} resolved{(' · ' + outcome) if outcome else ''}", row["appointmentId"])
         return public(saved)
 

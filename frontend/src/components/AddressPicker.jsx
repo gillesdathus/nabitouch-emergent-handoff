@@ -113,7 +113,7 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
         <input className="nb-input" value={postal} data-testid={`${testid}-postal-input`} placeholder="T5J 2R4" autoComplete="postal-code" onChange={(e) => setPostal(e.target.value)} /></label>
       {value?.line && !value.clientConfirmed && <button type="button" onClick={confirmServiceAddress} data-testid={`${testid}-confirm`} className="nb-btn-primary h-10 px-4 text-sm">Confirm this service address</button>}
       {value?.clientConfirmed && <p data-testid={`${testid}-confirmed`} className="text-sm text-teal-800">You confirmed this civic address. The arrival point can still be adjusted without changing the street.</p>}
-      <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="inline-flex items-center gap-2 text-sm font-medium text-nb-blue">
+      <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="mt-2 flex items-center gap-2 text-sm font-medium text-nb-blue">
         {locating || checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crosshair className="h-4 w-4" />} Use my current location <span className="text-xs font-normal text-nb-mute">(optional — asks permission)</span>
       </button>
       {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}

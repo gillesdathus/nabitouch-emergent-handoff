@@ -37,7 +37,7 @@ function PushStatus() {
 
 function EventCard({ e, onChange }) {
   const [note, setNote] = useState("");
-  const [outcome, setOutcome] = useState("resume");
+  const [outcome, setOutcome] = useState(null);
   const hold = e.kind === "incident" && e.action === "cannot_proceed";
   const act = (p) => p.then(() => { toast.success("Saved"); onChange(); }).catch((err) => toast.error(apiError(err)));
   const Icon = e.kind === "assist" ? LifeBuoy : TriangleAlert;
@@ -60,7 +60,7 @@ function EventCard({ e, onChange }) {
           <input className="nb-input h-10 w-full text-sm" placeholder="Resolution note" value={note} onChange={(ev) => setNote(ev.target.value)} data-testid={`safety-note-${e.id}`} />
           <div className="flex gap-2">
             {e.status === "open" && <button type="button" onClick={() => act(api.safetyAck(e.id))} data-testid={`safety-ack-${e.id}`} className="nb-btn-ghost h-10 flex-1 text-sm">Acknowledge</button>}
-            <button type="button" onClick={() => act(api.safetyResolve(e.id, { note, outcome: hold ? outcome : undefined }))} data-testid={`safety-resolve-${e.id}`} className="nb-btn-primary h-10 flex-1 text-sm">Resolve</button>
+            <button type="button" onClick={() => act(api.safetyResolve(e.id, { note, outcome: hold ? outcome : undefined }))} disabled={hold && !outcome} data-testid={`safety-resolve-${e.id}`} className="nb-btn-primary h-10 flex-1 text-sm">{hold && !outcome ? "Choose how the visit continues" : "Resolve"}</button>
           </div>
         </div>
       )}

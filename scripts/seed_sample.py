@@ -42,7 +42,7 @@ def pid_name(pros, pid):
 
 async def purge(db):
     for name in ("nt_clients", "nt_appointments", "nt_practitioners", "nt_plans", "nt_invoices", "nt_ledger", "nt_claims", "nt_giftcards",
-                 "nt_gc_ledger", "nt_gc_products", "nt_plan_products", "nt_plan_purchases", "nt_credits", "nt_credit_ledger", "nt_memberships", "nt_safety_events", "nt_winback", "nt_devices", "nt_push_outbox", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
+                 "nt_gc_ledger", "nt_gc_products", "nt_plan_products", "nt_plan_purchases", "nt_credits", "nt_credit_ledger", "nt_memberships", "nt_safety_events", "nt_winback", "nt_devices", "nt_push_outbox", "nt_credentials", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
         await db[name].delete_many(SYN)
 
 
@@ -226,6 +226,9 @@ async def main():
     for p in pros:
         await db.nt_practitioners.insert_one(dict(p))
         await db.nt_schedules.insert_one({**demo_schedule(p["id"]), **SYN})
+        for kind, ident in (("registration", f"RMT-{abs(hash(p['id'])) % 90000 + 10000}"), ("liability", f"POL-{abs(hash(p['id'] + 'l')) % 900000 + 100000}")):
+            await db.nt_credentials.insert_one({"id": f"cred-{p['id']}-{kind}", "practitionerId": p["id"], "kind": kind, "identifier": ident, "status": "verified",
+                                                "expiresOn": (datetime.now(timezone.utc) + timedelta(days=540)).date().isoformat(), "verifiedAt": datetime.now(timezone.utc).isoformat(), **SYN})
     clients = [{**c, **SYN} for c in data["clients"]]
     for c in clients:
         await db.nt_clients.insert_one(dict(c))

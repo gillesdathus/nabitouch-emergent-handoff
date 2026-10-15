@@ -49,7 +49,7 @@ function Memberships({ rows, onCancel }) {
       {rows.map((m) => (
         <div key={m.id} className="nb-card flex items-center gap-4 p-4" data-testid={`plan-membership-${m.id}`}>
           <Repeat className="h-5 w-5 text-nb-teal" />
-          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{m.productName}</p><p className="text-xs text-nb-mute">{m.creditsPerCycle} × {m.serviceName} {m.duration} min each month · {m.status}{m.cancelAtPeriodEnd ? " · ends at period end" : m.currentPeriodEnd ? ` · renews ${fmtDate(m.currentPeriodEnd.slice(0, 10))}` : ""}</p></div>
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{m.productName}</p><p className="text-xs text-nb-mute">{m.creditsPerCycle} × {m.serviceName} {m.duration} min each month · {m.status}{m.status === "canceled" ? "" : m.cancelAtPeriodEnd ? " · ends at period end" : m.currentPeriodEnd ? ` · renews ${fmtDate(m.currentPeriodEnd.slice(0, 10))}` : ""}</p></div>
           {["active", "past_due"].includes(m.status) && !m.cancelAtPeriodEnd && <button type="button" onClick={() => onCancel(m)} data-testid={`plan-cancel-${m.id}`} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button>}
         </div>
       ))}

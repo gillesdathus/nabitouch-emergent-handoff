@@ -286,15 +286,15 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             chosen = int(minutes) if str(minutes).isdigit() else None
             if chosen not in DELAYS:
                 raise HTTPException(400, "Choose 5, 10, 15, 20, or 30 minutes")
+            key = f"{aid}:{user.get('id')}:late:{chosen}:{_now()[:16]}"
+            existing = await db.nt_messages.find_one({"idempotencyKey": key}, {"_id": 0})
+            if existing:
+                return {"message": _public_message(existing), "duplicate": True}
             note = _clean(reason) if reason else f"Running {chosen} minutes late"
             events = appt.get("events", []) + [{"status": "delayed", "at": _now(), "actor": user.get("name") or "practitioner", "note": note}]
             await coll("appointments").update_one({"id": aid}, {"$set": {"delayMin": chosen, "events": events}})
             await add_audit(user.get("name") or "practitioner", f"{appt.get('ref')} → delayed · {chosen} min", aid)
             await record_trip_notice(db, {**appt, "delayMin": chosen}, "delayed", chosen, reason)
-            key = f"{aid}:{user.get('id')}:late:{chosen}:{_now()[:16]}"
-            existing = await db.nt_messages.find_one({"idempotencyKey": key}, {"_id": 0})
-            if existing:
-                return {"message": _public_message(existing), "duplicate": True}
         stamp = _now()
         labels = {"client": "Client", "practitioner": "Practitioner", "desk": "Reception", "owner": "Owner"}
         doc = {
@@ -316,6 +316,8 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             "sms": False,
             "email": False,
         }
+        if not key:
+            doc.pop("idempotencyKey", None)  # sparse unique index ignores missing fields, not explicit nulls
         try:
             await db.nt_messages.insert_one(dict(doc))
         except DuplicateKeyError:

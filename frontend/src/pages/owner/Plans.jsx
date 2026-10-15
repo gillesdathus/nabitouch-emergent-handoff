@@ -5,6 +5,7 @@ import { Layers, Plus, Repeat } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 import { Field, Notice, PageHeader, Segmented } from "@/components/tide";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const BLANK = { kind: "package", name: "", description: "", serviceSlug: "", duration: "", credits: 5, price: "", validityDays: "" };
 const NEXT = { draft: ["published"], published: ["paused", "archived"], paused: ["published", "archived"], archived: [] };
@@ -26,8 +27,8 @@ function ProductForm({ onSaved }) {
       <Segmented options={[{ value: "package", label: "Prepaid package" }, { value: "membership", label: "Monthly membership" }]} value={f.kind} onChange={(kind) => setF({ ...f, kind })} testid="plan-form-kind" />
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name"><input className="nb-input h-11 w-full" value={f.name} onChange={set("name")} data-testid="plan-form-name" placeholder="Relaxation 5-pack" /></Field>
-        <Field label="Service"><select className="nb-input h-11 w-full" value={f.serviceSlug} onChange={(e) => setF({ ...f, serviceSlug: e.target.value, duration: "" })} data-testid="plan-form-service"><option value="">Choose…</option>{services.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}</select></Field>
-        <Field label="Duration"><select className="nb-input h-11 w-full" value={f.duration} onChange={set("duration")} data-testid="plan-form-duration"><option value="">Choose…</option>{Object.entries(service?.prices || {}).map(([d, p]) => <option key={d} value={d}>{d} min · ${p}</option>)}</select></Field>
+        <Field label="Service"><Select value={f.serviceSlug} onValueChange={(v) => setF({ ...f, serviceSlug: v, duration: "" })}><SelectTrigger className="h-11 rounded-2xl" data-testid="plan-form-service"><SelectValue placeholder="Choose…" /></SelectTrigger><SelectContent>{services.map((s) => <SelectItem key={s.slug} value={s.slug} data-testid={`plan-form-service-${s.slug}`}>{s.name}</SelectItem>)}</SelectContent></Select></Field>
+        <Field label="Duration"><Select value={String(f.duration)} onValueChange={(v) => setF({ ...f, duration: v })} disabled={!service}><SelectTrigger className="h-11 rounded-2xl" data-testid="plan-form-duration"><SelectValue placeholder="Choose…" /></SelectTrigger><SelectContent>{Object.entries(service?.prices || {}).map(([d, p]) => <SelectItem key={d} value={d} data-testid={`plan-form-duration-${d}`}>{d} min · ${p}</SelectItem>)}</SelectContent></Select></Field>
         <Field label={f.kind === "membership" ? "Credits per month" : "Credits"}><input type="number" min={1} max={24} className="nb-input h-11 w-full" value={f.credits} onChange={set("credits")} data-testid="plan-form-credits" /></Field>
         <Field label={f.kind === "membership" ? "Monthly price before GST ($)" : "Price before GST ($)"}><input type="number" min={1} className="nb-input h-11 w-full" value={f.price} onChange={set("price")} data-testid="plan-form-price" /></Field>
         <Field label="Credits valid for (days)" hint={f.kind === "membership" ? "Default 60" : "Default 365"}><input type="number" min={7} max={730} className="nb-input h-11 w-full" value={f.validityDays} onChange={set("validityDays")} data-testid="plan-form-validity" /></Field>

@@ -199,15 +199,15 @@ async def plans_report(db, start, end):
     prices = {p["id"]: p["priceCents"] for p in await db.nt_plan_products.find({"kind": "membership"}, {"_id": 0, "id": 1, "priceCents": 1}).to_list(200)}
     mrr = sum(prices.get(m["productId"], 0) for m in members)
     sold = sum(p["priceCents"] for p in purchases)
-    refunded = sum(int(p.get("refundedCents") or 0) for p in purchases)
+    refunded = sum(round(int(p.get("refundedCents") or 0) * p["priceCents"] / p["totalCents"]) for p in purchases if p.get("totalCents"))
     rows = sorted([[(p.get("paidAt") or "")[:10], p["productName"], p["kind"], str(p["credits"]), cad(p["priceCents"]), cad(p["taxCents"]), cad(int(p.get("refundedCents") or 0)), p["status"]] for p in purchases], key=lambda r: r[0])
     kpis = [("Plans sold (net of GST)", cad(sold)), ("Recognized on use", cad(recognized)), ("Outstanding prepaid obligation", cad(outstanding)),
-            ("Refunded", cad(refunded)), ("Active memberships", str(len(members))), ("Membership MRR", cad(mrr))]
+            ("Refunded (net of GST)", cad(refunded)), ("Active memberships", str(len(members))), ("Membership MRR", cad(mrr))]
     by_kind = {}
     for p in purchases:
         by_kind[p["kind"]] = by_kind.get(p["kind"], 0) + p["priceCents"]
     groups = [("Sales by type", ["Type", "Sold"], [[k, cad(v)] for k, v in sorted(by_kind.items())], [3, 1])]
-    return kpis, ["Paid", "Plan", "Type", "Credits", "Price", "GST", "Refunded", "Status"], rows, groups
+    return kpis, ["Paid", "Plan", "Type", "Credits", "Price", "GST", "Refunded (incl. GST)", "Status"], rows, groups
 
 
 def build_plans_router(db, coll, add_audit, user_from):
@@ -512,10 +512,10 @@ def build_plans_router(db, coll, add_audit, user_from):
         if not reason:
             raise HTTPException(400, "A reason is required")
         purchase = await db.nt_plan_purchases.find_one({"id": ppid}, {"_id": 0})
+        if purchase and await db.nt_credit_ledger.find_one({"idempotencyKey": f"refund-{ppid}-{key}"}):
+            return present_purchase(purchase)
         if not purchase or purchase["status"] not in ("paid", "partially_refunded"):
             raise HTTPException(409, "Only a paid plan can be refunded")
-        if await db.nt_credit_ledger.find_one({"idempotencyKey": f"refund-{ppid}-{key}"}):
-            return present_purchase(purchase)
         await expire_stale(db, purchase["clientId"])
         unused = await db.nt_credits.find({"purchaseId": ppid, "state": "available"}, {"_id": 0}).to_list(50)
         if not unused:
