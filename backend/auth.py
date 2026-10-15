@@ -1,0 +1,610 @@
+"""Email/password JWT auth (httpOnly cookies, Bearer fallback). Roles: client, practitioner, owner, desk."""
+import os
+import uuid
+import hashlib
+import secrets
+import base64
+from html import escape
+from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
+from typing import Optional
+
+import bcrypt
+import jwt
+from fastapi import APIRouter, Body, HTTPException, Request, Response
+from pydantic import BaseModel, EmailStr, Field
+
+from emailer import send_email
+
+ALG = "HS256"
+ACCESS_MIN, REFRESH_DAYS, MAX_FAILS, LOCK_MIN = 15, 7, 5, 15
+RESET_MIN, RESET_MAX_PER_WINDOW = 30, 3
+
+
+def hash_pw(p):
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
+
+
+def check_pw(p, h):
+    return bcrypt.checkpw(p.encode(), h.encode())
+
+
+_TIMING_HASH = None
+
+
+def timing_hash():
+    global _TIMING_HASH
+    if _TIMING_HASH is None:
+        _TIMING_HASH = hash_pw("timing-equalizer")
+    return _TIMING_HASH
+
+
+def preview_local_reset():
+    """A local preview does not deliver mail, so the reset finishes in the browser."""
+    from config import email_provider, is_production
+    return (not is_production()) and email_provider() in ("mock", "disabled")
+
+
+def provisioning_uri(email, secret):
+    """Standard TOTP link. SHA1, 6 digits, and 30 seconds match totp.py."""
+    issuer = quote("Nabitouch", safe="")
+    account = quote(str(email), safe="")
+    return f"otpauth://totp/{issuer}:{account}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
+
+
+def token(uid, kind, sid, jti=None):
+    exp = datetime.now(timezone.utc) + (timedelta(minutes=ACCESS_MIN) if kind == "access" else timedelta(days=REFRESH_DAYS))
+    payload = {"sub": uid, "type": kind, "sid": sid, "exp": exp}
+    if jti:
+        payload["jti"] = jti
+    return jwt.encode(payload, os.environ["JWT_SECRET"], algorithm=ALG)
+
+
+def _cookie_flags():
+    from config import cookie_samesite, cookie_secure
+    return cookie_secure(), cookie_samesite()
+
+
+def write_auth_cookies(resp: Response, access, refresh, csrf):
+    secure, samesite = _cookie_flags()
+    resp.set_cookie("access_token", access, httponly=True, secure=secure, samesite=samesite, max_age=ACCESS_MIN * 60, path="/")
+    resp.set_cookie("refresh_token", refresh, httponly=True, secure=secure, samesite=samesite, max_age=REFRESH_DAYS * 86400, path="/")
+    resp.set_cookie("csrf_token", csrf, httponly=False, secure=secure, samesite=samesite, max_age=REFRESH_DAYS * 86400, path="/")
+
+
+def clear_auth_cookies(resp: Response):
+    secure, samesite = _cookie_flags()
+    for name in ("access_token", "refresh_token", "csrf_token"):
+        resp.delete_cookie(name, path="/", secure=secure, samesite=samesite)
+
+
+def public(u):
+    return {k: u.get(k) for k in ("id", "email", "name", "role", "subject")}
+
+
+async def present(u, coll):
+    """Session profile. Workspaces come from the account role, plus practitioner when the owner record is that practitioner."""
+    body = public(u)
+    role = body.get("role")
+    spaces = [role] if role in ("client", "practitioner", "owner", "desk") else []
+    if role == "owner" and body.get("subject"):
+        person = await coll("practitioners").find_one({"id": body["subject"]}, {"_id": 0, "id": 1})
+        if person:
+            spaces.append("practitioner")
+    body["workspaces"] = spaces
+    return body
+
+
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    firstName: str
+    lastName: str
+    phone: str = ""
+    dob: str = ""
+    marketingConsent: bool = False
+    profile: dict = {}
+
+
+class ForgotIn(BaseModel):
+    email: EmailStr
+
+
+class ResetIn(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+def reset_email_html(name, link):
+    brand = escape(os.environ["EMAIL_FROM_NAME"])
+    return (f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
+            f'<p style="font-size:18px;font-weight:bold;margin:0 0 16px">{brand}</p>'
+            f'<p>Hi {escape(name)},</p>'
+            f'<p>We received a request to reset the password for your {brand} account. This link works once and expires in {RESET_MIN} minutes.</p>'
+            f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#18A8F5;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Choose a new password</a></p>'
+            f'<p>If you did not request this, you can ignore this email and your password will stay the same.</p>'
+            f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
+
+
+class StaffIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    name: str
+    role: str
+    practitionerId: Optional[str] = None
+
+
+class InviteIn(BaseModel):
+    email: EmailStr
+    name: str = Field(min_length=2, max_length=80)
+    role: str
+    phone: Optional[str] = None
+
+
+class InviteAccept(BaseModel):
+    token: str = Field(min_length=20)
+    password: str = Field(min_length=8)
+
+
+def build_auth(db, coll, add_audit):
+    users, attempts, resets, sessions = db["nt_users"], db["nt_login_attempts"], db["nt_password_resets"], db["nt_sessions"]
+    r = APIRouter(prefix="/api/auth")
+
+    async def live_session(sid):
+        if not sid:
+            return None
+        row = await sessions.find_one({"sid": sid, "revoked": False}, {"_id": 0})
+        if not row or row.get("expiresAt", "") < datetime.now(timezone.utc).isoformat():
+            return None
+        return row
+
+    async def open_session(uid, mfa=False):
+        sid, csrf, jti = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(16)
+        now = datetime.now(timezone.utc)
+        row = {"sid": sid, "userId": uid, "csrf": csrf, "refreshJti": jti, "revoked": False,
+               "createdAt": now.isoformat(), "expiresAt": (now + timedelta(days=REFRESH_DAYS)).isoformat()}
+        if mfa:
+            row["mfaAt"] = now.isoformat()
+        await sessions.insert_one(row)
+        return sid, csrf, jti
+
+    def apply_session(response, uid, sid, csrf, jti):
+        write_auth_cookies(response, token(uid, "access", sid), token(uid, "refresh", sid, jti), csrf)
+
+    async def user_from(request: Request) -> Optional[dict]:
+        tok = request.cookies.get("access_token")
+        h = request.headers.get("Authorization", "")
+        if h.startswith("Bearer "):
+            tok = h[7:]
+        if not tok:
+            return None
+        try:
+            p = jwt.decode(tok, os.environ["JWT_SECRET"], algorithms=[ALG])
+        except jwt.InvalidTokenError:
+            return None
+        if p.get("aud") == "training":
+            return None
+        row = await live_session(p.get("sid"))
+        if p.get("type") != "access" or not row:
+            return None
+        user = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
+        if user and user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+            return None
+        if user:
+            user["sid"] = p["sid"]
+        return user
+
+    async def require(request: Request, *roles) -> dict:
+        u = await user_from(request)
+        if not u:
+            raise HTTPException(401, "Not authenticated")
+        if roles and u["role"] not in roles:
+            raise HTTPException(403, "Not permitted for your role")
+        return u
+
+    async def seed():
+        from config import demo_mode, is_production
+        await users.create_index("email", unique=True)
+        await attempts.create_index("identifier")
+        await sessions.create_index("sid", unique=True)
+        owner_email = os.environ["OWNER_EMAIL"].lower()
+        if not await users.find_one({"email": owner_email}):
+            owner_id = str(uuid.uuid4())
+            if demo_mode():
+                await users.insert_one({"id": owner_id, "email": owner_email, "password_hash": hash_pw(os.environ["OWNER_PASSWORD"]),
+                                        "name": "Jordan Ellis (Owner)", "role": "owner", "subject": "p-jordan", "demo": False,
+                                        "createdAt": datetime.now(timezone.utc).isoformat()})
+            else:
+                await users.insert_one({"id": owner_id, "email": owner_email, "password_hash": hash_pw(os.environ["OWNER_PASSWORD"]),
+                                        "name": "Nabitouch Owner", "role": "owner", "subject": owner_id, "demo": False,
+                                        "createdAt": datetime.now(timezone.utc).isoformat()})
+        if is_production() or not demo_mode():
+            return
+        demo_pw = hash_pw(os.environ["DEMO_PASSWORD"])
+        demos = [("sarah.demo@example.com", "Sarah Thompson", "client", "c-sarah"),
+                 ("maya.demo@example.com", "Maya Chen", "practitioner", "p-maya"),
+                 ("liam.demo@example.com", "Liam Fournier", "practitioner", "p-liam"),
+                 ("priya.demo@example.com", "Priya Sandhu", "practitioner", "p-priya"),
+                 ("reception.demo@example.com", "Reception (demo)", "desk", None)]
+        for email, name, role, subject in demos:
+            if not await users.find_one({"email": email}):
+                await users.insert_one({"id": str(uuid.uuid4()), "email": email, "password_hash": demo_pw, "name": name, "role": role,
+                                        "subject": subject, "demo": True, "createdAt": datetime.now(timezone.utc).isoformat()})
+
+    @r.post("/login")
+    async def login(request: Request, response: Response, body: dict = Body(...)):
+        email = str(body.get("email", "")).strip().lower()
+        ident = f"email:{email}"  # per-account lockout (proxy IPs rotate behind the ingress)
+        rec = await attempts.find_one({"identifier": ident})
+        if rec and rec.get("count", 0) >= MAX_FAILS and rec.get("lockedUntil", "") > datetime.now(timezone.utc).isoformat():
+            raise HTTPException(429, "Too many attempts — try again in 15 minutes")
+        u = await users.find_one({"email": email})
+        hashed = u["password_hash"] if u else timing_hash()
+        if not u or not check_pw(str(body.get("password", "")), hashed):
+            cnt = (rec or {}).get("count", 0) + 1
+            await attempts.update_one({"identifier": ident}, {"$set": {"count": cnt, "lockedUntil": (datetime.now(timezone.utc) + timedelta(minutes=LOCK_MIN)).isoformat()}}, upsert=True)
+            raise HTTPException(401, "Invalid email or password")
+        await attempts.delete_one({"identifier": ident})
+        enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
+        privileged = u.get("role") in ("owner", "practitioner", "desk")
+        if privileged and (enrolled or await mfa_enforcement()):
+            # A password check is not a session. Drop any previous cookies so the
+            # authenticator request is not rejected as a stale cookie session.
+            clear_auth_cookies(response)
+        if privileged and enrolled:
+            return {"mfaRequired": True, "challenge": _challenge_for(u, "mfa")}
+        if privileged and await mfa_enforcement():
+            return {"mfaRequired": True, "enrollmentRequired": True, "challenge": _challenge_for(u, "mfa-enroll")}
+        sid, csrf, jti = await open_session(u["id"])
+        apply_session(response, u["id"], sid, csrf, jti)
+        return await present(u, coll)
+
+    @r.post("/register")
+    async def register(body: RegisterIn, response: Response):
+        email = body.email.lower()
+        if await users.find_one({"email": email}):
+            raise HTTPException(409, "An account with this email already exists — please sign in")
+        cid = f"c-{uuid.uuid4().hex[:8]}"
+        client = {"addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [], "language": "English",
+                  "contactMethod": "Text", "preferredName": "", "emergencyContact": "", "photo": None, **(body.profile or {}),
+                  "id": cid, "firstName": body.firstName, "lastName": body.lastName, "email": email, "phone": body.phone, "dob": body.dob,
+                  "marketingConsent": body.marketingConsent, "hasProfile": True, "loyaltyPoints": 0, "onlineBookings": 0,
+                  "createdAt": datetime.now(timezone.utc).isoformat()}
+        await coll("clients").insert_one(dict(client))
+        u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": f"{body.firstName} {body.lastName}",
+             "role": "client", "subject": cid, "createdAt": client["createdAt"]}
+        await users.insert_one(dict(u))
+        sid, csrf, jti = await open_session(u["id"])
+        apply_session(response, u["id"], sid, csrf, jti)
+        return await present(u, coll)
+
+    @r.post("/forgot-password")
+    async def forgot_password(body: ForgotIn):
+        email = body.email.lower()
+        ok = {"ok": True, "message": "If an account exists for that email, a reset link is on its way."}
+        u = await users.find_one({"email": email})
+        if not u:
+            return ok
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(minutes=15)).isoformat()
+        if await resets.count_documents({"userId": u["id"], "createdAt": {"$gt": since}}) >= RESET_MAX_PER_WINDOW:
+            if preview_local_reset():
+                return {"ok": True, "message": "Wait a few minutes, then request the reset again.", "previewRetry": True}
+            return ok
+        raw = secrets.token_urlsafe(32)
+        await resets.insert_one({"tokenHash": hashlib.sha256(raw.encode()).hexdigest(), "userId": u["id"], "used": False,
+                                 "createdAt": now.isoformat(), "expiresAt": (now + timedelta(minutes=RESET_MIN)).isoformat()})
+        if preview_local_reset():
+            return {"ok": True, "message": "Choose a new password for this preview account.", "previewResetToken": raw}
+        link = f"{os.environ['APP_URL'].rstrip('/')}/reset-password?token={raw}"
+        await send_email(to=email, subject=f"Reset your {os.environ['EMAIL_FROM_NAME']} password", html=reset_email_html(u.get("name") or "there", link))
+        return ok
+
+    @r.post("/reset-password")
+    async def reset_password(body: ResetIn):
+        rec = await resets.find_one({"tokenHash": hashlib.sha256(body.token.encode()).hexdigest()})
+        if not rec or rec["used"] or rec["expiresAt"] < datetime.now(timezone.utc).isoformat():
+            raise HTTPException(400, "This reset link is invalid or has expired — please request a new one")
+        u = await users.find_one({"id": rec["userId"]})
+        if not u:
+            raise HTTPException(400, "This reset link is invalid or has expired — please request a new one")
+        await users.update_one({"id": u["id"]}, {"$set": {"password_hash": hash_pw(body.password)}})
+        await resets.update_many({"userId": u["id"]}, {"$set": {"used": True}})
+        await attempts.delete_one({"identifier": f"email:{u['email']}"})
+        await sessions.update_many({"userId": u["id"], "revoked": False}, {"$set": {"revoked": True}})
+        await add_audit(u.get("name") or u["email"], "Password reset via email link")
+        return {"ok": True}
+
+    @r.post("/refresh")
+    async def refresh(request: Request, response: Response):
+        try:
+            p = jwt.decode(request.cookies.get("refresh_token", ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+            assert p.get("type") == "refresh" and p.get("sid") and p.get("jti")
+        except Exception:
+            raise HTTPException(401, "Session expired")
+        row = await live_session(p["sid"])
+        if not row or row.get("refreshJti") != p["jti"] or row.get("userId") != p["sub"]:
+            raise HTTPException(401, "Session expired")
+        account = await users.find_one({"id": p["sub"]}, {"_id": 1, "role": 1})
+        if not account:
+            raise HTTPException(401, "Session expired")
+        if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+            raise HTTPException(401, "Sign in with your authenticator")
+        jti = secrets.token_urlsafe(16)
+        expires = (datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS)).isoformat()
+        await sessions.update_one({"sid": p["sid"]}, {"$set": {"refreshJti": jti, "expiresAt": expires}})
+        apply_session(response, p["sub"], p["sid"], row["csrf"], jti)
+        return {"ok": True}
+
+    @r.post("/logout")
+    async def logout(request: Request, response: Response):
+        raw = request.cookies.get("access_token") or request.cookies.get("refresh_token")
+        if raw:
+            try:
+                p = jwt.decode(raw, os.environ["JWT_SECRET"], algorithms=[ALG])
+                await sessions.update_one({"sid": p.get("sid")}, {"$set": {"revoked": True}})
+            except jwt.InvalidTokenError:
+                pass
+        clear_auth_cookies(response)
+        return {"ok": True}
+
+    @r.get("/me")
+    async def me(request: Request):
+        return await present(await require(request), coll)
+
+    @r.get("/config")
+    async def config():
+        from config import demo_mode
+        return {"demoMode": demo_mode()}
+
+    async def mfa_enforcement():
+        row = await db["nt_settings"].find_one({"id": "app"}, {"mfaEnforcePrivileged": 1})
+        return bool(row and row.get("mfaEnforcePrivileged"))
+
+    def _challenge_for(user, kind):
+        return jwt.encode({"sub": user["id"], "type": kind, "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}, os.environ["JWT_SECRET"], algorithm=ALG)
+
+    async def _challenge_user(body, expected):
+        try:
+            claim = jwt.decode(str((body or {}).get("challenge") or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+        except jwt.InvalidTokenError:
+            return None
+        if claim.get("type") != expected:
+            return None
+        return await users.find_one({"id": claim["sub"]})
+
+    def _recovery_hash(code):
+        return hashlib.sha256(str(code).strip().lower().encode()).hexdigest()
+
+    async def _mfa_locked(user_id):
+        ident = f"mfa:{user_id}"
+        rec = await attempts.find_one({"identifier": ident})
+        if rec and rec.get("count", 0) >= MAX_FAILS and rec.get("lockedUntil", "") > datetime.now(timezone.utc).isoformat():
+            raise HTTPException(429, "Too many authenticator attempts — try again in 15 minutes")
+        return ident, rec
+
+    async def _mfa_fail(ident, rec):
+        cnt = (rec or {}).get("count", 0) + 1
+        await attempts.update_one({"identifier": ident}, {"$set": {"count": cnt, "lockedUntil": (datetime.now(timezone.utc) + timedelta(minutes=LOCK_MIN)).isoformat()}}, upsert=True)
+
+    @r.post("/mfa/enroll")
+    async def mfa_enroll(request: Request, response: Response):
+        body = {}
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+        if body and body.get("challenge"):
+            user = await _challenge_user(body, "mfa-enroll")
+            if not user or user.get("role") not in ("owner", "practitioner", "desk"):
+                raise HTTPException(401, "Sign in again")
+        else:
+            user = await require(request, "owner", "practitioner", "desk")
+        if await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True}):
+            raise HTTPException(409, "Authenticator is already on")
+        secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+        codes = [secrets.token_hex(4) for _ in range(8)]
+        await db["nt_mfa"].update_one({"userId": user["id"]}, {"$set": {
+            "userId": user["id"], "secret": secret, "enabled": False, "lastCounter": -1,
+            "recoveryHashes": [_recovery_hash(code) for code in codes],
+        }}, upsert=True)
+        await add_audit(user.get("name") or user["role"], "Authenticator enrollment started", None)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return {"secret": secret, "otpauth": provisioning_uri(user["email"], secret), "recoveryCodes": codes}
+
+    @r.post("/mfa/confirm")
+    async def mfa_confirm(request: Request, response: Response, body: dict = Body(...)):
+        from totp import matching_counter
+        via_challenge = bool(body.get("challenge"))
+        if via_challenge:
+            user = await _challenge_user(body, "mfa-enroll")
+            if not user or user.get("role") not in ("owner", "practitioner", "desk"):
+                raise HTTPException(401, "Sign in again")
+        else:
+            user = await require(request, "owner", "practitioner", "desk")
+        row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": False})
+        counter = matching_counter(row["secret"], body.get("code")) if row else None
+        if counter is None:
+            raise HTTPException(400, "That authenticator code was not accepted")
+        await db["nt_mfa"].update_one({"userId": user["id"]}, {"$set": {"enabled": True, "lastCounter": counter if via_challenge else row.get("lastCounter", -1)}})
+        await add_audit(user.get("name") or user["role"], "Authenticator turned on", None)
+        if via_challenge:
+            sid, csrf, jti = await open_session(user["id"], mfa=True)
+            apply_session(response, user["id"], sid, csrf, jti)
+            return await present(user, coll)
+        return {"enabled": True}
+
+    @r.post("/mfa/verify")
+    async def mfa_verify(response: Response, body: dict = Body(...)):
+        from totp import matching_counter
+        try:
+            claim = jwt.decode(str(body.get("challenge") or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+        except jwt.InvalidTokenError:
+            raise HTTPException(401, "Sign in again")
+        if claim.get("type") != "mfa":
+            raise HTTPException(401, "Sign in again")
+        user = await users.find_one({"id": claim["sub"]})
+        row = await db["nt_mfa"].find_one({"userId": claim["sub"], "enabled": True}) if user else None
+        if not user or not row:
+            raise HTTPException(401, "Sign in again")
+        ident, rec = await _mfa_locked(user["id"])
+        code = str(body.get("code") or "").strip()
+        counter = matching_counter(row["secret"], code)
+        recovery = _recovery_hash(code)
+        used_recovery = recovery in (row.get("recoveryHashes") or [])
+        if counter is None and not used_recovery:
+            await _mfa_fail(ident, rec)
+            raise HTTPException(401, "That authenticator code was not accepted")
+        if counter is not None and counter <= int(row.get("lastCounter") or -1):
+            await _mfa_fail(ident, rec)
+            raise HTTPException(401, "That authenticator code was already used")
+        update = {"$set": {"lastCounter": counter if counter is not None else row.get("lastCounter", -1)}}
+        if used_recovery:
+            update["$pull"] = {"recoveryHashes": recovery}
+        await db["nt_mfa"].update_one({"userId": user["id"]}, update)
+        await attempts.delete_one({"identifier": ident})
+        sid, csrf, jti = await open_session(user["id"], mfa=True)
+        apply_session(response, user["id"], sid, csrf, jti)
+        await add_audit(user.get("name") or user["role"], "Authenticator accepted", None)
+        return await present(user, coll)
+
+    @r.post("/mfa/disable")
+    async def mfa_disable(request: Request, body: dict = Body(...)):
+        from totp import matching_counter
+        user = await require(request, "owner", "practitioner", "desk")
+        row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
+        if not row:
+            return {"enabled": False}
+        code = str(body.get("code") or "").strip()
+        counter = matching_counter(row["secret"], code)
+        recovery = _recovery_hash(code)
+        if counter is None and recovery not in (row.get("recoveryHashes") or []):
+            raise HTTPException(401, "That authenticator code was not accepted")
+        if counter is not None and counter <= int(row.get("lastCounter") or -1):
+            raise HTTPException(401, "That authenticator code was already used")
+        await db["nt_mfa"].delete_one({"userId": user["id"]})
+        await sessions.update_many({"userId": user["id"], "revoked": False}, {"$set": {"revoked": True}})
+        await add_audit(user.get("name") or user["role"], "Authenticator turned off", None)
+        return {"enabled": False}
+
+    @r.post("/demo-login")
+    async def demo_login(response: Response, body: dict = Body(...)):
+        """Preview-only quick sign-in. Refused in production and whenever DEMO_MODE is off."""
+        from config import demo_mode
+        if not demo_mode():
+            raise HTTPException(404, "Not available")
+        role = body.get("role")
+        q = {"role": role, "demo": True} if role != "owner" else {"role": "owner", "demo": False}
+        if role == "practitioner" and body.get("subject"):
+            q["subject"] = body["subject"]
+        u = await users.find_one(q)
+        if not u:
+            raise HTTPException(404, "No demo account")
+        if u.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+            enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
+            if not enrolled:
+                raise HTTPException(403, "Enroll an authenticator before this staff sign-in")
+            clear_auth_cookies(response)
+            return {"mfaRequired": True, "challenge": _challenge_for(u, "mfa")}
+        sid, csrf, jti = await open_session(u["id"])
+        apply_session(response, u["id"], sid, csrf, jti)
+        return await present(u, coll)
+
+    @r.get("/staff")
+    async def staff(request: Request):
+        await require(request, "owner")
+        return await users.find({"role": {"$in": ["practitioner", "desk", "owner"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
+
+    @r.post("/staff")
+    async def create_staff(request: Request, body: StaffIn):
+        owner = await require(request, "owner")
+        if body.role not in ("practitioner", "desk"):
+            raise HTTPException(400, "Role must be practitioner or desk")
+        email = body.email.lower()
+        if body.role == "practitioner":
+            from onboarding import acceptable_login
+            if not acceptable_login(email, owner.get("email")):
+                raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
+        if await users.find_one({"email": email}):
+            raise HTTPException(409, "Email already in use")
+        subject = None
+        if body.role == "practitioner":
+            subject = body.practitionerId or f"p-{uuid.uuid4().hex[:6]}"
+            if not await coll("practitioners").find_one({"id": subject}):
+                initials = "".join(w[0] for w in body.name.split()[:2]).upper()
+                await coll("practitioners").insert_one({"id": subject, "name": body.name, "initials": initials, "color": "#18A8F5", "isOwner": False,
+                                                        "specialties": [], "available": False, "onboardingStatus": "draft", "bookable": False,
+                                                        "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "directBilling": False, "mobile": True})
+                from availability import draft_schedule
+                await db.nt_schedules.insert_one(draft_schedule(subject))
+        u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": body.name, "role": body.role,
+             "subject": subject, "createdAt": datetime.now(timezone.utc).isoformat()}
+        await users.insert_one(dict(u))
+        await add_audit(owner["name"], f"Staff account created: {body.name} ({body.role})")
+        return await present(u, coll)
+
+    @r.post("/staff/invite")
+    async def invite_staff(request: Request, body: InviteIn):
+        owner = await require(request, "owner")
+        if body.role not in ("practitioner", "desk"):
+            raise HTTPException(400, "Role must be practitioner or desk")
+        email = body.email.lower()
+        if body.role == "practitioner":
+            from onboarding import acceptable_login
+            if not acceptable_login(email, owner.get("email")):
+                raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
+        if await users.find_one({"email": email}):
+            raise HTTPException(409, "Email already in use")
+        subject = None
+        if body.role == "practitioner":
+            subject = f"p-{uuid.uuid4().hex[:8]}"
+            initials = "".join(part[0] for part in body.name.split()[:2]).upper() or "NT"
+            await coll("practitioners").insert_one({
+                "id": subject, "name": body.name, "initials": initials, "color": "#18A8F5", "isOwner": False,
+                "specialties": [], "available": False, "bookable": False, "onboardingStatus": "invited",
+                "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "phone": (body.phone or "").strip(),
+                "email": email, "directBilling": False, "mobile": True, "demo": False, "origin": "invited",
+            })
+            from availability import draft_schedule
+            await db.nt_schedules.insert_one(draft_schedule(subject))
+        now = datetime.now(timezone.utc)
+        raw = secrets.token_urlsafe(32)
+        secret = secrets.token_urlsafe(32)
+        user_id = str(uuid.uuid4())
+        await users.insert_one({
+            "id": user_id, "email": email, "password_hash": hash_pw(secret), "name": body.name, "role": body.role,
+            "subject": subject, "createdAt": now.isoformat(), "invitePending": True,
+        })
+        await db.nt_staff_invites.insert_one({
+            "tokenHash": hashlib.sha256(raw.encode()).hexdigest(), "userId": user_id, "used": False,
+            "createdAt": now.isoformat(), "expiresAt": (now + timedelta(hours=72)).isoformat(),
+        })
+        await add_audit(owner["name"], f"Staff invitation created: {body.name} ({body.role})")
+        result = {"invited": True, "delivery": "not_sent", "role": body.role, "email": email}
+        if preview_local_reset():
+            result["delivery"] = "preview_link"
+            result["previewInviteToken"] = raw
+            result["message"] = "Email delivery is not configured. Copy this single-use link. It expires in 72 hours."
+            return result
+        link = f"{os.environ['APP_URL'].rstrip('/')}/join?token={raw}"
+        try:
+            await send_email(to=email, subject="Your Nabitouch staff invitation", html=f"<p>You have been invited to Nabitouch. This link expires in 72 hours.</p><p><a href=\"{escape(link)}\">Accept invitation</a></p>")
+        except Exception as exc:
+            raise HTTPException(503, "The invitation was saved, but email delivery failed. Ask for the preview link only on this computer.") from exc
+        result["delivery"] = "email"
+        result["message"] = "Invitation email sent."
+        return result
+
+    @r.post("/invite/accept")
+    async def accept_invite(body: InviteAccept):
+        rec = await db.nt_staff_invites.find_one({"tokenHash": hashlib.sha256(body.token.encode()).hexdigest()})
+        if not rec or rec.get("used") or rec.get("expiresAt", "") < datetime.now(timezone.utc).isoformat():
+            raise HTTPException(400, "This invitation is invalid or has expired")
+        updated = await users.update_one({"id": rec["userId"]}, {"$set": {"password_hash": hash_pw(body.password), "invitePending": False}})
+        if updated.matched_count != 1:
+            raise HTTPException(400, "This invitation is invalid or has expired")
+        await db.nt_staff_invites.update_one({"_id": rec["_id"]}, {"$set": {"used": True}})
+        return {"ok": True, "message": "Password saved. Sign in, then enroll your authenticator before the workspace opens."}
+
+    return r, user_from, require, seed

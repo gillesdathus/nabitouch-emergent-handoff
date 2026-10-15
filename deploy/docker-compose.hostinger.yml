@@ -1,0 +1,108 @@
+# Isolated next stack for the existing Hostinger VPS.
+# Do not start this file until the owner approves deployment.
+# 127.0.0.1:8011 is the API only. It is not the public website.
+# The built frontend stays in its own directory until Nginx is changed.
+# ClamAV is behind the "scan" profile and does not start with the default project.
+# HOSTING_STRATEGY=shared-vps refuses CLAMAV_HOST. Do not start the scan profile on this VPS.
+# Do not publish ports 80 or 443. Do not attach to the current site network.
+
+name: nt-next
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: nt-next-api:local
+    container_name: nt-next-api
+    env_file:
+      - /etc/nabitouch-next.env
+    volumes:
+      - nt-next-redis-certs:/certs:ro
+    ports:
+      - "127.0.0.1:8011:8000"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    depends_on:
+      mongo:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - nt-next
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    container_name: nt-next-mongo
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/data/db/mongo.key", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - nt-next-mongo:/data/db
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - nt-next
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: nt-next-redis
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in the shell before any start}
+      - --tls-port
+      - "6379"
+      - --port
+      - "0"
+      - --tls-cert-file
+      - /certs/redis.crt
+      - --tls-key-file
+      - /certs/redis.key
+      - --tls-ca-cert-file
+      - /certs/ca.crt
+      - --tls-auth-clients
+      - "no"
+    volumes:
+      - nt-next-redis-certs:/certs:ro
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - nt-next
+    restart: unless-stopped
+
+  clamav:
+    image: clamav/clamav:stable
+    container_name: nt-next-clamav
+    profiles: ["scan"]
+    mem_limit: 768m
+    networks:
+      - nt-next
+    restart: unless-stopped
+
+networks:
+  nt-next:
+    name: nt-next
+
+volumes:
+  nt-next-mongo:
+    name: nt-next-mongo
+  nt-next-redis-certs:
+    name: nt-next-redis-certs

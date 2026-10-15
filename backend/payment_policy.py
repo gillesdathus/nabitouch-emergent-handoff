@@ -1,0 +1,169 @@
+"""Amount due now, from the server booking total. Production does not assume a deposit."""
+from decimal import Decimal, ROUND_HALF_UP
+
+MODES = ("full", "deposit", "choice")
+DEPOSIT_TYPES = ("percent", "fixed")
+CHOICES = ("full", "deposit", "cash")
+
+
+def _cents(value):
+    return int((Decimal(str(value)) * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def closed_policy():
+    """Missing production config stays full payment, with cash off, until the owner saves a policy."""
+    return {"mode": "full", "depositType": "percent", "depositPercent": 0, "depositCents": 0, "cashAccepted": False}
+
+
+def preview_policy():
+    """Proposed preview defaults. They are not written into production."""
+    return {"mode": "choice", "depositType": "percent", "depositPercent": 25, "depositCents": 0, "cashAccepted": True}
+
+
+def resolve_payment_policy(raw, *, production, explicit=False):
+    if not explicit or not isinstance(raw, dict) or not raw:
+        return closed_policy() if production else preview_policy()
+    mode = raw.get("mode") or "full"
+    if mode not in MODES:
+        raise ValueError("Choose full payment, a deposit, or the customer's choice")
+    deposit_type = raw.get("depositType") or "percent"
+    if deposit_type not in DEPOSIT_TYPES:
+        raise ValueError("A deposit is a percentage or a fixed amount")
+    try:
+        percent = int(raw.get("depositPercent") or 0)
+        fixed = int(raw.get("depositCents") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Deposit values must be whole numbers") from exc
+    if percent < 0 or percent > 100:
+        raise ValueError("Deposit percent must be between 0 and 100")
+    if fixed < 0:
+        raise ValueError("Deposit amount cannot be negative")
+    cash = bool(raw.get("cashAccepted")) if "cashAccepted" in raw else False
+    return {"mode": mode, "depositType": deposit_type, "depositPercent": percent, "depositCents": fixed, "cashAccepted": cash}
+
+
+def deposit_cents(total_cents, policy):
+    total = int(total_cents)
+    if total < 0:
+        raise ValueError("Booking total cannot be negative")
+    if policy.get("depositType") == "fixed":
+        amount = int(policy.get("depositCents") or 0)
+    else:
+        percent = Decimal(int(policy.get("depositPercent") or 0))
+        amount = int((Decimal(total) * percent / Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    if amount > total:
+        raise ValueError("Deposit is greater than the booking total")
+    return amount
+
+
+def settlement(total_dollars, policy, choice):
+    """Payable now, after the full total exists. Cash is not a prepayment."""
+    total = _cents(total_dollars)
+    selected = choice if choice in CHOICES else None
+    mode = policy.get("mode") or "full"
+    if selected is None:
+        selected = "deposit" if mode in ("deposit", "choice") and int(policy.get("depositPercent") or policy.get("depositCents") or 0) else "full"
+    if selected == "cash":
+        if not policy.get("cashAccepted"):
+            raise ValueError("Cash is not accepted for this booking")
+        due = 0
+        status = "unpaid"
+    elif selected == "full":
+        if mode == "deposit":
+            raise ValueError("This booking requires the deposit")
+        due = total
+        status = "payment_required" if due else "paid"
+    else:
+        if mode == "full":
+            raise ValueError("This booking requires full payment")
+        due = deposit_cents(total, policy)
+        status = "deposit_pending" if due < total else "payment_required"
+    return {
+        "totalCents": total,
+        "dueNowCents": due,
+        "remainingCents": total - due,
+        "paidCents": 0,
+        "refundedCents": 0,
+        "choice": selected,
+        "mode": mode,
+        "status": status,
+        "prepaid": False if selected == "cash" else due == total and due > 0,
+    }
+
+
+def allowed_online_amounts(balance_cents, policy, received_cents=0):
+    """The customer pays the amount due, then later the remainder. Never more than the balance."""
+    balance = int(balance_cents)
+    received = int(received_cents or 0)
+    if balance <= 0:
+        return set()
+    if received > 0:
+        return {balance}
+    mode = policy.get("mode") or "full"
+    amounts = set()
+    if mode in ("full", "choice"):
+        amounts.add(balance)
+    if mode in ("deposit", "choice"):
+        try:
+            deposit = deposit_cents(balance + received, policy)
+        except ValueError:
+            deposit = 0
+        if 0 < deposit <= balance:
+            amounts.add(deposit)
+    return amounts
+
+
+def checkout_event_action(status, amount_total, expected_cents):
+    """A duplicate event settles once. A late success after expiry can still be reconciled."""
+    if amount_total != expected_cents:
+        return "reject"
+    if status == "paid":
+        return "duplicate"
+    if status in ("pending", "expired"):
+        return "settle"
+    return "ignore"
+
+
+CHECKOUT_HOLD_MINUTES = 30
+
+
+def review_after_expiry(pay_now, received_cents):
+    """An expired card checkout stays on the calendar for the owner. The time is not released."""
+    if pay_now in ("full", "deposit") and int(received_cents or 0) <= 0:
+        return "payment_failed"
+    return None
+
+
+def due_after_payment(total_cents, received_cents, refunded_cents=0):
+    """Collected amount and the balance that is still owed. The balance cannot go below zero."""
+    total = max(0, int(total_cents))
+    received = max(0, int(received_cents))
+    refunded = max(0, int(refunded_cents))
+    remaining = max(0, total - received)
+    if refunded and received <= 0:
+        status = "refunded"
+    elif refunded and remaining > 0:
+        status = "partially_refunded"
+    elif remaining <= 0 and total > 0:
+        status = "paid"
+    elif received > 0:
+        status = "partially_paid"
+    else:
+        status = "unpaid"
+    return {"paidCents": received, "remainingCents": remaining, "refundedCents": refunded, "status": status, "prepaid": False}
+
+
+def collection_status(total_cents, received_cents, refunded_cents):
+    """Invoice collection, separate from an insurer decision."""
+    total = int(total_cents)
+    received = int(received_cents)
+    refunded = int(refunded_cents)
+    if refunded > 0 and received <= 0:
+        return "refunded"
+    if refunded > 0 and received < total:
+        return "partially_refunded"
+    if total > 0 and received >= total:
+        return "paid"
+    if received > 0:
+        return "partially_paid"
+    return "unpaid"
