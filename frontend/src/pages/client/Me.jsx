@@ -273,7 +273,7 @@ export default function Me() {
         <TabsContent value="profile" className="mt-6 space-y-4">
           <div className="nb-card p-5" data-testid="profile-summary">
             <div className="flex items-center justify-between"><p className="font-semibold">{me.firstName} {me.lastName}</p><Link to="/me/profile" data-testid="profile-edit-btn" className="nb-btn-ghost h-9 px-4 text-xs"><Pencil className="h-3.5 w-3.5" />Edit</Link></div>
-            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">{[["Email", me.email], ["Phone", me.phone], ["Birthday", me.dob ? fmtDate(me.dob, { month: "long", day: "numeric" }) : "—"], ["Language", me.language], ["Contact by", me.contactMethod], ["Offers & birthday wishes", me.marketingConsent ? "Opted in" : "Not subscribed"]].map(([k, v]) => <div key={k}><dt className="text-xs text-nb-mute">{k}</dt><dd>{v}</dd></div>)}</dl>
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">{[["Email", me.email], ["Phone", me.phone], ["Birthday", me.dob ? fmtDate(me.dob, { month: "long", day: "numeric" }) : "—"], ["Language", me.language], ["Contact by", me.contactMethod], ["Visit texts", me.smsConsent ? "On" : "Off"], ["Offers & birthday wishes", me.marketingConsent ? "Opted in" : "Not subscribed"]].map(([k, v]) => <div key={k}><dt className="text-xs text-nb-mute">{k}</dt><dd>{v}</dd></div>)}</dl>
           </div>
           <div className="nb-card p-5"><p className="mb-3 font-semibold">Saved addresses</p>{me.addresses.map((a) => <p key={a.id} className="flex items-center gap-2 text-sm"><MapPin className="h-4 w-4 text-nb-teal" /><b>{a.label}</b> {a.line}</p>)}</div>
         </TabsContent>

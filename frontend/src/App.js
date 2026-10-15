@@ -30,6 +30,7 @@ const ClientBilling = lazy(() => import("@/pages/client/Billing"));
 const ClientGiftCards = lazy(() => import("@/pages/client/GiftCards"));
 const ClientPlans = lazy(() => import("@/pages/client/Plans"));
 const OwnerPlans = lazy(() => import("@/pages/owner/Plans"));
+const OwnerChannels = lazy(() => import("@/pages/owner/Channels"));
 const OwnerWinback = lazy(() => import("@/pages/owner/Winback"));
 const SafetyAlerts = lazy(() => import("@/pages/owner/Safety"));
 const GiftCardsAdmin = lazy(() => import("@/pages/owner/GiftCards"));
@@ -133,6 +134,7 @@ export default function App() {
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
+                  <Route path="/owner/channels" element={<OwnerChannels />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />

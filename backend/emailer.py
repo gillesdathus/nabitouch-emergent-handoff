@@ -129,6 +129,11 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
     from config import email_provider
     _assert_safe_email(subject, html)
     provider = email_provider()
+    redirect = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
+    if redirect and provider in ("resend", "emergent") and to.lower() != redirect.lower():
+        # Test mode: every message goes only to the owner's test inbox.
+        subject = f"[Test for {to.split('@')[0][:2]}…@{to.split('@')[-1]}] {subject}"
+        to = redirect
     if provider == "mock":
         message_id = f"mock-{len(OUTBOX) + 1}"
         OUTBOX.append({"id": message_id, "to": to, "subject": subject})

@@ -1,0 +1,8 @@
+crons:
+  - name: sms-reminders
+    description: "Queues 24-hour and 2-hour visit reminder texts (held while SMS_ENABLED=false)"
+    cron: "*/15 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/sms-reminders"
+    method: POST
+    enabled: true

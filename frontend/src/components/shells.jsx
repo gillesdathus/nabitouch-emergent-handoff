@@ -31,6 +31,7 @@ const OWNER_MORE = [
   ["/owner/plans", "Wellness plans"],
   ["/owner/safety", "Safety alerts"],
   ["/owner/winback", "Welcome-back invites"],
+  ["/owner/channels", "Email & texts"],
   ["/owner/reports", "Financial reports"],
   ["/owner/zones", "Zones & settings"],
   ["/owner/credentials", "Credentials"],

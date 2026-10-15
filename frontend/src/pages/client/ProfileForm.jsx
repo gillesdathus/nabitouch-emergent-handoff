@@ -17,7 +17,7 @@ export default function ProfileForm() {
   const { me, run, api, register, state } = useDemo();
   const nav = useNavigate();
   const file = useRef(null);
-  const [f, setF] = useState(() => ({ firstName: "", lastName: "", preferredName: "", email: "", phone: "", dob: "", language: "English", contactMethod: "Text", emergencyContact: "", marketingConsent: false, photo: null, addresses: [], paymentPreference: "card", ...(me || {}) }));
+  const [f, setF] = useState(() => ({ firstName: "", lastName: "", preferredName: "", email: "", phone: "", dob: "", language: "English", contactMethod: "Text", emergencyContact: "", marketingConsent: false, smsConsent: false, photo: null, addresses: [], paymentPreference: "card", ...(me || {}) }));
   const [aq, setAq] = useState("");
   const [addr, setAddr] = useState(null);
   const [label, setLabel] = useState("Home");
@@ -31,8 +31,8 @@ export default function ProfileForm() {
     const { id, ...body } = f;
     if (me) await run(() => api.patch("clients", me.id, body), "Profile updated");
     else {
-      const { firstName, lastName, email, phone, dob, marketingConsent, ...profile } = body;
-      try { await register({ email, password: pw, firstName, lastName, phone, dob, marketingConsent, profile }); } catch (e) { setErr(apiError(e)); return; }
+      const { firstName, lastName, email, phone, dob, marketingConsent, smsConsent, ...profile } = body;
+      try { await register({ email, password: pw, firstName, lastName, phone, dob, marketingConsent, smsConsent, profile }); } catch (e) { setErr(apiError(e)); return; }
     }
     nav("/me");
   };
@@ -76,6 +76,7 @@ export default function ProfileForm() {
       <div className="hidden">
       </div>
       <div className="nb-card mt-8 space-y-4 p-5">
+        <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!f.smsConsent} onChange={set("smsConsent")} data-testid="profile-sms-consent-checkbox" /><span><b>Visit texts</b> — yes, Nabitouch may text me reminders, on-the-way and running-late updates, and booking changes. Message and data rates may apply. Reply STOP anytime.</span></label>
         <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!f.marketingConsent} onChange={set("marketingConsent")} data-testid="profile-marketing-consent-checkbox" /><span><b>Birthday wishes & offers</b> — yes, Nabitouch may email/text me promotions, birthday offers and wellness tips. Optional and never required to book. You can withdraw anytime.</span></label>
         <p className="text-xs text-nb-mute">Appointment confirmations and reminders are operational messages and are sent separately from marketing.</p>
         <div className="flex gap-3 rounded-2xl bg-slate-50 p-4 text-xs text-nb-mute"><Lock className="h-4 w-4 shrink-0" /><p>We collect only what’s needed to book and care for you. Your account, clinical notes, and insurance details stay in the workspace that is allowed to see them.</p></div>

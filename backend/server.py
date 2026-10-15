@@ -14,6 +14,7 @@ import re
 import uuid
 import secrets
 import logging
+import hmac
 import jwt
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -70,7 +71,7 @@ from finance import build_finance_router
 from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
 from config import giftcards_enabled, invoice_email_enabled
-from sms import readiness as sms_readiness
+from sms import build_sms_router, due_reminders, ensure_sms, queue_sms, readiness as sms_readiness
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -209,6 +210,8 @@ async def lifespan(_app):
     await ensure_safety(db)
     await ensure_devices(db)
     await ensure_winback(db)
+    await ensure_sms(db)
+    await db.nt_cron_runs.create_index("id", unique=True)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -294,6 +297,37 @@ async def resend_receipt(request: Request):
         raise HTTPException(400, "Invalid event")
     updated = await apply_delivery_receipt(db, event)
     return {"accepted": True, "updated": updated}
+
+
+def _email_status():
+    from config import email_provider, invoice_email_enabled, statement_email_enabled
+    key = (os.environ.get("RESEND_API_KEY") or "").strip()
+    sender = (os.environ.get("EMAIL_FROM") or "").strip()
+    return {"provider": email_provider(), "resendKey": bool(key), "sender": sender or None, "replyTo": (os.environ.get("EMAIL_REPLY_TO") or "").strip() or None,
+            "webhookSecret": bool((os.environ.get("RESEND_WEBHOOK_SECRET") or "").strip()), "testRecipient": (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip() or None,
+            "types": {"lifecycle": email_lifecycle_enabled(), "invoices": invoice_email_enabled(), "statements": statement_email_enabled()}}
+
+
+@api.get("/ops/email/status")
+async def email_status(request: Request):
+    await require(request, "owner")
+    return _email_status()
+
+
+@api.post("/ops/email/test")
+async def email_test(request: Request):
+    """One fixed message to EMAIL_TEST_RECIPIENT only. No caller-supplied recipient, subject or body."""
+    user = await require(request, "owner")
+    from emailer import send_email
+    target = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
+    if not target:
+        raise HTTPException(409, "Set EMAIL_TEST_RECIPIENT first")
+    html = ('<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#0B1B3F">'
+            '<p style="font-size:18px;font-weight:bold">Nabitouch email test</p><p>This test confirms your app can send email. No action is needed.</p>'
+            '<p style="font-size:12px;color:#667">Sent by Nabitouch from the owner settings. We never ask for your password or card details by email.</p></td></tr></table>')
+    message_id = await send_email(to=target, subject="Nabitouch email test", html=html, idempotency_key=f"email-test-{uuid.uuid4().hex}")
+    await add_audit(user["name"], "Email test sent")
+    return {"sent": bool(message_id), "id": message_id, "provider": _email_status()["provider"]}
 
 
 @api.get("/notifications/channels")
@@ -609,6 +643,10 @@ async def apply_transition(appt, to, actor, note=None):
         await settle_invite(db, appt["id"], to)
     if to == "cancelled":
         await push_notify(db, "visit_cancelled", appt["id"], appt)
+    if to == "en_route":
+        await queue_sms(db, coll, "on_the_way", appt, appt["id"])
+    if to in ("confirmed", "assigned"):
+        await queue_sms(db, coll, "booking_confirmed", appt, appt["id"])
     if to == "assigned" and appt.get("practitionerId"):
         await push_notify(db, "visit_assigned", f"{appt['id']}:{appt['practitionerId']}", appt)
     if to in ("completed", "cancelled", "no_show", "closed"):
@@ -889,9 +927,12 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
     if kind == "delayed":
         await on_transition(appt, "delayed", {"delayMin": upd.get("delayMin")})
         await record_trip_notice(db, saved, "delayed", upd.get("delayMin"), body.get("note") or "")
+        if upd.get("delayMin"):
+            await queue_sms(db, coll, "running_late", saved, f"{appt_id}:{upd['delayMin']}", minutes=upd["delayMin"])
     if kind == "rescheduled":
         await _maybe_lifecycle_mail(saved, "reschedule")
         await push_notify(db, "visit_rescheduled", f"{appt_id}:{saved['date']}:{saved['time']}", saved)
+        await queue_sms(db, coll, "booking_changed", saved, f"{appt_id}:{saved['date']}:{saved['time']}")
     if kind == "reassigned":
         await _maybe_lifecycle_mail(saved, "assignment")
         await push_notify(db, "visit_assigned", f"{appt_id}:{saved['practitionerId']}", saved)
@@ -1171,6 +1212,7 @@ def booking_person(client, incoming):
         "phone": incoming.get("phone") or source_client.get("phone") or "",
         "dob": source_client.get("dob") or incoming.get("dob") or "",
         "marketingConsent": source_client.get("marketingConsent") if client else bool(incoming.get("marketingConsent")),
+        "smsConsent": source_client.get("smsConsent") if client else bool(incoming.get("smsConsent")),
         "onlineBookings": source_client.get("onlineBookings") or 0,
         "_profileComplete": profile_complete(client),
     }
@@ -1380,7 +1422,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         client_id = f"c-{uuid.uuid4().hex[:8]}"
         client = {"id": client_id, "firstName": incoming.get("firstName") or "Guest", "lastName": incoming.get("lastName") or "",
                   "email": str(incoming.get("email") or "").lower(), "phone": incoming.get("phone") or "", "dob": incoming.get("dob") or "",
-                  "marketingConsent": bool(incoming.get("marketingConsent")), "addresses": [], "insurance": [], "favorites": [],
+                  "marketingConsent": bool(incoming.get("marketingConsent")), "smsConsent": bool(incoming.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [],
                   "preferredPractitioners": [], "loyaltyPoints": 0, "onlineBookings": 1 if source == "online" else 0,
                   "hasProfile": False, "createdAt": now_iso()}
         await clients.insert_one(dict(client))
@@ -1661,7 +1703,7 @@ async def _deliver_booking(note):
 
 
 CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "dob", "language", "contactMethod", "noInsurance", "preferredNavApp",
-                 "emergencyContact", "marketingConsent", "photo", "addresses", "paymentPreference", "insurance",
+                 "emergencyContact", "marketingConsent", "smsConsent", "photo", "addresses", "paymentPreference", "insurance",
                  "favorites", "preferredPractitioners"}
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
                 "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval"}
@@ -2136,6 +2178,35 @@ app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))
+app.include_router(build_sms_router(db, coll, add_audit, user_from))
+
+
+@app.post("/api/cron/sms-reminders")
+async def cron_sms_reminders(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization") or ""
+    if not secret or not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:], secret):
+        raise HTTPException(401, "Unauthorized")
+    run_id = request.headers.get("x-webhook-id") or ""
+    try:
+        envelope = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid body")
+    run_id = run_id or (envelope or {}).get("run_id") or ""
+    if run_id:
+        try:
+            await db.nt_cron_runs.insert_one({"id": f"sms-reminders:{run_id}", "at": now_iso()})
+        except DuplicateKeyError:
+            return {"accepted": True, "duplicate": True}
+
+    async def work():
+        try:
+            await due_reminders(db, coll)
+        except Exception:
+            logging.getLogger(__name__).error("SMS reminder run failed")
+    asyncio.get_running_loop().create_task(work())
+    return {"accepted": True}
 app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)

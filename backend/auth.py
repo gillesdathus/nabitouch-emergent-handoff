@@ -108,6 +108,7 @@ class RegisterIn(BaseModel):
     phone: str = ""
     dob: str = ""
     marketingConsent: bool = False
+    smsConsent: bool = False
     profile: dict = {}
 
 
@@ -365,7 +366,7 @@ def build_auth(db, coll, add_audit):
         client = {"addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [], "language": "English",
                   "contactMethod": "Text", "preferredName": "", "emergencyContact": "", "photo": None, **(body.profile or {}),
                   "id": cid, "firstName": body.firstName, "lastName": body.lastName, "email": email, "phone": body.phone, "dob": body.dob,
-                  "marketingConsent": body.marketingConsent, "hasProfile": True, "loyaltyPoints": 0, "onlineBookings": 0,
+                  "marketingConsent": body.marketingConsent, "smsConsent": body.smsConsent, "hasProfile": True, "loyaltyPoints": 0, "onlineBookings": 0,
                   "createdAt": datetime.now(timezone.utc).isoformat()}
         await coll("clients").insert_one(dict(client))
         u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": f"{body.firstName} {body.lastName}",

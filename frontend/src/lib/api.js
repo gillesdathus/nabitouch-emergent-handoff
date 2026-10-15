@@ -265,4 +265,8 @@ export const api = {
   winbackInvites: () => http.get('/winback/invites').then(data),
   voidWinback: (id) => http.post(`/winback/invites/${id}/void`, {}).then(data),
   winbackMine: () => http.get('/winback/mine').then(data),
+  emailStatus: () => http.get('/ops/email/status').then(data),
+  emailTest: () => http.post('/ops/email/test', {}).then(data),
+  smsSummary: () => http.get('/sms/status-summary').then(data),
+  smsTest: () => http.post('/sms/test', {}).then(data),
 };
