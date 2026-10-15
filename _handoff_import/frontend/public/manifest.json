@@ -1,0 +1,19 @@
+{
+  "short_name": "Nabitouch",
+  "name": "Nabitouch — Mobile Massage Services",
+  "description": "Relax • Recover • Anywhere. Professional massage therapy, wherever you feel most comfortable.",
+  "icons": [
+    { "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0B2E8A",
+  "background_color": "#F5FBFC",
+  "shortcuts": [
+    { "name": "Book a massage", "url": "/book" },
+    { "name": "Practitioner", "url": "/pro" },
+    { "name": "Owner", "url": "/owner" },
+    { "name": "Reception", "url": "/desk" }
+  ]
+}

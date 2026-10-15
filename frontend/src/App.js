@@ -26,6 +26,7 @@ const Me = lazy(() => import("@/pages/client/Me"));
 const ProfileForm = lazy(() => import("@/pages/client/ProfileForm"));
 const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
+const ClientBilling = lazy(() => import("@/pages/client/Billing"));
 const ProToday = lazy(() => import("@/pages/practitioner/Today"));
 const ProVisit = lazy(() => import("@/pages/practitioner/Visit"));
 const NativeNav = lazy(() => import("@/pages/practitioner/NativeNav"));
@@ -94,6 +95,7 @@ export default function App() {
                   <Route path="/me/profile" element={<ProfileForm />} />
                   <Route path="/me/intake" element={<Intake />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
+                  <Route path="/me/billing" element={<ClientBilling />} />
                   <Route path="/me/messages/:id" element={<Thread viewerRole="client" backTo="/me" />} />
                 </Route>
                 <Route element={<StaffShell role="pro" />}>

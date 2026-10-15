@@ -7,7 +7,7 @@ import { jsxInJs } from "./jsx-in-js.js";
 export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), "");
   const env = { ...fileEnv, ...process.env };
-  const proxyTarget = env.DEV_API_PROXY || "http://127.0.0.1:8000";
+  const proxyTarget = env.DEV_API_PROXY || "http://127.0.0.1:8001";
   return {
     plugins: [jsxInJs(), react()],
     resolve: {
@@ -26,7 +26,10 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 3025,
+      port: Number(env.PORT) || 3025,
+      host: env.HOST || "localhost",
+      allowedHosts: true,
+      hmr: env.PORT ? { clientPort: 443, protocol: "wss" } : undefined,
       proxy: {
         "/api": { target: proxyTarget, changeOrigin: true },
       },

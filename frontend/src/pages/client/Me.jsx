@@ -162,6 +162,10 @@ export default function Me() {
         <IconTile testid="me-tile-rewards" icon={Gift} label="Rewards" sub="Programme status" tint="tint-meadow" iconClass="text-[#4E9A2B]" onClick={() => nav("/me/rewards")} />
         <IconTile testid="me-tile-insurance" icon={ShieldPlus} label="Insurance" sub="Not submitted" tint="tint-ice" iconClass="text-nb-sky" onClick={() => nav("/me/insurance")} />
       </section>
+      <Link to="/me/billing" data-testid="me-billing-card" className="nb-card mt-4 flex items-center gap-3 p-4 transition-transform hover:-translate-y-0.5">
+        <span className="grid h-11 w-11 place-items-center rounded-2xl text-nb-blue tint-lagoon"><Receipt className="h-5 w-5" /></span>
+        <div className="flex-1"><p className="text-sm font-semibold">Invoices & payments</p><p className="text-xs text-nb-mute">Balances, insurance status, PDFs and ways to pay.</p></div>
+      </Link>
       <Link to="/me/intake" data-testid="me-intake-card" className="nb-card mt-4 flex items-center gap-3 p-4 transition-transform hover:-translate-y-0.5">
         <span className="grid h-11 w-11 place-items-center rounded-2xl text-nb-teal tint-mint"><ClipboardList className="h-5 w-5" /></span>
         <div className="flex-1"><p className="text-sm font-semibold">Health intake</p><p className="text-xs text-nb-mute">Saved on your account as a new version. It is not stored only on this phone.</p></div>

@@ -1,0 +1,46 @@
+# Example layout only. Do not start this file against a production database.
+# Copy secrets into a host secret store. Leave this file free of real values.
+services:
+  proxy:
+    image: caddy:2
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - web:/srv
+    depends_on:
+      - api
+  api:
+    image: python:3.12-slim
+    working_dir: /app
+    command: uvicorn server:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ../backend/.env
+    environment:
+      APP_ENV: production
+      DEMO_MODE: "false"
+      COOKIE_SECURE: "true"
+      MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
+      REDIS_URL: rediss://:replace-me@redis:6379/0
+    volumes:
+      - ../backend:/app
+    depends_on:
+      - mongo
+      - redis
+  mongo:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongo:/data/db
+  redis:
+    image: redis:7-alpine
+    # Production must use rediss:// and a password. Add the certificate flags for the host you choose.
+    # This example is not a production Redis configuration and was not started.
+    command: ["redis-server", "--requirepass", "replace-me"]
+  clamav:
+    image: clamav/clamav:stable
+    # Leave CLAMAV_HOST empty until this service is healthy. An unreachable scanner keeps files in quarantine.
+volumes:
+  web:
+  mongo:
