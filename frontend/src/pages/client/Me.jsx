@@ -7,7 +7,7 @@ import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Cake, Gift, Heart, MapPin, Receipt, RotateCcw, ShieldCheck, Star, Users, Award, Navigation, CreditCard, Pencil, Plus, UserRound, CalendarDays, ClipboardList, ShieldPlus } from "lucide-react";
+import { Cake, Gift, Layers, Heart, MapPin, Receipt, RotateCcw, ShieldCheck, Star, Users, Award, Navigation, CreditCard, Pencil, Plus, UserRound, CalendarDays, ClipboardList, ShieldPlus } from "lucide-react";
 import { IconTile, Notice } from "@/components/tide";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -263,6 +263,7 @@ export default function Me() {
             <div className="space-y-3">{me.insurance.map((i) => <div key={i.id} className="nb-card flex items-center gap-4 p-4" data-testid={`wallet-insurance-${i.id}`}><ShieldCheck className="h-5 w-5 text-nb-teal" /><div className="flex-1"><p className="text-sm font-semibold">{i.insurer}</p><p className="text-xs text-nb-mute">Member {i.memberId || "—"} · {i.relationship}</p></div><PayPill status={i.status} /></div>)}
               {me.insurance.length === 0 && <p className="text-sm text-nb-mute">No insurance saved. You can always pay yourself.</p>}</div></div>
           <div className="nb-card flex items-center gap-4 p-4"><CreditCard className="h-5 w-5 text-nb-blue" /><div className="flex-1"><p className="text-sm font-semibold">Payment preference</p><p className="text-xs text-nb-mute">Insurance billing is not connected. Card and cash follow the payment recorded on each visit.</p></div></div>
+          <Link to="/me/plans" data-testid="wallet-plans-link" className="relative block overflow-hidden rounded-3xl p-5 tint-mint ring-1 ring-teal-100"><Layers className="h-5 w-5 text-nb-teal" /><p className="mt-3 font-semibold text-nb-navy">Wellness plans</p><p className="text-xs text-nb-mute">Prepaid packages, memberships and your treatment credits.</p></Link>
           <Link to="/me/gifts" data-testid="wallet-giftcards-link" className="relative block overflow-hidden rounded-3xl p-5 text-white nb-lagoon"><Gift className="h-5 w-5" /><p className="mt-3 font-semibold">Gift cards</p><p className="text-xs text-white/80">Balances, history and sending a gift.</p></Link>
           <div><SectionHead eyebrow="Receipts" title="Receipts & invoices" />{history.filter((a) => DONE.includes(a.status)).map((a) => <button key={a.id} onClick={() => setReceipt(a)} data-testid={`wallet-receipt-${a.id}`} className="nb-card mb-2 flex w-full items-center gap-3 p-4 text-left"><Receipt className="h-4 w-4 text-nb-mute" /><span className="flex-1 text-sm">{a.ref} · {fmtDate(a.date)}</span><span className="text-sm font-semibold">{money(a.pricing.total)}</span></button>)}</div>
         </TabsContent>

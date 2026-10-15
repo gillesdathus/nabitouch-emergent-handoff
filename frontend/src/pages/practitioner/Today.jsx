@@ -6,6 +6,8 @@ import { Avatar, StatusPill, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { todayISO, fmtTime, endTime, OPEN, ACTIVE, addDays } from "@/lib/domain";
 
+const ready = (a) => a.readiness?.allReady === true && OPEN.includes(a.status) && a.status !== "in_session";
+
 export default function Today() {
   const { state, idx, practitionerId, run, api } = useDemo();
   const me = idx.practitioners[practitionerId];
@@ -36,7 +38,7 @@ export default function Today() {
             <p className="mt-3 text-3xl font-semibold">{fmtTime(next.time)} <span className="text-base font-normal text-white/60">– {fmtTime(endTime(next.time, next.duration))}</span></p>
             <p className="mt-1 text-lg">{idx.clients[next.clientId]?.firstName} {idx.clients[next.clientId]?.lastName[0]}. · {idx.services[next.serviceSlug].name} {next.duration}m</p>
             <p className="mt-2 flex items-center gap-1 text-sm text-white/70"><MapPin className="h-4 w-4" />{next.address.line}</p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1"><Navigation className="h-3 w-3" />Straight-line estimate only — road time needs Mapbox</span>{next.address.notes && <span className="rounded-full bg-white/10 px-3 py-1">{next.address.notes}</span>}</div>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">{ready(next) && <span className="flex items-center gap-1.5 rounded-full bg-teal-400/15 px-3 py-1 font-semibold text-teal-200" data-testid="pro-next-ready"><span className="nb-ready-dot" />Client space ready</span>}<span className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1"><Navigation className="h-3 w-3" />Straight-line estimate only — road time needs Mapbox</span>{next.address.notes && <span className="rounded-full bg-white/10 px-3 py-1">{next.address.notes}</span>}</div>
           </div>
           <Link to={`/pro/visit/${next.id}`} data-testid="pro-open-next-visit" className="flex items-center justify-between bg-white/10 px-6 py-4 text-sm font-semibold hover:bg-white/15">Open visit <ChevronRight className="h-5 w-5" /></Link>
         </motion.div>
@@ -57,9 +59,9 @@ export default function Today() {
           {list.map((a, i) => (
             <motion.li key={a.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }} className="relative">
               <span className={`absolute -left-[22px] top-5 h-3 w-3 rounded-full ring-4 ring-[#F3F8FA] ${ACTIVE.includes(a.status) ? "nb-gradient" : "bg-sky-300"}`} />
-              <Link to={`/pro/visit/${a.id}`} data-testid={`pro-visit-row-${a.id}`} className="nb-card flex items-center gap-4 p-4 hover:border-nb-sky">
+              <Link to={`/pro/visit/${a.id}`} data-testid={`pro-visit-row-${a.id}`} data-ready={ready(a) ? "true" : "false"} className={`nb-card flex items-center gap-4 p-4 hover:border-nb-sky ${ready(a) ? "nb-ready-glow" : ""}`}>
                 <div className="w-16 text-sm font-semibold">{fmtTime(a.time)}</div>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{idx.clients[a.clientId]?.firstName} · {idx.services[a.serviceSlug].name}</p><p className="truncate text-xs text-nb-mute">{a.address.line}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{idx.clients[a.clientId]?.firstName} · {idx.services[a.serviceSlug].name}</p><p className="truncate text-xs text-nb-mute">{a.address.line}</p>{ready(a) && <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-teal-700" data-testid={`pro-ready-glow-${a.id}`}><span className="nb-ready-dot" />Space ready</p>}</div>
                 <StatusPill status={a.status} />
               </Link>
             </motion.li>))}

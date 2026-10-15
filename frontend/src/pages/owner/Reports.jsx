@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { BadgeDollarSign, Banknote, Clock4, Gift, HeartHandshake, ShieldCheck, Sparkles, Undo2, Users } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Layers, BadgeDollarSign, Banknote, Clock4, Gift, HeartHandshake, ShieldCheck, Sparkles, Undo2, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PayRules } from "@/components/reports/PayRules";
 import { Statements } from "@/components/reports/Statements";
@@ -17,14 +18,16 @@ const KINDS = [
   ["retention", "Client retention", HeartHandshake, "tint-lagoon"],
   ["services", "Service performance", Sparkles, "tint-ice"],
   ["refunds", "Refunds & discounts", Undo2, "tint-meadow"],
+  ["plans", "Wellness plans", Layers, "tint-mint"],
 ];
 
 export default function Reports() {
   const { state } = useDemo();
-  const [kind, setKind] = useState("revenue");
+  const [params] = useSearchParams();
+  const [kind, setKind] = useState(KINDS.some(([k]) => k === params.get("kind")) ? params.get("kind") : "revenue");
   const [range, setRange] = useState(presetRange("month"));
   const [pid, setPid] = useState("");
-  const report = useReport(kind, range, kind === "giftcards" ? "" : pid);
+  const report = useReport(kind, range, ["giftcards", "plans"].includes(kind) ? "" : pid);
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 nb-page" data-testid="owner-reports-page">
       <PageHeader eyebrow="Reports" title="Financial reports" sub="Branded PDF and CSV exports built from issued invoices and confirmed ledger entries." />
@@ -48,7 +51,7 @@ export default function Reports() {
       <div className="my-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <RangePicker range={range} setRange={setRange} />
-          {kind !== "giftcards" && <select value={pid} onChange={(e) => setPid(e.target.value)} className="nb-input h-9 w-auto text-xs" data-testid="report-practitioner"><option value="">All practitioners</option>{(state.practitioners || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+          {!["giftcards", "plans"].includes(kind) && <select value={pid} onChange={(e) => setPid(e.target.value)} className="nb-input h-9 w-auto text-xs" data-testid="report-practitioner"><option value="">All practitioners</option>{(state.practitioners || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
         </div>
         <DownloadButtons kind={kind} params={report.params} />
       </div>

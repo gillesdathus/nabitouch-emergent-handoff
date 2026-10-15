@@ -83,6 +83,11 @@
 
 .nb-page { animation: nb-page .28s cubic-bezier(.2,.7,.2,1) both; }
 .nb-ping { animation: nb-ring 1.8s ease-out infinite; }
+@keyframes nb-ready-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(20,216,196,.0), 0 10px 28px -18px rgba(14,158,154,.55); } 50% { box-shadow: 0 0 0 6px rgba(20,216,196,.16), 0 14px 34px -14px rgba(14,158,154,.7); } }
+.nb-ready-glow { border-color: rgba(20,216,196,.55) !important; animation: nb-ready-glow 3.2s ease-in-out infinite; }
+.nb-ready-dot { position: relative; display: inline-flex; height: 8px; width: 8px; border-radius: 999px; background: #14D8C4; }
+.nb-ready-dot::after { content: ""; position: absolute; inset: 0; border-radius: 999px; background: #14D8C4; animation: nb-ring 2.4s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .nb-ready-glow, .nb-ready-dot::after { animation: none; } }
 .nb-route { stroke-dasharray: 8 4; animation: nb-dash 1.2s linear infinite; }
 .nb-pop { animation: nb-pop .5s cubic-bezier(.2,.8,.2,1.2) both; }
 .nb-draw { stroke-dasharray: 60; animation: nb-draw .6s .25s ease-out both; }

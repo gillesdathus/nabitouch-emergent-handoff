@@ -27,6 +27,8 @@ const OWNER_MORE = [
   ["/owner/campaigns", "Flash campaigns"],
   ["/owner/promos", "Promotions & rewards"],
   ["/owner/giftcards", "Gift cards"],
+  ["/owner/plans", "Wellness plans"],
+  ["/owner/safety", "Safety alerts"],
   ["/owner/reports", "Financial reports"],
   ["/owner/zones", "Zones & settings"],
   ["/owner/credentials", "Credentials"],
@@ -74,6 +76,7 @@ const STAFF = {
     more: [
       { to: "/desk/verify", label: "Payments", icon: ShieldCheck },
       { to: "/desk/messages", label: "Messages", icon: MessageSquare },
+      { to: "/desk/safety", label: "Safety", icon: ShieldCheck },
     ],
   },
 };

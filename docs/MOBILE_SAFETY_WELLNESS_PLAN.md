@@ -40,7 +40,7 @@ Status: **Implemented** (this session) · **Existing** (already in source) · **
 - `nt_reminders` with a worker uses the existing outbox. The in-app record is always kept. Push, email and SMS go out only when the channel flag is on and the client has consented.
 - `POST /api/devices {platform, token}` and `DELETE /api/devices/{id}` register push tokens. `GET/PUT /api/me/notification-preferences` stores preferences.
 
-## 5. Practitioner safety (proposed)
+## 5. Practitioner safety (implemented, milestone 8)
 - `POST /api/appointments/{id}/safety/{checkin|checkout}`: arrival check-in and safe check-out, timestamped.
 - `POST /api/appointments/{id}/incidents {kind: obstructed|unsafe|unhygienic|unsuitable|other, note, action: request_fix|cannot_proceed}`.
   - `cannot_proceed` moves the visit to `safety_hold` with no automatic penalty. Fees follow the approved policy, decided by the owner.
@@ -60,7 +60,7 @@ Status: **Implemented** (this session) · **Existing** (already in source) · **
 | Return-client invite discount | **Proposed:** promotion `eligibility: "winback_invite"`, a one-time code per invite, valid 30 days, client inactive ≥ 60 days |
 | Recurring series discount | **Proposed:** `eligibility: "recurring_series"`, for a weekly or bi-weekly series booked over ≥ 3 months (≥ 12 weekly or ≥ 6 bi-weekly visits). Monthly visits don't qualify. The discount is re-checked if the series breaks |
 
-## 8. Wellness plans (proposed contracts)
+## 8. Wellness plans (implemented, milestone 8)
 - **Collections:**
   - `nt_plan_products` (package or membership)
   - `nt_plan_purchases`

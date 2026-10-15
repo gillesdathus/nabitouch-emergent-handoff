@@ -57,6 +57,7 @@ export const STATUS = {
   cancelled: { label: 'Cancelled', tone: 'red', client: 'Cancelled' },
   no_show: { label: 'No-show', tone: 'red', client: 'Missed' },
   interrupted: { label: 'Interrupted', tone: 'amber', client: 'Paused' },
+  safety_hold: { label: 'Safety hold', tone: 'red', client: 'On hold' },
   delayed: { label: 'Running late', tone: 'amber', client: 'Running a little late' },
   rescheduled: { label: 'Rescheduled', tone: 'blue', client: 'Rescheduled' },
   reassigned: { label: 'Practitioner reassigned', tone: 'blue', client: 'Confirmed' },
@@ -65,7 +66,7 @@ export const STATUS = {
 export const LIFECYCLE = ['requested', 'assigned', 'preparing', 'en_route', 'arrived', 'in_session', 'session_ended',
   'soap_pending', 'soap_completed', 'leaving', 'completed', 'processing', 'closed'];
 export const CLIENT_STAGES = ['Confirmed', 'Practitioner preparing', 'En route', 'Arrived', 'Session in progress', 'Session completed', 'Visit completed'];
-export const ACTIVE = ['preparing', 'en_route', 'arrived', 'in_session', 'session_ended', 'soap_pending', 'soap_completed', 'leaving', 'interrupted'];
+export const ACTIVE = ['preparing', 'en_route', 'arrived', 'in_session', 'session_ended', 'soap_pending', 'soap_completed', 'leaving', 'interrupted', 'safety_hold'];
 export const OPEN = ['requested', 'confirmed', 'assigned', ...ACTIVE];
 export const DONE = ['completed', 'processing', 'closed'];
 

@@ -12,6 +12,7 @@ from fastapi.responses import Response
 
 from documents import ScannerUnavailable, assess
 from config import giftcards_enabled, invoice_email_enabled
+from plans import settle_checkout as plan_settle, subscription_event as plan_subscription_event
 from giftcards import activate_paid as gift_activate_paid, debit as gift_debit, norm_code, reverse as gift_reverse
 from notifications import enqueue_billing
 from pdfbrand import invoice_pdf as brand_invoice_pdf, receipt_pdf as brand_receipt_pdf
@@ -59,9 +60,12 @@ def lines_from_pricing(pricing):
     discount = to_cents(pricing.get("discount", 0))
     if base:
         rows.append({"description": "Treatment", "quantity": 1, "netCents": base, "taxCode": "included"})
-    if discount:
-        label = pricing.get("promoName") or "Discount"
-        rows.append({"description": label, "quantity": 1, "netCents": -discount, "taxCode": "included"})
+    credit = min(to_cents(pricing.get("creditUnit", 0)), discount) if pricing.get("packageCredit") else 0
+    if discount - credit:
+        label = "Package savings" if credit else pricing.get("promoName") or "Discount"
+        rows.append({"description": label, "quantity": 1, "netCents": -(discount - credit), "taxCode": "included"})
+    if credit:
+        rows.append({"description": "Prepaid package credit", "quantity": 1, "netCents": -credit, "taxCode": "prepaid_credit"})
     addons = to_cents(pricing.get("addons", 0))
     if addons:
         rows.append({"description": "Enhancements", "quantity": 1, "netCents": addons, "taxCode": "included"})
@@ -1189,7 +1193,7 @@ def build_billing_router(db, coll, add_audit, user_from):
         if not row:
             return {"confirmed": False}
         if user["role"] == "client":
-            owner_id = (await db.nt_invoices.find_one({"id": row.get("invoiceId")}, {"_id": 0, "clientId": 1}) or {}).get("clientId") if row.get("invoiceId") else (await db.nt_giftcards.find_one({"id": row.get("giftCardId")}, {"_id": 0, "purchaserId": 1}) or {}).get("purchaserId")
+            owner_id = row.get("clientId") or (await db.nt_invoices.find_one({"id": row.get("invoiceId")}, {"_id": 0, "clientId": 1}) or {}).get("clientId") if row.get("invoiceId") else (await db.nt_giftcards.find_one({"id": row.get("giftCardId")}, {"_id": 0, "purchaserId": 1}) or {}).get("purchaserId")
             if owner_id != user.get("subject"):
                 return {"confirmed": False}
         if row.get("status") == "paid":
@@ -1232,7 +1236,7 @@ def build_billing_router(db, coll, add_audit, user_from):
                 {"sessionId": obj.get("id"), "status": "pending"}, {"$set": {"status": "expired"}}, return_document=ReturnDocument.AFTER,
             )
             review = False
-            if expired:
+            if expired and expired.get("invoiceId"):
                 invoice = await db.nt_invoices.find_one({"id": expired["invoiceId"]}, {"_id": 0})
                 visit = await coll("appointments").find_one({"id": (invoice or {}).get("appointmentId")}, {"_id": 0}) if invoice else None
                 received = 0
@@ -1247,6 +1251,8 @@ def build_billing_router(db, coll, add_audit, user_from):
                     )
                     await add_audit("Stripe", f"{visit.get('ref') or visit['id']} card checkout expired and needs review", visit["id"])
             return {"received": True, "settled": False, "review": review}
+        if kind in ("invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"):
+            return await plan_subscription_event(db, kind, obj, add_audit)
         if kind != "checkout.session.completed":
             return {"received": True, "settled": False}
         checkout_row = await db.nt_checkouts.find_one({"sessionId": obj.get("id")})
@@ -1259,6 +1265,11 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"received": True, "settled": True}
         if action != "settle":
             return {"received": True, "settled": False}
+        if checkout_row.get("planPurchaseId"):
+            settled = await plan_settle(db, checkout_row, obj, event_id, add_audit)
+            if settled:
+                await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"status": "paid", "eventId": event_id}})
+            return {"received": True, "settled": settled}
         if checkout_row.get("giftCardId"):
             settled = await gift_activate_paid(db, checkout_row, event_id)
             if settled:

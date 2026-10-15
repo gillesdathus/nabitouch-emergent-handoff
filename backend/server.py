@@ -62,6 +62,8 @@ from notifications import (
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
+from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
+from safety import build_safety_router, ensure_safety
 from finance import build_finance_router
 from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
@@ -88,16 +90,17 @@ TRANSITIONS = {
     "confirmed": ["assigned", "preparing", "en_route", "cancelled", "no_show"],
     "assigned": ["preparing", "en_route", "cancelled", "no_show"],
     "preparing": ["en_route", "cancelled", "no_show"],
-    "en_route": ["arrived", "interrupted", "cancelled"],
-    "arrived": ["in_session", "interrupted", "no_show"],
-    "in_session": ["session_ended", "interrupted"],
+    "en_route": ["arrived", "interrupted", "cancelled", "safety_hold"],
+    "arrived": ["in_session", "interrupted", "no_show", "safety_hold"],
+    "in_session": ["session_ended", "interrupted", "safety_hold"],
     "session_ended": ["soap_pending"],
     "soap_pending": ["soap_completed", "leaving"],
     "soap_completed": ["leaving"],
     "leaving": ["completed"],
     "completed": ["processing"],
     "processing": ["closed"],
-    "interrupted": ["in_session", "leaving", "cancelled"],
+    "interrupted": ["in_session", "leaving", "cancelled", "safety_hold"],
+    "safety_hold": ["arrived", "in_session", "leaving", "cancelled"],
 }
 
 
@@ -200,6 +203,8 @@ async def lifespan(_app):
     await ensure_notifications(db)
     await ensure_messaging(db)
     await ensure_giftcards(db)
+    await ensure_plans(db)
+    await ensure_safety(db)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -567,9 +572,9 @@ async def apply_transition(appt, to, actor, note=None):
     events = appt.get("events", []) + [{"status": to, "at": ts, "actor": actor, "note": note}]
     timestamps = {**appt.get("timestamps", {}), to: ts}
     upd = {"status": to, "events": events, "timestamps": timestamps}
-    if to == "interrupted" and cur == "in_session":
+    if to in ("interrupted", "safety_hold") and cur == "in_session":
         upd["timer"] = {**appt.get("timer", {}), "pausedAt": ts}
-    if to == "in_session" and cur == "interrupted" and appt.get("timer", {}).get("pausedAt"):
+    if to == "in_session" and cur in ("interrupted", "safety_hold") and appt.get("timer", {}).get("pausedAt"):
         t = appt["timer"]
         gap = (datetime.fromisoformat(ts) - datetime.fromisoformat(t["pausedAt"])).total_seconds() * 1000
         upd["timer"] = {"pausedMs": t.get("pausedMs", 0) + gap, "pausedAt": None}
@@ -592,6 +597,10 @@ async def apply_transition(appt, to, actor, note=None):
         await _maybe_lifecycle_mail(saved, "assignment")
     if to in ("completed", "processing", "closed"):
         await settle_appointment_points(db, coll, saved)
+    if to in ("completed", "no_show"):
+        await consume_credit(db, appt["id"], actor)
+    if to == "cancelled":
+        await release_credit(db, appt["id"], actor, "Visit cancelled")
     if to in ("cancelled", "no_show"):
         await release_redemption(db, coll, saved.get("clientId"), saved.get("id"), (saved.get("pricing") or {}).get("loyaltyPoints"))
     return saved
@@ -1233,10 +1242,21 @@ async def resolve_booking(payload, user):
     if user and user["role"] == "client" and not client:
         client = await reopen_client_profile(user)
     promotions = await coll("promotions").find({}, NO_ID).to_list(100)
+    use_credit = bool(payload.get("useCredit"))
+    credit = None
+    if use_credit:
+        if not client:
+            raise HTTPException(400, "Sign in to use a package credit")
+        credit = await available_credit(db, client["id"], service["slug"], duration)
+        if not credit:
+            raise HTTPException(409, "No package credit is available for this treatment")
+        promotions = []
     person, promotions, quoted = await price_welcome(
         service=service, duration=duration, addons=fields.get("addonIds") or [], zone=zone, client=client,
         incoming=incoming, promotions=promotions, settings=settings, location=location, km=km, source=source,
     )
+    if credit:
+        quoted = credit_quote(quoted, credit["unitCents"], float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     payment_policy = resolve_payment_policy(
         settings.get("paymentPolicy"), production=is_production(), explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
     )
@@ -1252,7 +1272,7 @@ async def resolve_booking(payload, user):
         "incoming": incoming, "source": source, "fields": fields, "service": service, "duration": duration,
         "location": location, "address": address, "zone": zone, "km": km, "settings": settings,
         "practitioner_id": practitioner_id, "client": client, "person": person, "promotions": promotions, "quoted": quoted,
-        "settlement": due, "paymentPolicy": payment_policy,
+        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit),
     }
 
 
@@ -1262,7 +1282,7 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     ctx = await resolve_booking(payload, await user_from(request))
     pricing = ctx["quoted"]
     return {
-        "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")),
+        "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")), "packageCredit": bool(pricing.get("packageCredit")),
         "settlement": ctx.get("settlement"), "paymentPolicy": ctx.get("paymentPolicy"),
     }
 
@@ -1365,6 +1385,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             quoted = apply_campaign_price(quoted, campaign_reservation["percent"], settings.get("gst", 0.05), campaign_reservation.get("stackable"))
     appt_id = f"a-{uuid.uuid4().hex[:8]}"
     loyalty_points = 0
+    if ctx.get("useCredit") and (payload.get("redeemPoints") or campaign_reservation):
+        await release_campaign(db, campaign_reservation)
+        if counted_online:
+            await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+        raise HTTPException(409, "A package credit does not combine with campaigns or rewards")
     if payload.get("redeemPoints") and quoted.get("welcomeOffer"):
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)
@@ -1405,7 +1430,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel")},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
@@ -1444,6 +1469,19 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             return {"appointment": existing, "clientId": client_id}
         raise HTTPException(409, "Booking could not be saved")
     appt.pop("_id", None)
+    if ctx.get("useCredit"):
+        try:
+            reserved = await reserve_credit(db, client_id, service["slug"], duration, appt["id"], user["name"] if user else "client")
+            await coll("appointments").update_one({"id": appt["id"]}, {"$set": {"creditId": reserved["id"]}})
+            appt["creditId"] = reserved["id"]
+        except HTTPException:
+            await coll("appointments").delete_one({"id": appt["id"]})
+            await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
+            await release_promotions(claimed_ids)
+            await release_welcome(welcome_token)
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise
     if payload.get("recoveryCaseId"):
         try:
             await consume_recovery_hold(db, payload["recoveryCaseId"], client_id, appt["id"])
@@ -1984,7 +2022,8 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
-    EXEMPT = {"/api/auth/login", "/api/auth/register", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/demo-login", "/api/auth/invite/accept"}
+    EXEMPT = {"/api/auth/login", "/api/auth/register", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/demo-login", "/api/auth/invite/accept",
+              "/api/auth/native/login", "/api/auth/native/mfa/verify", "/api/auth/native/refresh", "/api/auth/native/logout"}
 
     async def dispatch(self, request: Request, call_next):
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
@@ -2059,6 +2098,8 @@ app.include_router(build_messaging_router(db, coll, user_from, add_audit, recept
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
+app.include_router(build_plans_router(db, coll, add_audit, user_from))
+app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)

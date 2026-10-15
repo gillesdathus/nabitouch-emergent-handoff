@@ -18,6 +18,8 @@ from emailer import send_email
 
 ALG = "HS256"
 ACCESS_MIN, REFRESH_DAYS, MAX_FAILS, LOCK_MIN = 15, 7, 5, 15
+NATIVE_REFRESH_DAYS = 30
+NATIVE_HEADER = "x-nabitouch-client"
 RESET_MIN, RESET_MAX_PER_WINDOW = 30, 3
 
 
@@ -52,11 +54,13 @@ def provisioning_uri(email, secret):
     return f"otpauth://totp/{issuer}:{account}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
 
 
-def token(uid, kind, sid, jti=None):
-    exp = datetime.now(timezone.utc) + (timedelta(minutes=ACCESS_MIN) if kind == "access" else timedelta(days=REFRESH_DAYS))
+def token(uid, kind, sid, jti=None, native=False):
+    exp = datetime.now(timezone.utc) + (timedelta(minutes=ACCESS_MIN) if kind == "access" else timedelta(days=NATIVE_REFRESH_DAYS if native else REFRESH_DAYS))
     payload = {"sub": uid, "type": kind, "sid": sid, "exp": exp}
     if jti:
         payload["jti"] = jti
+    if native:
+        payload["cl"] = "native"
     return jwt.encode(payload, os.environ["JWT_SECRET"], algorithm=ALG)
 
 
@@ -184,7 +188,11 @@ def build_auth(db, coll, add_audit):
             return None
         if p.get("aud") == "training":
             return None
+        if p.get("cl") == "native" and not (h.startswith("Bearer ") and is_native(request)):
+            return None
         row = await live_session(p.get("sid"))
+        if row and bool(row.get("native")) != (p.get("cl") == "native"):
+            return None
         if p.get("type") != "access" or not row:
             return None
         user = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
@@ -231,10 +239,12 @@ def build_auth(db, coll, add_audit):
                 await users.insert_one({"id": str(uuid.uuid4()), "email": email, "password_hash": demo_pw, "name": name, "role": role,
                                         "subject": subject, "demo": True, "createdAt": datetime.now(timezone.utc).isoformat()})
 
-    @r.post("/login")
-    async def login(request: Request, response: Response, body: dict = Body(...)):
+    def is_native(request):
+        return request.headers.get(NATIVE_HEADER, "").strip().lower() == "native"
+
+    async def password_user(body):
         email = str(body.get("email", "")).strip().lower()
-        ident = f"email:{email}"  # per-account lockout (proxy IPs rotate behind the ingress)
+        ident = f"email:{email}"
         rec = await attempts.find_one({"identifier": ident})
         if rec and rec.get("count", 0) >= MAX_FAILS and rec.get("lockedUntil", "") > datetime.now(timezone.utc).isoformat():
             raise HTTPException(429, "Too many attempts — try again in 15 minutes")
@@ -245,6 +255,90 @@ def build_auth(db, coll, add_audit):
             await attempts.update_one({"identifier": ident}, {"$set": {"count": cnt, "lockedUntil": (datetime.now(timezone.utc) + timedelta(minutes=LOCK_MIN)).isoformat()}}, upsert=True)
             raise HTTPException(401, "Invalid email or password")
         await attempts.delete_one({"identifier": ident})
+        return u
+
+    async def native_pair(u, mfa, device):
+        sid, _csrf, jti = await open_session(u["id"], mfa=mfa)
+        expires = (datetime.now(timezone.utc) + timedelta(days=NATIVE_REFRESH_DAYS)).isoformat()
+        await sessions.update_one({"sid": sid}, {"$set": {"native": True, "device": str(device or "")[:60], "expiresAt": expires}})
+        return {"accessToken": token(u["id"], "access", sid, native=True), "refreshToken": token(u["id"], "refresh", sid, jti, native=True),
+                "tokenType": "Bearer", "expiresIn": ACCESS_MIN * 60, "user": await present(u, coll)}
+
+    def require_native(request):
+        if not is_native(request):
+            raise HTTPException(400, "Native sign-in needs the X-Nabitouch-Client: native header")
+
+    @r.post("/native/login")
+    async def native_login(request: Request, body: dict = Body(...)):
+        """Bearer session for the Capacitor app. Same password, lockout and MFA rules as the web sign-in."""
+        require_native(request)
+        u = await password_user(body)
+        enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
+        privileged = u.get("role") in ("owner", "practitioner", "desk")
+        if privileged and enrolled:
+            return {"mfaRequired": True, "challenge": _challenge_for(u, "mfa-native")}
+        if privileged and await mfa_enforcement():
+            raise HTTPException(403, "Turn on your authenticator in the web app first, then sign in here")
+        out = await native_pair(u, False, body.get("device"))
+        await add_audit(u.get("name") or u["role"], "Native app signed in", None)
+        return out
+
+    @r.post("/native/mfa/verify")
+    async def native_mfa(request: Request, body: dict = Body(...)):
+        require_native(request)
+        user = await verified_mfa_user(body, "mfa-native")
+        out = await native_pair(user, True, body.get("device"))
+        await add_audit(user.get("name") or user["role"], "Native app signed in with authenticator", None)
+        return out
+
+    def native_claim(raw, kind):
+        try:
+            p = jwt.decode(str(raw or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+        except jwt.InvalidTokenError:
+            raise HTTPException(401, "Session expired")
+        if p.get("cl") != "native" or p.get("type") != kind or not p.get("sid"):
+            raise HTTPException(401, "Session expired")
+        return p
+
+    @r.post("/native/refresh")
+    async def native_refresh(request: Request, body: dict = Body(...)):
+        """Rotating refresh. Reusing an old refresh token revokes the whole session."""
+        require_native(request)
+        p = native_claim(body.get("refreshToken"), "refresh")
+        row = await live_session(p["sid"])
+        if not row or not row.get("native") or row.get("userId") != p["sub"]:
+            raise HTTPException(401, "Session expired")
+        if row.get("refreshJti") != p.get("jti"):
+            await sessions.update_one({"sid": p["sid"]}, {"$set": {"revoked": True, "revokedReason": "refresh_reuse"}})
+            raise HTTPException(401, "Session expired")
+        account = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
+        if not account:
+            raise HTTPException(401, "Session expired")
+        if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+            raise HTTPException(401, "Sign in with your authenticator")
+        jti = secrets.token_urlsafe(16)
+        expires = (datetime.now(timezone.utc) + timedelta(days=NATIVE_REFRESH_DAYS)).isoformat()
+        swapped = await sessions.update_one({"sid": p["sid"], "refreshJti": p["jti"]}, {"$set": {"refreshJti": jti, "expiresAt": expires}})
+        if not swapped.modified_count:
+            raise HTTPException(401, "Session expired")
+        return {"accessToken": token(p["sub"], "access", p["sid"], native=True), "refreshToken": token(p["sub"], "refresh", p["sid"], jti, native=True),
+                "tokenType": "Bearer", "expiresIn": ACCESS_MIN * 60}
+
+    @r.post("/native/logout")
+    async def native_logout(request: Request, body: dict = Body(default={})):
+        require_native(request)
+        raw = (body or {}).get("refreshToken") or request.headers.get("Authorization", "")[7:]
+        try:
+            p = jwt.decode(str(raw or ""), os.environ["JWT_SECRET"], algorithms=[ALG], options={"verify_exp": False})
+            if p.get("cl") == "native":
+                await sessions.update_one({"sid": p.get("sid"), "native": True}, {"$set": {"revoked": True}})
+        except jwt.InvalidTokenError:
+            pass
+        return {"ok": True}
+
+    @r.post("/login")
+    async def login(request: Request, response: Response, body: dict = Body(...)):
+        u = await password_user(body)
         enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
         privileged = u.get("role") in ("owner", "practitioner", "desk")
         if privileged and (enrolled or await mfa_enforcement()):
@@ -437,12 +531,19 @@ def build_auth(db, coll, add_audit):
 
     @r.post("/mfa/verify")
     async def mfa_verify(response: Response, body: dict = Body(...)):
+        user = await verified_mfa_user(body, "mfa")
+        sid, csrf, jti = await open_session(user["id"], mfa=True)
+        apply_session(response, user["id"], sid, csrf, jti)
+        await add_audit(user.get("name") or user["role"], "Authenticator accepted", None)
+        return await present(user, coll)
+
+    async def verified_mfa_user(body, expected):
         from totp import matching_counter
         try:
             claim = jwt.decode(str(body.get("challenge") or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
         except jwt.InvalidTokenError:
             raise HTTPException(401, "Sign in again")
-        if claim.get("type") != "mfa":
+        if claim.get("type") != expected:
             raise HTTPException(401, "Sign in again")
         user = await users.find_one({"id": claim["sub"]})
         row = await db["nt_mfa"].find_one({"userId": claim["sub"], "enabled": True}) if user else None
@@ -464,10 +565,7 @@ def build_auth(db, coll, add_audit):
             update["$pull"] = {"recoveryHashes": recovery}
         await db["nt_mfa"].update_one({"userId": user["id"]}, update)
         await attempts.delete_one({"identifier": ident})
-        sid, csrf, jti = await open_session(user["id"], mfa=True)
-        apply_session(response, user["id"], sid, csrf, jti)
-        await add_audit(user.get("name") or user["role"], "Authenticator accepted", None)
-        return await present(user, coll)
+        return user
 
     @r.post("/mfa/disable")
     async def mfa_disable(request: Request, body: dict = Body(...)):

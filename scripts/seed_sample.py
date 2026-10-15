@@ -42,7 +42,7 @@ def pid_name(pros, pid):
 
 async def purge(db):
     for name in ("nt_clients", "nt_appointments", "nt_practitioners", "nt_plans", "nt_invoices", "nt_ledger", "nt_claims", "nt_giftcards",
-                 "nt_gc_ledger", "nt_gc_products", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
+                 "nt_gc_ledger", "nt_gc_products", "nt_plan_products", "nt_plan_purchases", "nt_credits", "nt_credit_ledger", "nt_memberships", "nt_safety_events", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
         await db[name].delete_many(SYN)
 
 
@@ -153,6 +153,35 @@ async def giftcards(db, invoices):
                                               "idempotencyKey": f"seed-{cid}-void", "at": at, "actorName": "Sample data", **SYN})
 
 
+async def wellness(db, services):
+    svc = next((x for x in services if "60" in (x.get("prices") or {})), None)
+    if not svc:
+        return
+    price60 = round(float(svc["prices"]["60"]) * 100)
+    now = datetime.now(timezone.utc)
+    products = [
+        {"id": "plp-five", "kind": "package", "name": f"{svc['name']} 5-pack", "credits": 5, "priceCents": price60 * 5 * 85 // 100, "validityDays": 365, "order": 1, "description": "Five 60-minute visits at 15% off."},
+        {"id": "plp-monthly", "kind": "membership", "name": "Monthly calm", "credits": 1, "priceCents": price60 * 90 // 100, "validityDays": 60, "order": 2, "description": "One 60-minute visit every month."},
+    ]
+    for p in products:
+        await db.nt_plan_products.insert_one({**p, "serviceSlug": svc["slug"], "serviceName": svc["name"], "duration": 60, "status": "published", "regularCents": price60 * p["credits"],
+                                              "createdAt": now.isoformat(), **SYN})
+    unit = products[0]["priceCents"] // 5
+    paid = (now - timedelta(days=40)).isoformat()
+    await db.nt_plan_purchases.insert_one({"id": "pp-sample1", "idempotencyKey": "seed-pp-sample1", "productId": "plp-five", "productName": products[0]["name"], "kind": "package", "clientId": "c-sarah",
+                                           "serviceSlug": svc["slug"], "serviceName": svc["name"], "duration": 60, "credits": 5, "priceCents": products[0]["priceCents"], "taxCents": round(products[0]["priceCents"] * 0.05),
+                                           "totalCents": products[0]["priceCents"] + round(products[0]["priceCents"] * 0.05), "unitCents": unit, "validityDays": 365, "status": "paid", "refundedCents": 0,
+                                           "createdAt": paid, "paidAt": paid, **SYN})
+    for n in range(5):
+        state = "consumed" if n < 2 else "available"
+        cid = f"cr-sample1-{n + 1}"
+        await db.nt_credits.insert_one({"id": cid, "purchaseId": "pp-sample1", "productId": "plp-five", "clientId": "c-sarah", "kind": "package", "serviceSlug": svc["slug"], "duration": 60, "unitCents": unit,
+                                        "state": state, "appointmentId": None, "issuedAt": paid, "expiresAt": (now + timedelta(days=325)).isoformat(), "consumedAt": (now - timedelta(days=20 - n * 7)).isoformat() if state == "consumed" else None, **SYN})
+        for kind in (["issued", "consumed"] if state == "consumed" else ["issued"]):
+            await db.nt_credit_ledger.insert_one({"id": f"cl-{cid}-{kind}", "creditId": cid, "purchaseId": "pp-sample1", "clientId": "c-sarah", "type": kind, "unitCents": unit, "actor": "Sample data",
+                                                  "idempotencyKey": f"seed-{cid}-{kind}", "at": paid, **SYN})
+
+
 async def conversations(db, appts):
     live = [a for a in appts if a["status"] in ("en_route", "assigned", "in_session")][:3]
     now = datetime.now(timezone.utc)
@@ -206,6 +235,7 @@ async def main():
             await db.nt_claims.insert_many(claims)
         invoices.append(inv)
     await giftcards(db, invoices)
+    await wellness(db, services)
     await conversations(db, appts)
     for c in clients:
         await db.nt_consents.insert_one({"id": f"cns-{c['id']}", "clientId": c["id"], "kind": "treatment_consent", "purpose": "Massage treatment", "version": "2026.1",

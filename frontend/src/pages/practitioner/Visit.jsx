@@ -12,6 +12,9 @@ import { useTrackingPublisher } from "@/lib/tracking/useTrackingPublisher";
 import { isLiveTrial, useLiveSession, shouldShowPosition } from "@/lib/tracking/live";
 import { etaCopy } from "@/lib/tracking/providers";
 import { Notice, Stepper } from "@/components/tide";
+import { SafetyCenter } from "@/components/SafetyCenter";
+
+const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
 
 function SessionTimer({ appt }) {
   const { api, run } = useDemo();
@@ -159,6 +162,8 @@ export default function Visit() {
         </div>
       </div>
 
+      {appt.status === "safety_hold" && <Notice tone="warn" icon={AlertTriangle} className="!bg-rose-50 !text-rose-900" testid="visit-safety-hold">This visit is on safety hold. The owner or a safety manager decides how it continues. No penalty is applied automatically.</Notice>}
+      {SAFETY_STATUSES.includes(appt.status) && <SafetyCenter appt={appt} />}
       <div className="nb-card rounded-[28px] p-5"><Stepper steps={["Prepare", "En route", "Arrived", "Session", "Done"]} current={["preparing", "en_route", "arrived", "in_session", "completed"].indexOf(appt.status)} testid="visit-stepper" /><p className="nb-label mt-4 flex items-center gap-2"><Timer className="h-4 w-4" />Visit timeline</p><OpsTimeline appt={appt} /></div>
       {late && (
         <div className="nb-card space-y-3 p-4" data-testid="visit-delay-sheet">

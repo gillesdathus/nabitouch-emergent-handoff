@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from billing import public_invoice
 from pdfbrand import report_pdf
 from config import statement_email_enabled
+from plans import plans_report
 
 KINDS = {
     "revenue": "Revenue report",
@@ -20,6 +21,7 @@ KINDS = {
     "retention": "Client retention",
     "services": "Service performance",
     "refunds": "Refunds & discounts",
+    "plans": "Wellness plans & deferred revenue",
 }
 
 DEFAULT_RULES = {"default": {"type": "commission", "practitionerPct": 70}, "includeTravel": False, "overrides": {}}
@@ -32,7 +34,7 @@ def pay_base(view, include_travel):
     for line in view["lines"]:
         cents = int(line.get("netCents") or 0)
         desc = line.get("description") or ""
-        if desc in PAY_LINES or cents < 0 and line.get("taxCode") != "adjustment" or (include_travel and desc == "Travel"):
+        if desc in PAY_LINES or cents < 0 and line.get("taxCode") not in ("adjustment", "prepaid_credit") or (include_travel and desc == "Travel"):
             base += cents
     return max(0, base)
 
@@ -277,7 +279,7 @@ def build_finance_router(db, user_from, settings_doc):
                 continue
             for line in v["lines"]:
                 cents = int(line.get("netCents") or 0)
-                if cents < 0 and line.get("taxCode") != "adjustment":
+                if cents < 0 and line.get("taxCode") not in ("adjustment", "prepaid_credit"):
                     disc_total += -cents
                     by_label[line.get("description") or "Discount"] = by_label.get(line.get("description") or "Discount", 0) - cents
                     rows.append([_day(v["serviceDate"]), v["number"], v["clientName"], "discount", line.get("description") or "", cad(cents)])
@@ -287,7 +289,7 @@ def build_finance_router(db, user_from, settings_doc):
         return kpis, ["Date", "Invoice", "Client", "Type", "Detail", "Amount"], rows, groups
 
     BUILDERS = {"revenue": revenue, "collections": collections, "outstanding": outstanding, "insurance": insurance, "giftcards": giftcards, "earnings": earnings,
-                "retention": retention, "services": services, "refunds": refunds}
+                "retention": retention, "services": services, "refunds": refunds, "plans": lambda start, end, pid: plans_report(db, start, end)}
 
     def period(start, end):
         today = datetime.now(timezone.utc).date()

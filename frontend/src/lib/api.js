@@ -1,9 +1,12 @@
 // Authenticated API client for the Nabitouch FastAPI service.
 import axios from 'axios';
+import { attachNative, isNative, nativeAuth } from './native';
 
 const http = axios.create({ baseURL: `${process.env.REACT_APP_BACKEND_URL}/api`, withCredentials: true });
 const data = (r) => r.data;
 let refreshing = null;
+attachNative(http);
+const native = nativeAuth(http);
 const csrfToken = () => {
   const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -20,6 +23,9 @@ http.interceptors.response.use(null, async (err) => {
   const cfg = err.config;
   if (err.response?.status === 401 && !cfg._retry && !cfg.url.startsWith('/auth/') && !String(cfg.url).includes('/training/')) {
     cfg._retry = true;
+    if (isNative()) {
+      try { await native.refresh(); delete cfg.headers.Authorization; return http(cfg); } catch { return Promise.reject(err); }
+    }
     try { refreshing = refreshing || http.post('/auth/refresh'); await refreshing; refreshing = null; return http(cfg); } catch { refreshing = null; }
   }
   return Promise.reject(err);
@@ -31,12 +37,12 @@ export const api = {
   state: () => http.get('/state').then(data),
   me: () => http.get('/auth/me').then(data),
   authConfig: () => http.get('/auth/config').then(data),
-  login: (email, password) => http.post('/auth/login', { email, password }).then(data),
+  login: (email, password) => (isNative() ? native.login(email, password) : http.post('/auth/login', { email, password }).then(data)),
   register: (body) => http.post('/auth/register', body).then(data),
   forgotPassword: (email) => http.post('/auth/forgot-password', { email }).then(data),
   resetPassword: (token, password) => http.post('/auth/reset-password', { token, password }).then(data),
   demoLogin: (role, subject) => http.post('/auth/demo-login', { role, subject }).then(data),
-  logout: () => http.post('/auth/logout').then(data),
+  logout: () => (isNative() ? native.logout() : http.post('/auth/logout').then(data)),
   staff: () => http.get('/auth/staff').then(data),
   createStaff: (body) => http.post('/auth/staff', body).then(data),
   inviteStaff: (body) => http.post('/auth/staff/invite', body).then(data),
@@ -78,7 +84,7 @@ export const api = {
   addCredential: (body) => http.post('/credentials', body).then(data),
   verifyCredential: (id) => http.post(`/credentials/${id}/verify`, {}).then(data),
   mobileBrief: (id) => http.get(`/appointments/${id}/mobile-brief`).then(data),
-  mfaVerify: (challenge, code) => http.post('/auth/mfa/verify', { challenge, code }).then(data),
+  mfaVerify: (challenge, code) => (isNative() ? native.mfaVerify(challenge, code) : http.post('/auth/mfa/verify', { challenge, code }).then(data)),
   mfaEnroll: () => http.post('/auth/mfa/enroll', {}).then(data),
   mfaConfirm: (code) => http.post('/auth/mfa/confirm', { code }).then(data),
   mfaEnrollChallenge: (challenge) => http.post('/auth/mfa/enroll', { challenge }).then(data),
@@ -223,4 +229,28 @@ export const api = {
   messagePresets: () => http.get('/messages/presets').then(data),
   inbox: () => http.get('/inbox').then(data),
   notificationChannels: () => http.get('/notifications/channels').then(data),
+  plansPublished: () => http.get('/plans').then(data),
+  plansMine: () => http.get('/plans/mine').then(data),
+  planCheckout: (id, idempotencyKey) => http.post(`/plans/${id}/checkout`, { idempotencyKey }).then(data),
+  planSubscribe: (id, idempotencyKey) => http.post(`/plans/memberships/${id}/subscribe`, { idempotencyKey }).then(data),
+  planReturn: (sessionId) => http.get('/plans/return', { params: { session_id: sessionId } }).then(data),
+  planCancelMembership: (id) => http.post(`/plans/memberships/${id}/cancel`, {}).then(data),
+  planProducts: () => http.get('/plans/products').then(data),
+  planCreateProduct: (body) => http.post('/plans/products', body).then(data),
+  planUpdateProduct: (id, body) => http.put(`/plans/products/${id}`, body).then(data),
+  planProductStatus: (id, status) => http.post(`/plans/products/${id}/status`, { status }).then(data),
+  planPurchases: () => http.get('/plans/purchases').then(data),
+  planMemberships: () => http.get('/plans/memberships').then(data),
+  planRefund: (id, body) => http.post(`/plans/purchases/${id}/refund`, body).then(data),
+  visitSafety: (id) => http.get(`/appointments/${id}/safety`).then(data),
+  safetyCheck: (id, step) => http.post(`/appointments/${id}/safety/${step}`, {}).then(data),
+  reportIncident: (id, body) => http.post(`/appointments/${id}/incidents`, body).then(data),
+  requestAssist: (id, note) => http.post(`/appointments/${id}/assist`, { note }).then(data),
+  logEmergencyCall: (id) => http.post(`/appointments/${id}/emergency-call`, {}).then(data),
+  safetyEvents: (status) => http.get('/safety/events', { params: status ? { status } : {} }).then(data),
+  safetyAck: (id) => http.post(`/safety/events/${id}/ack`, {}).then(data),
+  safetyResolve: (id, body) => http.post(`/safety/events/${id}/resolve`, body).then(data),
+  safetyManagers: () => http.get('/safety/managers').then(data),
+  saveSafetyManagers: (managers) => http.put('/safety/managers', { managers }).then(data),
+  safetyMe: () => http.get('/safety/me').then(data),
 };
