@@ -142,18 +142,12 @@ export default function Home() {
 
       {eligible && <PromoBanner eligible={eligible} testid="home-promo-banner" />}
 
-      <section className="grid gap-3 pb-6 sm:grid-cols-2">
+      <section className={`grid gap-3 pb-6 ${clinicOpen ? "sm:grid-cols-2" : ""}`}>
         <Link to="/practitioners" data-testid="home-practitioners" className="nb-card flex items-center gap-4 p-5 transition-transform hover:-translate-y-0.5">
           <div className="flex -space-x-3">{people.slice(0, 3).map((person) => <TideAvatar key={person.id} person={person} size={44} />)}</div>
           <div className="flex-1"><p className="font-semibold">Meet our therapists</p><p className="text-xs text-nb-mute">Profiles, specialties and booking</p></div>
           <ArrowRight className="h-4 w-4 text-nb-blue" />
         </Link>
-        {!clinicOpen && (
-          <div data-testid="clinic-tile-disabled" className="flex items-center gap-4 rounded-3xl bg-slate-100 p-5 opacity-80">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-nb-mute"><Building2 className="h-5 w-5" /></span>
-            <div><p className="font-semibold text-nb-mute">In-clinic visits</p><p className="text-xs text-nb-mute">Not available for online booking yet</p></div>
-          </div>
-        )}
         {clinicOpen && <Notice tone="info" icon={Building2}>In-clinic booking is open. Choose it in the booking flow.</Notice>}
       </section>
     </div>

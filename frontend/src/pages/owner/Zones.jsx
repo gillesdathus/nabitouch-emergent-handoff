@@ -1,3 +1,4 @@
+import { WhatsAppSettings } from "@/components/WhatsAppSettings";
 import { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { ZoneMap, SectionHead } from "@/components/ui-kit";
@@ -93,6 +94,8 @@ export default function Zones() {
         </div>
         <label className="nb-card flex items-center justify-between p-4 text-sm"><span><b>Activate in-clinic booking</b><span className="block text-xs text-nb-mute">{clinicBookable(clinic) ? clinic.address : "Needs a real street address first"}</span></span><Switch checked={clinic.enabled === true && clinicBookable(clinic)} onCheckedChange={(v) => save({ clinic: { ...clinic, address: address.trim(), enabled: v } }, `In-clinic ${v ? "enabled" : "disabled"}`)} data-testid="settings-clinic-switch" /></label>
       </div>
+      <SectionHead eyebrow="Contact" title="WhatsApp on public pages" className="mt-10" />
+      <div className="grid gap-4 md:grid-cols-2"><WhatsAppSettings settings={idx.settings} save={save} /></div>
       <SectionHead eyebrow="Payments" title="What the customer pays now" className="mt-10" />
       <div className="grid gap-4 md:grid-cols-2">
         <label className="nb-card flex items-center justify-between p-4 text-sm"><span><b>Accept cash</b><span className="block text-xs text-nb-mute">Cash is recorded at the visit. It is not a prepayment.</span></span><Switch checked={!!policy.cashAccepted} onCheckedChange={(v) => save({ cashEnabled: v, paymentPolicy: { ...policy, cashAccepted: v } }, `Cash ${v ? "accepted" : "turned off"}`)} data-testid="settings-cash-switch" /></label>

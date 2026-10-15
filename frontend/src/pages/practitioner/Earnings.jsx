@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { StatementRow } from "@/components/reports/Statements";
+import { api } from "@/lib/api";
 import { Wallet } from "lucide-react";
 import { Notice, PageHeader } from "@/components/tide";
 import { Breathing } from "@/components/brand";
@@ -12,9 +14,11 @@ export default function Earnings() {
   const [range, setRange] = useState(presetRange("half"));
   const report = useReport("earnings", range, "");
   const lead = report.data?.kpis?.[0];
+  const [statements, setStatements] = useState(undefined);
+  useEffect(() => { api.statements().then(setStatements).catch(() => setStatements([])); }, []);
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 nb-page" data-testid="pro-earnings-page">
-      <PageHeader eyebrow="Earnings" title={`Your work${me?.name ? `, ${me.name.split(" ")[0]}` : ""}`} sub="Revenue from your issued invoices. Download a branded statement for any period." />
+      <PageHeader eyebrow="Earnings" title={`Your work${me?.name ? `, ${me.name.split(" ")[0]}` : ""}`} sub="Approved pay statements, plus a live estimate from your issued invoices and your pay rule." />
       <section className="relative mb-6 overflow-hidden rounded-[32px] p-6 text-white nb-lagoon" data-testid="earnings-hero">
         <Breathing leaves={false} className="opacity-60" />
         <div className="relative flex flex-wrap items-end justify-between gap-4">
@@ -22,6 +26,13 @@ export default function Earnings() {
           <DownloadButtons kind="earnings" params={report.params} />
         </div>
       </section>
+      <section className="mb-8" data-testid="pro-statements">
+        <h2 className="mb-3 text-lg font-semibold">Approved statements</h2>
+        {statements === undefined && <div className="h-20 rounded-3xl nb-skeleton" />}
+        {statements?.length === 0 && <p className="text-sm text-nb-mute" data-testid="pro-statements-empty">Your statements appear here as soon as Nabitouch approves them.</p>}
+        <div className="space-y-2">{statements?.map((s) => <StatementRow key={s.id} s={s} />)}</div>
+      </section>
+      <h2 className="mb-3 text-lg font-semibold">Live estimate</h2>
       <div className="mb-5"><RangePicker range={range} setRange={setRange} presets={PRO_PRESETS} /></div>
       <ReportBody report={report} />
       <Notice className="mt-6" testid="earnings-note">This statement shows the revenue attributed to your visits. It is not a payroll or tax document; your compensation terms are set with Nabitouch.</Notice>

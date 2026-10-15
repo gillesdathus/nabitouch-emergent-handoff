@@ -90,3 +90,13 @@ No duplicate APIs were created. M3 (approved scope) implemented rows 1, 2, 3, 4,
 | `/me/gifts` | Client | Card checkout through Stripe test (`POST /giftcards/{id}/checkout`). Needs both GIFTCARDS_ENABLED and card checkout. The webhook activates the card once per event |
 | `/contact` | Public | Phone, WhatsApp and email cards (+1 780-235-6508, info@nabitouch.com) |
 | All shells | All | The mobile header shows only the emblem |
+
+## Milestone 5 additions
+| Item | Status |
+| --- | --- |
+| Pay rules `GET/PUT /finance/pay-rules` | Default 70/30 split (configurable). Per-practitioner overrides: split % or hourly. Travel in the commission base is optional |
+| Practitioner statements `/finance/statements` (generate, approve, delete draft, PDF) | Owner generates drafts. Approval makes a statement downloadable by that practitioner straight away. Practitioners see only their own approved statements |
+| Reports: retention, services, refunds | Implemented in `finance.py`, with JSON, CSV and PDF |
+| In-clinic | Hidden on Home while `settings.clinic.enabled` is false (Zones admin) |
+| WhatsApp button | `settings.whatsapp.pages` (default `/contact`) is edited in Owner → Zones → "WhatsApp on public pages" |
+| Sample data | `scripts/seed_sample.py`: flagged `synthetic`, idempotent, refuses to run in production |

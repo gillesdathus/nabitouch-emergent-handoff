@@ -312,7 +312,7 @@ async def ops_status(request: Request):
     }
 
 
-PUBLIC_SETTINGS = ("id", "gst", "cashEnabled", "clinic", "addons", "center")
+PUBLIC_SETTINGS = ("id", "gst", "cashEnabled", "clinic", "addons", "center", "whatsapp")
 CLIENT_SETTINGS = PUBLIC_SETTINGS + ("liveGpsPractitionerId",)
 DESK_SETTINGS = CLIENT_SETTINGS + ("receptionPerms",)
 PRACTITIONER_HIDDEN = {"base", "licenseExpiry", "insuranceExpiry"}
@@ -1571,7 +1571,7 @@ CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "do
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
                 "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
-SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy"}
+SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
 
 
@@ -1893,6 +1893,11 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             session = await db.nt_sessions.find_one({"sid": user.get("sid"), "revoked": False})
             if not session or not session.get("mfaAt"):
                 raise HTTPException(403, "Confirm your authenticator before changing staff sign-in requirements")
+        if "whatsapp" in doc:
+            wa = doc["whatsapp"] if isinstance(doc["whatsapp"], dict) else {}
+            pages = [str(x)[:60] for x in (wa.get("pages") or []) if isinstance(x, str) and x.startswith("/")][:20]
+            phone = "".join(ch for ch in str(wa.get("phone") or "") if ch.isdigit() or ch == "+")[:16]
+            doc["whatsapp"] = {"pages": pages, "phone": phone or "+17802356508"}
         if "clinic" in doc:
             try:
                 doc["clinic"] = validate_clinic({**(target.get("clinic") or {}), **doc["clinic"]})

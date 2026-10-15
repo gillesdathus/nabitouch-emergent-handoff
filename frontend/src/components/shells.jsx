@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Attribution, Lockup, Logo } from "@/components/brand";
+import { WhatsAppFab } from "@/components/ContactCards";
 import { Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
@@ -163,7 +164,10 @@ export function AccountMenu() {
 }
 
 export function ClientShell() {
-  const { me } = useDemo();
+  const { me, idx } = useDemo();
+  const wa = idx?.settings?.whatsapp || {};
+  const waPages = wa.pages || ["/contact"];
+  const showWa = waPages.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const headerLinks = PUBLIC_NAV.filter((item) => item.to !== "/me");
@@ -204,6 +208,7 @@ export function ClientShell() {
         )}
       </header>
       <main className="flex-1 pb-28 lg:pb-10"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
+      {showWa && <WhatsAppFab phone={wa.phone || "+17802356508"} />}
       <FloatingNav items={BOTTOM_NAV} testid="client-bottom" />
     </div>
   );

@@ -21,6 +21,8 @@ export default function Practitioners() {
             <Reveal key={person.id} i={index}>
               <Link to={`/practitioners/${practitionerSlug(person)}`} data-testid={`practitioner-card-${person.id}`} className="group relative block h-64 overflow-hidden rounded-[28px] tint-ice">
                 <CatalogueImage src={person.photo} alt="" size="thumb" className="absolute bottom-0 right-0 h-full w-3/5 object-cover object-top transition-transform duration-500 group-hover:scale-105" />
+                <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-3/5" style={{ background: "linear-gradient(90deg, #E8F6FE 0%, rgba(232,246,254,0.85) 18%, rgba(232,246,254,0.35) 42%, rgba(232,246,254,0) 65%)" }} />
+                <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#E8F6FE]/70 to-transparent" />
                 <div className="relative flex h-full flex-col p-5">
                   {specialty && <span className="inline-flex h-6 w-fit items-center rounded-full bg-white px-2.5 text-[11px] font-semibold text-nb-teal ring-1 ring-inset ring-nb-turq/30">{specialty}</span>}
                   <p className="mt-3 max-w-[52%] text-xl font-semibold leading-tight">{person.name}</p>

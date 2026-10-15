@@ -1,6 +1,7 @@
 """Financial reports from the invoice ledger, gift-card ledger and claims. JSON, CSV and branded PDF."""
 import csv
 import io
+import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -15,7 +16,38 @@ KINDS = {
     "insurance": "Insurance receivables",
     "giftcards": "Gift-card liability",
     "earnings": "Practitioner earnings",
+    "retention": "Client retention",
+    "services": "Service performance",
+    "refunds": "Refunds & discounts",
 }
+
+DEFAULT_RULES = {"default": {"type": "commission", "practitionerPct": 70}, "includeTravel": False, "overrides": {}}
+PAY_LINES = ("Treatment", "Enhancements")
+
+
+def pay_base(view, include_travel):
+    """Commission base: treatment, enhancements and discounts, before GST. Travel only when configured."""
+    base = 0
+    for line in view["lines"]:
+        cents = int(line.get("netCents") or 0)
+        desc = line.get("description") or ""
+        if desc in PAY_LINES or cents < 0 and line.get("taxCode") != "adjustment" or (include_travel and desc == "Travel"):
+            base += cents
+    return max(0, base)
+
+
+def rule_for(rules, pid):
+    return (rules.get("overrides") or {}).get(pid) or rules.get("default") or DEFAULT_RULES["default"]
+
+
+def visit_pay(view, rule, include_travel):
+    if rule.get("type") == "hourly":
+        return round(int(rule.get("hourlyCents") or 0) * int(view.get("duration") or 0) / 60)
+    return round(pay_base(view, include_travel) * float(rule.get("practitionerPct") or 0) / 100)
+
+
+def rule_label(rule):
+    return f"Hourly {cad(rule.get('hourlyCents'))}/h" if rule.get("type") == "hourly" else f"{rule.get('practitionerPct')}/{100 - float(rule.get('practitionerPct') or 0):g} split"
 
 
 def cad(cents):
@@ -147,29 +179,114 @@ def build_finance_router(db, user_from, settings_doc):
                 ("Awaiting payment", str(sum(1 for c in cards if c["status"] == "pending_payment")))]
         return kpis, ["Date", "Card", "Type", "Reference", "Amount"], rows, []
 
+    async def rules():
+        doc = await db.nt_pay_rules.find_one({"id": "rules"}, {"_id": 0}) or {}
+        return {**DEFAULT_RULES, **{k: v for k, v in doc.items() if k != "id"}}
+
     async def earnings(start, end, pid):
         per, rows = {}, []
+        pay_rules = await rules()
         for v, _raw in await views(start, end, pid):
             if v["state"] == "voided":
                 continue
             key = v["practitionerName"] or "Unassigned"
             net = sum(int(l.get("netCents") or 0) for l in v["lines"])
             collected = v["received"]["cents"] - v["refunded"]["cents"]
-            p = per.setdefault(key, {"visits": 0, "net": 0, "total": 0, "collected": 0, "outstanding": 0, "insPending": 0})
+            rule = rule_for(pay_rules, v.get("practitionerId") or "")
+            pay = visit_pay(v, rule, pay_rules.get("includeTravel"))
+            p = per.setdefault(key, {"visits": 0, "net": 0, "total": 0, "collected": 0, "outstanding": 0, "insPending": 0, "pay": 0, "rule": rule_label(rule)})
+            p["pay"] += pay
             p["visits"] += 1
             p["net"] += net
             p["total"] += v["total"]["cents"]
             p["collected"] += collected
             p["outstanding"] += v["balance"]["cents"]
             p["insPending"] += v["expectedInsurance"]["cents"]
-            rows.append([_day(v["serviceDate"]), v["number"], v["service"], key, cad(net), cad(v["total"]["cents"]), cad(collected), cad(v["balance"]["cents"])])
+            rows.append([_day(v["serviceDate"]), v["number"], v["service"], key, cad(net), cad(collected), cad(v["balance"]["cents"]), cad(pay)])
         rows.sort(key=lambda x: x[0])
-        t = {k: sum(p[k] for p in per.values()) for k in ("visits", "net", "total", "collected", "outstanding", "insPending")}
-        kpis = [("Treatment revenue (net of GST)", cad(t["net"])), ("Visits", str(t["visits"])), ("Invoiced incl. GST", cad(t["total"])), ("Collected", cad(t["collected"])), ("Outstanding", cad(t["outstanding"])), ("Insurance pending", cad(t["insPending"]))]
-        groups = [("By practitioner", ["Practitioner", "Visits", "Net revenue", "Collected", "Outstanding"], [[k, p["visits"], cad(p["net"]), cad(p["collected"]), cad(p["outstanding"])] for k, p in sorted(per.items())], [3, 1, 2, 2, 2])]
-        return kpis, ["Date", "Invoice", "Service", "Practitioner", "Net", "Total", "Collected", "Balance"], rows, groups
+        t = {k: sum(p[k] for p in per.values()) for k in ("visits", "net", "total", "collected", "outstanding", "insPending", "pay")}
+        kpis = [("Practitioner pay (per rules)", cad(t["pay"])), ("Treatment revenue (net of GST)", cad(t["net"])), ("Visits", str(t["visits"])), ("Invoiced incl. GST", cad(t["total"])), ("Collected", cad(t["collected"])), ("Outstanding", cad(t["outstanding"])), ("Insurance pending", cad(t["insPending"]))]
+        groups = [("By practitioner", ["Practitioner", "Rule", "Pay", "Visits", "Net revenue"], [[k, p["rule"], cad(p["pay"]), p["visits"], cad(p["net"])] for k, p in sorted(per.items())], [3, 2, 2, 1, 2])]
+        return kpis, ["Date", "Invoice", "Service", "Practitioner", "Net", "Collected", "Balance", "Pay"], rows, groups
 
-    BUILDERS = {"revenue": revenue, "collections": collections, "outstanding": outstanding, "insurance": insurance, "giftcards": giftcards, "earnings": earnings}
+    async def retention(start, end, pid):
+        span = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+        prev_end = (date.fromisoformat(start).toordinal() - 1)
+        prev_start = date.fromordinal(prev_end - span + 1).isoformat()
+        prev_end = date.fromordinal(prev_end).isoformat()
+        everything = [v for v, _ in await views("0000-01-01", "9999-12-31", pid) if v["state"] != "voided"]
+        first = {}
+        for v in everything:
+            cid = v.get("clientId") or v.get("clientName")
+            first[cid] = min(first.get(cid, "9999"), _day(v["serviceDate"]))
+        def active(a, b):
+            out = {}
+            for v in everything:
+                if a <= _day(v["serviceDate"]) <= b:
+                    out.setdefault(v.get("clientId") or v.get("clientName"), []).append(v)
+            return out
+        now_set, prev_set = active(start, end), active(prev_start, prev_end)
+        lifetime = {}
+        for v in everything:
+            lifetime[v.get("clientId") or v.get("clientName")] = lifetime.get(v.get("clientId") or v.get("clientName"), 0) + 1
+        rows = []
+        for cid, vs in now_set.items():
+            status = "New" if start <= first[cid] <= end else "Returning"
+            rows.append([vs[0]["clientName"], status, len(vs), lifetime[cid], first[cid], max(_day(x["serviceDate"]) for x in vs), cad(sum(x["total"]["cents"] for x in vs))])
+        rows.sort(key=lambda r: r[0] or "")
+        kept = len(set(prev_set) & set(now_set))
+        rate = f"{round(100 * kept / len(prev_set))}%" if prev_set else "—"
+        new = sum(1 for r in rows if r[1] == "New")
+        kpis = [("Retention vs previous period", rate), ("Active clients", str(len(rows))), ("New clients", str(new)), ("Returning clients", str(len(rows) - new)),
+                ("Visits per client", f"{(sum(r[2] for r in rows) / len(rows)):.1f}" if rows else "—"), ("Previous period clients", str(len(prev_set)))]
+        groups = [("Mix", ["Segment", "Clients"], [["New", new], ["Returning", len(rows) - new]], [3, 1])]
+        return kpis, ["Client", "Status", "Visits", "Lifetime", "First visit", "Last visit", "Revenue"], rows, groups
+
+    async def services(start, end, pid):
+        per = {}
+        for v, _raw in await views(start, end, pid):
+            if v["state"] == "voided":
+                continue
+            p = per.setdefault(v["service"] or "—", {"visits": 0, "net": 0, "minutes": 0, "discount": 0})
+            p["visits"] += 1
+            p["net"] += sum(int(l.get("netCents") or 0) for l in v["lines"])
+            p["minutes"] += int(v.get("duration") or 0)
+            p["discount"] += -sum(int(l.get("netCents") or 0) for l in v["lines"] if int(l.get("netCents") or 0) < 0)
+        total = sum(p["net"] for p in per.values()) or 1
+        rows = sorted([[k, p["visits"], f"{round(100 * p['net'] / total)}%", f"{round(p['minutes'] / p['visits'])} min", cad(p["discount"]), cad(round(p["net"] / p["visits"])), cad(p["net"])] for k, p in per.items()], key=lambda r: -int(r[1]))
+        visits = sum(p["visits"] for p in per.values())
+        kpis = [("Service revenue (net)", cad(sum(p["net"] for p in per.values()))), ("Visits", str(visits)), ("Services booked", str(len(per))),
+                ("Average ticket", cad(round(sum(p["net"] for p in per.values()) / visits)) if visits else "—"), ("Top service", rows[0][0] if rows else "—")]
+        groups = [("Revenue by service", ["Service", "Revenue"], [[r[0], r[6]] for r in rows], [3, 1])]
+        return kpis, ["Service", "Visits", "Share", "Avg length", "Discounts", "Avg ticket", "Net revenue"], rows, groups
+
+    async def refunds(start, end, pid):
+        rows, ref_total, disc_total = [], 0, 0
+        lines = [l for l in await db.nt_ledger.find({"type": {"$in": ["refund", "reversal"]}}, {"_id": 0}).to_list(50000) if start <= _day(l.get("at")) <= end]
+        invs = {i["id"]: i for i in await db.nt_invoices.find({"id": {"$in": list({l["invoiceId"] for l in lines})}}, {"_id": 0}).to_list(20000)} if lines else {}
+        for l in lines:
+            inv = invs.get(l["invoiceId"]) or {}
+            if pid and inv.get("practitionerId") != pid:
+                continue
+            ref_total += int(l["amountCents"])
+            rows.append([_day(l["at"]), inv.get("number") or "", inv.get("clientName") or "", l["type"], (l.get("reference") or l.get("method") or "")[:28], cad(-int(l["amountCents"]))])
+        by_label = {}
+        for v, _raw in await views(start, end, pid):
+            if v["state"] == "voided":
+                continue
+            for line in v["lines"]:
+                cents = int(line.get("netCents") or 0)
+                if cents < 0 and line.get("taxCode") != "adjustment":
+                    disc_total += -cents
+                    by_label[line.get("description") or "Discount"] = by_label.get(line.get("description") or "Discount", 0) - cents
+                    rows.append([_day(v["serviceDate"]), v["number"], v["clientName"], "discount", line.get("description") or "", cad(cents)])
+        rows.sort(key=lambda r: r[0])
+        kpis = [("Refunds & discounts", cad(ref_total + disc_total)), ("Refunds & reversals", cad(ref_total)), ("Discounts given", cad(disc_total)), ("Entries", str(len(rows)))]
+        groups = [("Discounts by promotion", ["Promotion", "Amount"], sorted([[k, cad(c)] for k, c in by_label.items()]), [3, 1])]
+        return kpis, ["Date", "Invoice", "Client", "Type", "Detail", "Amount"], rows, groups
+
+    BUILDERS = {"revenue": revenue, "collections": collections, "outstanding": outstanding, "insurance": insurance, "giftcards": giftcards, "earnings": earnings,
+                "retention": retention, "services": services, "refunds": refunds}
 
     def period(start, end):
         today = datetime.now(timezone.utc).date()
@@ -222,5 +339,119 @@ def build_finance_router(db, user_from, settings_doc):
                 "groups": [{"title": g[0], "headers": g[1], "rows": g[2]} for g in groups], "headers": headers,
                 "rows": rows[(page - 1) * limit: page * limit], "total": len(rows), "page": page, "limit": limit,
                 "basis": "Figures come from issued invoices and confirmed ledger entries. Insurance counts only when received."}
+
+    async def owner(request):
+        user = await user_from(request)
+        if not user:
+            raise HTTPException(401, "Not authenticated")
+        if user["role"] != "owner":
+            raise HTTPException(403, "Only the owner can do that")
+        return user
+
+    def clean_rule(rule):
+        if not isinstance(rule, dict):
+            raise HTTPException(400, "Invalid pay rule")
+        if rule.get("type") == "hourly":
+            cents = rule.get("hourlyCents")
+            if not isinstance(cents, int) or not 0 < cents <= 100000:
+                raise HTTPException(400, "Hourly rate must be between $0.01 and $1,000")
+            return {"type": "hourly", "hourlyCents": cents}
+        pct = rule.get("practitionerPct")
+        if not isinstance(pct, (int, float)) or not 0 <= pct <= 100:
+            raise HTTPException(400, "The practitioner share must be 0 to 100%")
+        return {"type": "commission", "practitionerPct": round(float(pct), 2)}
+
+    @r.get("/pay-rules")
+    async def get_rules(request: Request):
+        await owner(request)
+        return await rules()
+
+    @r.put("/pay-rules")
+    async def put_rules(request: Request):
+        user = await owner(request)
+        body = await request.json()
+        saved = {"default": clean_rule(body.get("default") or {}), "includeTravel": bool(body.get("includeTravel")),
+                 "overrides": {str(k)[:40]: clean_rule(v) for k, v in (body.get("overrides") or {}).items() if v}}
+        await db.nt_pay_rules.update_one({"id": "rules"}, {"$set": {**saved, "updatedBy": user.get("name"), "updatedAt": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+        return {**saved}
+
+    def statement_view(row, full=True):
+        out = {k: row.get(k) for k in ("id", "practitionerId", "practitionerName", "start", "end", "status", "createdAt", "approvedAt", "approvedBy", "rule")}
+        out["kpis"] = row["kpis"]
+        if full:
+            out["headers"], out["rows"] = row["headers"], row["rows"]
+        return out
+
+    @r.post("/statements")
+    async def create_statements(request: Request):
+        user = await owner(request)
+        body = await request.json()
+        start, end = period(body.get("start"), body.get("end"))
+        target = str(body.get("practitionerId") or "all")
+        pay_rules = await rules()
+        grouped = {}
+        for v, _raw in await views(start, end, "" if target == "all" else target):
+            if v["state"] != "voided" and v.get("practitionerId"):
+                grouped.setdefault(v["practitionerId"], []).append(v)
+        created = []
+        for pid, vs in grouped.items():
+            rule = rule_for(pay_rules, pid)
+            rows, pay, net = [], 0, 0
+            for v in sorted(vs, key=lambda x: _day(x["serviceDate"])):
+                amount = visit_pay(v, rule, pay_rules.get("includeTravel"))
+                base = pay_base(v, pay_rules.get("includeTravel"))
+                pay += amount
+                net += base
+                rows.append([_day(v["serviceDate"]), v["number"], v["service"], f"{v.get('duration') or ''} min", cad(base), cad(amount)])
+            doc = {"id": "pst-" + uuid.uuid4().hex[:10], "practitionerId": pid, "practitionerName": vs[0].get("practitionerName"), "start": start, "end": end,
+                   "status": "draft", "rule": rule_label(rule), "createdAt": datetime.now(timezone.utc).isoformat(), "createdBy": user.get("name"),
+                   "kpis": [["Practitioner pay", cad(pay)], ["Visits", str(len(rows))], ["Commission base", cad(net)], ["Pay rule", rule_label(rule)]],
+                   "headers": ["Date", "Invoice", "Service", "Length", "Base", "Pay"], "rows": rows, "payCents": pay}
+            await db.nt_pay_statements.insert_one(dict(doc))
+            created.append(statement_view(doc, False))
+        if not created:
+            raise HTTPException(404, "No invoiced visits for that period")
+        return created
+
+    @r.get("/statements")
+    async def list_statements(request: Request):
+        user = await user_from(request)
+        if not user or user["role"] not in ("owner", "practitioner"):
+            raise HTTPException(403, "Not permitted")
+        query = {} if user["role"] == "owner" else {"practitionerId": user.get("subject"), "status": "approved"}
+        rows = await db.nt_pay_statements.find(query, {"_id": 0}).sort([("end", -1), ("createdAt", -1)]).to_list(300)
+        return [statement_view(x, False) for x in rows]
+
+    async def statement_for(request, sid):
+        user = await user_from(request)
+        row = await db.nt_pay_statements.find_one({"id": sid}, {"_id": 0})
+        if not user or not row:
+            raise HTTPException(404, "Statement not found")
+        if user["role"] == "owner" or (user["role"] == "practitioner" and row["practitionerId"] == user.get("subject") and row["status"] == "approved"):
+            return user, row
+        raise HTTPException(404, "Statement not found")
+
+    @r.post("/statements/{sid}/approve")
+    async def approve_statement(sid: str, request: Request):
+        user = await owner(request)
+        saved = await db.nt_pay_statements.find_one_and_update({"id": sid, "status": "draft"}, {"$set": {"status": "approved", "approvedBy": user.get("name"), "approvedAt": datetime.now(timezone.utc).isoformat()}}, projection={"_id": 0}, return_document=True)
+        if not saved:
+            raise HTTPException(409, "Only a draft statement can be approved")
+        return statement_view(saved, False)
+
+    @r.delete("/statements/{sid}")
+    async def delete_statement(sid: str, request: Request):
+        await owner(request)
+        res = await db.nt_pay_statements.delete_one({"id": sid, "status": "draft"})
+        if not res.deleted_count:
+            raise HTTPException(409, "Only a draft statement can be deleted")
+        return {"deleted": True}
+
+    @r.get("/statements/{sid}/pdf")
+    async def statement_pdf(sid: str, request: Request):
+        _user, row = await statement_for(request, sid)
+        title = "Practitioner statement" if row["status"] == "approved" else "Statement (DRAFT)"
+        pdf = report_pdf(title, f"{row['practitionerName']} · {row['start']} to {row['end']}", [tuple(k) for k in row["kpis"]], [("Visits", row["headers"], row["rows"], [2, 2, 4, 2, 2, 2])], await settings_doc())
+        return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="statement-{row["start"]}-{row["end"]}.pdf"'})
 
     return r
