@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.nabitouch.pro"
+    namespace "com.nabitouch.practitioner"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.nabitouch.pro"
+        applicationId "com.nabitouch.practitioner"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -44,11 +44,9 @@ dependencies {
 
 apply from: 'capacitor.build.gradle'
 
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+// Firebase config is supplied per environment (gitignored). Package name inside must be com.nabitouch.practitioner.
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+} else {
+    logger.warn("google-services.json not found: Firebase Messaging is disabled for this build")
 }

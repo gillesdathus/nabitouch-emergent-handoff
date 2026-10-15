@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { unregisterPush } from "@/lib/nativeShell";
 
 const Ctx = createContext(null);
 const TrainingBridge = createContext(null);
@@ -51,7 +52,7 @@ export function DemoProvider({ children }) {
       return signed;
     },
     finish: (session) => authed(Promise.resolve(session)),
-    logout: async () => { await api.logout(); setUser(null); setOwnerModeRaw(false); localStorage.removeItem(LS.owner); await refresh(); },
+    logout: async () => { await unregisterPush().catch(() => {}); await api.logout(); setUser(null); setOwnerModeRaw(false); localStorage.removeItem(LS.owner); await refresh(); },
   };
 
   const persist = (key, setter) => (v) => { setter(v); v ? localStorage.setItem(key, v === true ? '1' : v) : localStorage.removeItem(key); };

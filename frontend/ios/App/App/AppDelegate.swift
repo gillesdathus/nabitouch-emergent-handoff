@@ -59,6 +59,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: NSError(domain: "Nabitouch", code: 1, userInfo: [NSLocalizedDescriptionKey: "Firebase is not configured"]))
             return
         }
+        Messaging.messaging().isAutoInitEnabled = true
         Messaging.messaging().apnsToken = deviceToken
         Messaging.messaging().token { token, error in
             if let error = error {

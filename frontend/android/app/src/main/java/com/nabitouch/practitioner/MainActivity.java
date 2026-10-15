@@ -1,4 +1,4 @@
-package com.nabitouch.pro;
+package com.nabitouch.practitioner;
 
 import com.getcapacitor.BridgeActivity;
 

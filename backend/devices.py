@@ -25,6 +25,7 @@ MAX_ATTEMPTS = 5
 CLAIM_TIMEOUT_S = 300
 HELD_TTL_H = 1
 APP_NAME = "nabitouch-push"
+ANDROID_PACKAGE = "com.nabitouch.practitioner"
 
 # Fixed audiences and copy. Payloads carry no health, address or location data, only a short title and an in-app path.
 KINDS = {
@@ -106,7 +107,8 @@ def _send_one(token, row):
         token=token,
         notification=messaging.Notification(title=row["title"], body=row["body"]),
         data={k: str(v) for k, v in (row.get("data") or {}).items()},
-        android=messaging.AndroidConfig(priority="high", collapse_key=row["kind"]),
+        android=messaging.AndroidConfig(priority="high", collapse_key=row["kind"], restricted_package_name=ANDROID_PACKAGE,
+                                        notification=messaging.AndroidNotification(channel_id="safety" if row["kind"] == "safety_alert" else "visits")),
         apns=messaging.APNSConfig(headers={"apns-priority": "10"}, payload=messaging.APNSPayload(aps=messaging.Aps(sound="default"))),
     )
     return messaging.send(msg, dry_run=dry_run(), app=_app())

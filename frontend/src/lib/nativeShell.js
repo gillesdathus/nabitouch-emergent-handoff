@@ -63,15 +63,43 @@ export async function openNavigation(app, lat, lng, line, webHref) {
   return true;
 }
 
-let pushRegistered = false;
+const CHANNELS = [
+  { id: 'safety', name: 'Safety alerts', description: 'Assistance requests and unsafe-space reports', importance: 5, visibility: 1, vibration: true },
+  { id: 'visits', name: 'Visits & messages', description: 'New assignments, schedule changes and client messages', importance: 4, visibility: 0, vibration: true },
+];
+let pushListening = false;
+let deviceId = null;
+
+// Registers this phone for push. Called after sign-in and on every resume; a new FCM token re-registers (token refresh).
 export async function registerPush() {
-  if (!isNative() || pushRegistered) return;
-  pushRegistered = true;
+  if (!isNative()) return;
   const { PushNotifications } = await import('@capacitor/push-notifications');
-  const perm = await PushNotifications.requestPermissions();
+  let perm = await PushNotifications.checkPermissions();
+  if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') perm = await PushNotifications.requestPermissions();
   if (perm.receive !== 'granted') return;
-  PushNotifications.addListener('registration', ({ value }) => {
-    api.registerDevice({ platform: Capacitor.getPlatform(), token: value, app: 'pro' }).catch(() => {});
-  });
+  if (!pushListening) {
+    pushListening = true;
+    if (Capacitor.getPlatform() === 'android') await Promise.all(CHANNELS.map((c) => PushNotifications.createChannel(c).catch(() => {})));
+    PushNotifications.addListener('registration', ({ value }) => {
+      api.registerDevice({ platform: Capacitor.getPlatform(), token: value, app: 'practitioner' }).then((d) => { deviceId = d.id; }).catch(() => {});
+    });
+    PushNotifications.addListener('registrationError', () => {});
+    PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
+      const path = notification?.data?.path;
+      if (typeof path === 'string' && path.startsWith('/')) window.location.assign(path);
+    });
+    window.addEventListener('nabitouch:resume', () => { PushNotifications.register().catch(() => {}); });
+  }
   await PushNotifications.register();
+}
+
+// Sign-out: revoke on the server first (needs the live session), then drop the local FCM registration.
+export async function unregisterPush() {
+  if (!isNative()) return;
+  if (deviceId) await api.removeDevice(deviceId).catch(() => {});
+  deviceId = null;
+  const { PushNotifications } = await import('@capacitor/push-notifications');
+  await PushNotifications.removeAllListeners().catch(() => {});
+  await PushNotifications.unregister().catch(() => {});
+  pushListening = false;
 }

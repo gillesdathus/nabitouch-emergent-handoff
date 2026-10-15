@@ -1,6 +1,6 @@
 {
-  "appId": "com.nabitouch.pro",
-  "appName": "Nabitouch Pro",
+  "appId": "com.nabitouch.practitioner",
+  "appName": "Nabitouch Practitioner",
   "webDir": "build",
   "backgroundColor": "#0B1B3F",
   "ios": { "contentInset": "always", "limitsNavigationsToAppBoundDomains": false },
