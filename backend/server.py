@@ -64,7 +64,7 @@ from messaging import build_messaging_router, ensure_messaging, record_trip_noti
 from giftcards import build_giftcard_router, ensure_giftcards
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
-from devices import build_devices_router, ensure_devices
+from devices import build_devices_router, ensure_devices, notify as push_notify
 from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
 from finance import build_finance_router
 from readiness import build_readiness_router
@@ -607,6 +607,10 @@ async def apply_transition(appt, to, actor, note=None):
         await release_credit(db, appt["id"], actor, "Visit cancelled")
     if to in ("completed", "cancelled", "no_show"):
         await settle_invite(db, appt["id"], to)
+    if to == "cancelled":
+        await push_notify(db, "visit_cancelled", appt["id"], appt)
+    if to == "assigned" and appt.get("practitionerId"):
+        await push_notify(db, "visit_assigned", f"{appt['id']}:{appt['practitionerId']}", appt)
     if to in ("completed", "cancelled", "no_show", "closed"):
         await db.nt_safety_events.update_many({"appointmentId": appt["id"], "alert": True, "status": {"$ne": "resolved"}},
                                               {"$set": {"status": "resolved", "resolvedAt": ts, "resolvedBy": "system", "resolution": f"Visit {to.replace('_', ' ')}"}})
@@ -887,8 +891,10 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
         await record_trip_notice(db, saved, "delayed", upd.get("delayMin"), body.get("note") or "")
     if kind == "rescheduled":
         await _maybe_lifecycle_mail(saved, "reschedule")
+        await push_notify(db, "visit_rescheduled", f"{appt_id}:{saved['date']}:{saved['time']}", saved)
     if kind == "reassigned":
         await _maybe_lifecycle_mail(saved, "assignment")
+        await push_notify(db, "visit_assigned", f"{appt_id}:{saved['practitionerId']}", saved)
     return saved
 
 

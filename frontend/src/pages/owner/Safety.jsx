@@ -32,7 +32,7 @@ function PushStatus() {
   const [s, setS] = useState(null);
   useEffect(() => { api.pushStatus().then(setS).catch(() => {}); }, []);
   if (!s) return null;
-  return <Notice testid="push-status">{s.pushEnabled ? `Push is on. ${s.outbox.sent} sent, ${s.outbox.failed} failed.` : `Push is off${s.firebaseConfigured ? "" : " (Firebase key not added)"}. ${s.outbox.held} alert${s.outbox.held === 1 ? "" : "s"} held for ${s.devices} registered phone${s.devices === 1 ? "" : "s"}.`}</Notice>;
+  return <Notice testid="push-status">{s.pushEnabled ? `Push is on. ${s.outbox.sent} sent, ${s.outbox.failed} failed.` : `Push is off${s.flag ? "" : " (PUSH_ENABLED=false)"}${s.firebaseConfigured ? "" : ` · Firebase credentials: ${s.credentials.replace(/_/g, " ")}`}. ${s.outbox.held} alert${s.outbox.held === 1 ? "" : "s"} held for ${s.devices} registered phone${s.devices === 1 ? "" : "s"}.`}</Notice>;
 }
 
 function EventCard({ e, onChange }) {

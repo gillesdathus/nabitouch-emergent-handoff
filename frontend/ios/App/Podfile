@@ -20,7 +20,8 @@ end
 
 target 'App' do
   capacitor_pods
-  # Add your Pods here
+  # FCM token for push on iOS (APNs key is uploaded in the Firebase console)
+  pod 'FirebaseMessaging', '~> 11.0'
 end
 
 post_install do |installer|

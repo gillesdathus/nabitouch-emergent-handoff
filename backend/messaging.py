@@ -329,6 +329,9 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             await coll("appointments").update_one({"id": aid}, {"$set": {"delayMin": chosen}, "$push": {"events": {"status": "delayed", "at": _now(), "actor": user.get("name") or "practitioner", "note": note}}})
             await add_audit(user.get("name") or "practitioner", f"{appt.get('ref')} → delayed · {chosen} min", aid)
             await record_trip_notice(db, {**appt, "delayMin": chosen}, "delayed", chosen, reason)
+        if user.get("role") == "client":
+            from devices import notify
+            await notify(db, "client_message", doc["id"], appt)
         await add_audit(user.get("name") or doc["authorLabel"], f"{appt.get('ref')} in-app message", aid)
         await _wake(aid, {"type": "message", "id": doc["id"]})
         return {"message": _public_message(doc), "duplicate": False}

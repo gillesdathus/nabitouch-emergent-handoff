@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
 from emailer import send_email
+from devices import revoke_devices
 
 ALG = "HS256"
 ACCESS_MIN, REFRESH_DAYS, MAX_FAILS, LOCK_MIN = 15, 7, 5, 15
@@ -310,6 +311,7 @@ def build_auth(db, coll, add_audit):
             raise HTTPException(401, "Session expired")
         if row.get("refreshJti") != p.get("jti"):
             await sessions.update_one({"sid": p["sid"]}, {"$set": {"revoked": True, "revokedReason": "refresh_reuse"}})
+            await revoke_devices(db, "refresh_reuse", session_id=p["sid"])
             raise HTTPException(401, "Session expired")
         account = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
         if not account:
@@ -332,6 +334,7 @@ def build_auth(db, coll, add_audit):
             p = jwt.decode(str(raw or ""), os.environ["JWT_SECRET"], algorithms=[ALG], options={"verify_exp": False})
             if p.get("cl") == "native":
                 await sessions.update_one({"sid": p.get("sid"), "native": True}, {"$set": {"revoked": True}})
+                await revoke_devices(db, "signed_out", session_id=p.get("sid"))
         except jwt.InvalidTokenError:
             pass
         return {"ok": True}
@@ -406,6 +409,7 @@ def build_auth(db, coll, add_audit):
         await resets.update_many({"userId": u["id"]}, {"$set": {"used": True}})
         await attempts.delete_one({"identifier": f"email:{u['email']}"})
         await sessions.update_many({"userId": u["id"], "revoked": False}, {"$set": {"revoked": True}})
+        await revoke_devices(db, "password_reset", user_id=u["id"])
         await add_audit(u.get("name") or u["email"], "Password reset via email link")
         return {"ok": True}
 
@@ -437,6 +441,7 @@ def build_auth(db, coll, add_audit):
             try:
                 p = jwt.decode(raw, os.environ["JWT_SECRET"], algorithms=[ALG])
                 await sessions.update_one({"sid": p.get("sid")}, {"$set": {"revoked": True}})
+                await revoke_devices(db, "signed_out", session_id=p.get("sid"))
             except jwt.InvalidTokenError:
                 pass
         clear_auth_cookies(response)
@@ -583,6 +588,7 @@ def build_auth(db, coll, add_audit):
             raise HTTPException(401, "That authenticator code was already used")
         await db["nt_mfa"].delete_one({"userId": user["id"]})
         await sessions.update_many({"userId": user["id"], "revoked": False}, {"$set": {"revoked": True}})
+        await revoke_devices(db, "mfa_disabled", user_id=user["id"])
         await add_audit(user.get("name") or user["role"], "Authenticator turned off", None)
         return {"enabled": False}
 

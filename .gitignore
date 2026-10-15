@@ -102,3 +102,9 @@ deploy/set-mapbox-tokens.sh
 test_reports/
 memory/test_credentials.md
 memory/PRD.md
+
+# Firebase secrets and native config
+firebase-admin*.json
+*service-account*.json
+frontend/android/app/google-services.json
+frontend/ios/App/App/GoogleService-Info.plist
