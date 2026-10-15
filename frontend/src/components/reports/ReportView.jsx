@@ -21,10 +21,11 @@ export function presetRange(key) {
 export const PRESETS = [["month", "This month"], ["last_month", "Last month"], ["quarter", "Quarter"], ["ytd", "Year to date"]];
 
 export function RangePicker({ range, setRange, presets = PRESETS }) {
+  const [chosen, setChosen] = useState(() => presets.find(([k]) => { const [s, e] = presetRange(k); return s === range[0] && e === range[1]; })?.[0] || "");
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="report-range">
       <div className="flex flex-wrap gap-1 rounded-full bg-white p-1 ring-1 ring-sky-100">
-        {presets.map(([k, l]) => { const [s, e] = presetRange(k); const on = range[0] === s && range[1] === e; return <button key={k} type="button" onClick={() => setRange([s, e])} data-testid={`report-preset-${k}`} className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${on ? "bg-nb-navy text-white" : "text-nb-mute hover:text-nb-ink"}`}>{l}</button>; })}
+        {presets.map(([k, l]) => { const [s, e] = presetRange(k); const on = chosen === k && range[0] === s && range[1] === e; return <button key={k} type="button" onClick={() => { setChosen(k); setRange([s, e]); }} data-testid={`report-preset-${k}`} className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${on ? "bg-nb-navy text-white" : "text-nb-mute hover:text-nb-ink"}`}>{l}</button>; })}
       </div>
       <input type="date" value={range[0]} onChange={(e) => setRange([e.target.value, range[1]])} className="nb-input h-9 w-auto text-xs" data-testid="report-start" />
       <span className="text-xs text-nb-mute">to</span>
@@ -67,7 +68,7 @@ export function useReport(kind, range, practitionerId) {
   return { data, error, page, setPage, params };
 }
 
-export function DownloadButtons({ kind, params }) {
+export function DownloadButtons({ kind, params, light }) {
   const [busy, setBusy] = useState("");
   const get = (format) => async () => {
     setBusy(format);
@@ -78,7 +79,7 @@ export function DownloadButtons({ kind, params }) {
   return (
     <div className="flex gap-2">
       <button type="button" onClick={get("pdf")} disabled={Boolean(busy)} data-testid={`report-${kind}-pdf`} className="nb-btn-dark h-10 text-sm">{busy === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}PDF</button>
-      <button type="button" onClick={get("csv")} disabled={Boolean(busy)} data-testid={`report-${kind}-csv`} className="nb-btn-ghost h-10 text-sm">{busy === "csv" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}CSV</button>
+      <button type="button" onClick={get("csv")} disabled={Boolean(busy)} data-testid={`report-${kind}-csv`} className={light ? "inline-flex h-10 items-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-nb-navy shadow-sm" : "nb-btn-ghost h-10 text-sm"}>{busy === "csv" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}CSV</button>
     </div>
   );
 }

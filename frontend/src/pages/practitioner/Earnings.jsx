@@ -23,7 +23,7 @@ export default function Earnings() {
         <Breathing leaves={false} className="opacity-60" />
         <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div><p className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-cyan-100"><Wallet className="h-4 w-4" />{range[0]} → {range[1]}</p><p className="nb-num mt-2 text-5xl font-semibold" data-testid="earnings-hero-value">{lead?.value ?? "—"}</p><p className="mt-1 text-sm text-white/75">{lead?.label || "Treatment revenue"}</p></div>
-          <DownloadButtons kind="earnings" params={report.params} />
+          <DownloadButtons kind="earnings" params={report.params} light />
         </div>
       </section>
       <section className="mb-8" data-testid="pro-statements">

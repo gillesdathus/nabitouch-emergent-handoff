@@ -1089,6 +1089,13 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Amount must be within the outstanding balance")
         if user["role"] == "client" and visit.get("payNow") in ("full", "deposit") and amount not in allowed_online_amounts(balance, policy, received):
             raise HTTPException(400, "That amount is not one of the amounts due")
+        if user["role"] == "client":
+            expected = min(int(invoice.get("expectedInsuranceCents") or 0), balance)
+            share = balance - expected
+            if "amountCents" not in body or amount > share:
+                amount = share
+            if amount <= 0:
+                raise HTTPException(409, "The remaining balance is expected from insurance")
         tip = body.get("tipCents") or 0
         if not isinstance(tip, int) or tip < 0 or tip > min(20000, int(invoice["totalCents"])):
             raise HTTPException(400, "Tip must be between $0 and the invoice total (max $200)")
@@ -1099,7 +1106,8 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(503, "Live card checkout is not enabled")
         if key.startswith("sk_test_"):
             import httpx
-            app_url = (os.environ.get("APP_URL") or "https://localhost").rstrip("/")
+            from config import public_base_url
+            app_url = public_base_url(request)
             form = {
                 "mode": "payment",
                 "success_url": app_url + "/me/billing?card=return&session_id={CHECKOUT_SESSION_ID}",
@@ -1154,6 +1162,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         if not (user["role"] == "owner" or await desk_can(user, "managePayments")):
             raise HTTPException(403, "Not permitted to record tips")
         invoice = await load(iid)
+        if invoice["state"] in ("draft", "voided"):
+            raise HTTPException(409, "Tips can be recorded on issued invoices only")
         body = await _body(request)
         amount = body.get("amountCents")
         if not isinstance(amount, int) or not 0 < amount <= 20000:
@@ -1174,10 +1184,14 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.get("/billing/stripe/return")
     async def stripe_return(request: Request, session_id: str = ""):
         """Webhook fallback: confirm a returning checkout directly with Stripe. Settlement is idempotent."""
-        await actor(request)
+        user = await actor(request)
         row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0}) if session_id else None
         if not row:
             return {"confirmed": False}
+        if user["role"] == "client":
+            owner_id = (await db.nt_invoices.find_one({"id": row.get("invoiceId")}, {"_id": 0, "clientId": 1}) or {}).get("clientId") if row.get("invoiceId") else (await db.nt_giftcards.find_one({"id": row.get("giftCardId")}, {"_id": 0, "purchaserId": 1}) or {}).get("purchaserId")
+            if owner_id != user.get("subject"):
+                return {"confirmed": False}
         if row.get("status") == "paid":
             return {"confirmed": True}
         key = os.environ.get("STRIPE_SECRET_KEY") or ""

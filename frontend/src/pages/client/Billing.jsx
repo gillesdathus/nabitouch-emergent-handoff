@@ -42,9 +42,9 @@ function InvoiceRow({ invoice, onOpen, i }) {
   return (
     <Reveal i={i}>
       <button type="button" onClick={onOpen} data-testid={`billing-invoice-${invoice.id}`} className="nb-card group flex w-full items-center gap-4 p-4 text-left transition-transform duration-200 hover:-translate-y-0.5">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl tint-lagoon"><FileText className="h-5 w-5 text-nb-blue" /></span>
+        <span className="hidden h-12 w-12 shrink-0 place-items-center rounded-2xl tint-lagoon sm:grid"><FileText className="h-5 w-5 text-nb-blue" /></span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{invoice.number || "Draft"}</span><InvoiceStatePill invoice={invoice} /></span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="whitespace-nowrap text-sm font-semibold">{invoice.number || "Draft"}</span><InvoiceStatePill invoice={invoice} /></span>
           <span className="mt-0.5 block truncate text-xs text-nb-mute">{invoice.service}{invoice.serviceDate ? ` · ${fmtDate(invoice.serviceDate)}` : ""}</span>
           {invoice.expectedInsurance.cents > 0 && <span className="mt-1 flex items-center gap-1 text-[11px] text-cyan-700"><ShieldCheck className="h-3 w-3" />{invoice.expectedInsurance.display} insurance pending</span>}
         </span>

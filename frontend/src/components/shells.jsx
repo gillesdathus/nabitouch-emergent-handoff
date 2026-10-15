@@ -167,8 +167,8 @@ export function ClientShell() {
   const { me, idx } = useDemo();
   const wa = idx?.settings?.whatsapp || {};
   const waPages = wa.pages || ["/contact"];
-  const showWa = waPages.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
   const { pathname } = useLocation();
+  const showWa = waPages.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
   const [menuOpen, setMenuOpen] = useState(false);
   const headerLinks = PUBLIC_NAV.filter((item) => item.to !== "/me");
   useEffect(() => { setMenuOpen(false); }, [pathname]);

@@ -11,8 +11,8 @@ export function StatementRow({ s, owner, onChange }) {
   const [busy, setBusy] = useState("");
   const act = (what, fn, msg) => async () => { setBusy(what); try { await fn(); if (msg) toast.success(msg); onChange?.(); } catch (e) { toast.error(apiError(e) || "That did not work."); } setBusy(""); };
   return (
-    <div className="nb-card flex flex-wrap items-center gap-4 p-4" data-testid={`statement-${s.id}`}>
-      <span className="grid h-11 w-11 place-items-center rounded-2xl tint-lagoon"><FileText className="h-5 w-5 text-nb-blue" /></span>
+    <div className="nb-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4" data-testid={`statement-${s.id}`}>
+      <span className="hidden h-11 w-11 shrink-0 place-items-center rounded-2xl tint-lagoon sm:grid"><FileText className="h-5 w-5 text-nb-blue" /></span>
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 text-sm font-semibold">{owner ? s.practitionerName : "Statement"}<Pill tone={s.status === "approved" ? "teal" : "amber"}>{s.status === "approved" ? "Approved" : "Draft"}</Pill></p>
         <p className="text-xs text-nb-mute">{s.start} → {s.end} · {s.rule}{s.approvedAt ? ` · approved ${new Date(s.approvedAt).toLocaleDateString("en-CA")}` : ""}</p>

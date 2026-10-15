@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
       sourcemap: false,
     },
     optimizeDeps: {
+      include: ["vaul", "framer-motion", "@radix-ui/react-dialog", "@radix-ui/react-tabs", "sonner"],
       esbuildOptions: {
         loader: { ".js": "jsx" },
       },

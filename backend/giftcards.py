@@ -333,8 +333,9 @@ def build_giftcard_router(db, coll, add_audit, user_from, reception_perms):
             raise HTTPException(503, "Live card checkout is not enabled")
         if key.startswith("sk_test_"):
             import httpx
-            app_url = os.environ["APP_URL"].rstrip("/")
-            form = {"mode": "payment", "success_url": app_url + "/me/gifts?card=return", "cancel_url": app_url + "/me/gifts?card=cancel",
+            from config import public_base_url
+            app_url = public_base_url(request)
+            form = {"mode": "payment", "success_url": app_url + "/me/gifts?card=return&session_id={CHECKOUT_SESSION_ID}", "cancel_url": app_url + "/me/gifts?card=cancel",
                     "line_items[0][quantity]": "1", "line_items[0][price_data][currency]": "cad", "line_items[0][price_data][unit_amount]": str(card["amountCents"]),
                     "line_items[0][price_data][product_data][name]": f"Nabitouch gift card ••{card['code'][-4:]}", "metadata[giftCardId]": cid}
             async with httpx.AsyncClient(timeout=20) as client:

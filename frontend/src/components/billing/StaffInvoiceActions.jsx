@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { BadgeCheck, Coins, Link2, Loader2 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { newKey } from "@/lib/useInvoices";
+import { formatCents } from "@/lib/billing";
+import { payableCents } from "@/components/billing/PayOptions";
 
 export function StaffInvoiceActions({ invoice, onChange }) {
   const [busy, setBusy] = useState("");
@@ -10,7 +12,7 @@ export function StaffInvoiceActions({ invoice, onChange }) {
   const [tip, setTip] = useState({ amount: "", method: "cash", reference: "" });
   const run = (what, fn) => async () => { setBusy(what); try { await fn(); } catch (e) { toast.error(apiError(e)); } setBusy(""); };
   const makeLink = run("link", async () => {
-    const res = await api.invoiceCheckout(invoice.id, { amountCents: invoice.balance.cents });
+    const res = await api.invoiceCheckout(invoice.id, { amountCents: payableCents(invoice) });
     if (!res.url) { toast.message("Checkout session created in simulated mode. No shareable URL."); return; }
     setLink(res.url);
     await navigator.clipboard?.writeText(res.url);
@@ -27,7 +29,7 @@ export function StaffInvoiceActions({ invoice, onChange }) {
     <section className="space-y-3" data-testid="staff-invoice-actions">
       {invoice.balance.cents > 0 && (
         <div className="rounded-2xl p-4 tint-ice">
-          <p className="flex items-center gap-2 text-sm font-semibold text-nb-navy"><Link2 className="h-4 w-4" />Stripe payment link · {invoice.balance.display}</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-nb-navy"><Link2 className="h-4 w-4" />Stripe payment link · {formatCents(payableCents(invoice))}{invoice.expectedInsurance.cents > 0 ? " (client share)" : ""}</p>
           <button type="button" onClick={makeLink} disabled={Boolean(busy)} data-testid="staff-payment-link-btn" className="nb-btn-primary mt-3 h-10 text-sm">{busy === "link" && <Loader2 className="h-4 w-4 animate-spin" />}Create & copy link</button>
           {link && <p className="mt-2 break-all font-mono text-[11px] text-nb-mute" data-testid="staff-payment-link">{link}</p>}
         </div>

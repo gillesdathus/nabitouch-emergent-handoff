@@ -38,7 +38,7 @@ export function GiftCardArt({ card, design, amount, recipient, compact, testid, 
         <span>
           <span className={`nb-num block font-semibold ${compact ? "text-xl" : "text-3xl"}`}>{card ? card.balance.display : amount}</span>
           {card && <span className="block text-[11px] text-white/75">of {card.amount.display}</span>}
-          <span className={`mt-1 flex items-end justify-between gap-2 ${compact ? "text-[10px]" : "text-xs"}`}>
+          <span className={`mt-1 flex items-end justify-between gap-2 ${compact ? "text-[11px]" : "text-xs"}`}>
             <span className="truncate text-white/85">{recipient || card?.recipientName ? `For ${recipient || card.recipientName}` : "Nabitouch"}</span>
             {card && <span className="font-mono tracking-wider text-white/90">{card.code}</span>}
           </span>

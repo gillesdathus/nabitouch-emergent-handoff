@@ -48,7 +48,7 @@ def visit_pay(view, rule, include_travel):
 
 
 def rule_label(rule):
-    return f"Hourly {cad(rule.get('hourlyCents'))}/h" if rule.get("type") == "hourly" else f"{rule.get('practitionerPct')}/{100 - float(rule.get('practitionerPct') or 0):g} split"
+    return f"Hourly {cad(rule.get('hourlyCents'))}/h" if rule.get("type") == "hourly" else f"{float(rule.get('practitionerPct') or 0):g}/{100 - float(rule.get('practitionerPct') or 0):g} split"
 
 
 def cad(cents):
@@ -395,7 +395,12 @@ def build_finance_router(db, user_from, settings_doc):
             if v["state"] != "voided" and v.get("practitionerId"):
                 grouped.setdefault(v["practitionerId"], []).append(v)
         created = []
+        skipped = []
         for pid, vs in grouped.items():
+            overlap = await db.nt_pay_statements.find_one({"practitionerId": pid, "start": {"$lte": end}, "end": {"$gte": start}}, {"_id": 0, "id": 1})
+            if overlap:
+                skipped.append(vs[0].get("practitionerName"))
+                continue
             rule = rule_for(pay_rules, pid)
             rows, pay, net = [], 0, 0
             for v in sorted(vs, key=lambda x: _day(x["serviceDate"])):
@@ -417,7 +422,7 @@ def build_finance_router(db, user_from, settings_doc):
             await db.nt_pay_statements.insert_one(dict(doc))
             created.append(statement_view(doc, False))
         if not created:
-            raise HTTPException(404, "No invoiced visits for that period")
+            raise HTTPException(409 if skipped else 404, f"A statement already covers this period for {', '.join(n for n in skipped if n)}. Delete the draft first." if skipped else "No invoiced visits for that period")
         return created
 
     @r.get("/statements")

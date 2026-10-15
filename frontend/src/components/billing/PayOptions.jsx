@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CreditCard, Landmark, Loader2, Copy, Clock3 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
+import { formatCents } from "@/lib/billing";
 import { GiftCardApply } from "@/components/billing/GiftCardApply";
 
 const TIPS = [0, 10, 15, 20];
@@ -18,6 +19,8 @@ function TipPicker({ invoice, tip, setTip }) {
   );
 }
 
+export const payableCents = (invoice) => (invoice.expectedInsurance?.cents > 0 ? invoice.estimatedClientShare.cents : invoice.balance.cents);
+
 function CardPay({ invoice, enabled }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -26,7 +29,7 @@ function CardPay({ invoice, enabled }) {
   const start = async () => {
     setBusy(true);
     try {
-      const started = await api.invoiceCheckout(invoice.id, { amountCents: invoice.balance.cents, tipCents: tip });
+      const started = await api.invoiceCheckout(invoice.id, { amountCents: payableCents(invoice), tipCents: tip });
       if (started.url) window.location.assign(started.url);
       else setNote(`Checkout started for ${started.amount?.display}. Nothing is paid until Stripe confirms it.`);
     } catch (e) { setNote(apiError(e)); }
@@ -36,7 +39,7 @@ function CardPay({ invoice, enabled }) {
     <div>
       <TipPicker invoice={invoice} tip={tip} setTip={setTip} />
       <button type="button" onClick={start} disabled={busy} data-testid="billing-pay-card-btn" className="nb-btn-primary h-12 w-full">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}Pay ${((invoice.balance.cents + tip) / 100).toFixed(2)} by card
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}Pay {formatCents(payableCents(invoice) + tip)} by card
       </button>
       {note && <p className="mt-2 text-xs text-nb-mute" data-testid="billing-card-note">{note}</p>}
     </div>
@@ -58,7 +61,7 @@ function Transfer({ invoice, onChange }) {
       <p className="flex items-center gap-2 text-sm font-semibold text-nb-navy"><Landmark className="h-4 w-4" />Interac e-Transfer</p>
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
         <dt className="text-nb-mute">Send to</dt><dd className="font-medium" data-testid="billing-etransfer-email">{cfg.recipientName ? `${cfg.recipientName} · ` : ""}{cfg.recipientEmail}</dd>
-        <dt className="text-nb-mute">Amount</dt><dd className="nb-num font-medium">{invoice.balance.display}</dd>
+        <dt className="text-nb-mute">Amount</dt><dd className="nb-num font-medium">{formatCents(payableCents(invoice))}</dd>
         <dt className="text-nb-mute">Message</dt><dd className="flex items-center gap-2 font-mono text-[13px]" data-testid="billing-etransfer-ref">{ref}<button type="button" aria-label="Copy reference" data-testid="billing-copy-ref" onClick={() => navigator.clipboard?.writeText(ref).then(() => toast.success("Reference copied"))}><Copy className="h-3.5 w-3.5 text-nb-blue" /></button></dd>
       </dl>
       {cfg.instructions && <p className="mt-2 text-xs text-nb-mute">{cfg.instructions}</p>}
@@ -71,9 +74,10 @@ function Transfer({ invoice, onChange }) {
 
 export function PayOptions({ invoice, cardsOn, giftOn, onChange }) {
   if (!invoice || invoice.balance.cents <= 0 || invoice.state === "voided" || invoice.state === "draft") return null;
+  if (payableCents(invoice) <= 0) return <p className="rounded-2xl p-4 text-sm text-cyan-800 tint-ice" data-testid="billing-awaiting-insurance">The remaining {invoice.balance.display} is expected from your insurer. Nothing is due from you right now.</p>;
   return (
     <section className="space-y-3" data-testid="billing-pay-options">
-      <p className="nb-eyebrow">Pay remaining balance</p>
+      <p className="nb-eyebrow">{invoice.expectedInsurance.cents > 0 ? `Pay your share · ${invoice.expectedInsurance.display} expected from insurance` : "Pay remaining balance"}</p>
       <CardPay invoice={invoice} enabled={cardsOn} />
       {giftOn && <GiftCardApply invoice={invoice} onChange={onChange} />}
       <Transfer invoice={invoice} onChange={onChange} />

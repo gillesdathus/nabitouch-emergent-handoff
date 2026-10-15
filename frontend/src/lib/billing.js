@@ -4,7 +4,7 @@ export function formatCents(cents) {
   if (!Number.isInteger(amount)) return "";
   const sign = amount < 0 ? "-" : "";
   const absolute = Math.abs(amount);
-  return `${sign}$${Math.floor(absolute / 100)}.${String(absolute % 100).padStart(2, "0")}`;
+  return `${sign}$${Math.floor(absolute / 100).toLocaleString("en-CA")}.${String(absolute % 100).padStart(2, "0")}`;
 }
 
 export function dollarsToCents(text) {

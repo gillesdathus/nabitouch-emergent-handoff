@@ -73,6 +73,15 @@ def invoice_email_enabled():
     return _flag("INVOICE_EMAIL_ENABLED", False)
 
 
+def public_base_url(request=None):
+    """Browser-facing base URL. A request Origin listed in CORS_ORIGINS wins over APP_URL, so preview hosts return correctly."""
+    origin = (request.headers.get("origin") or "").rstrip("/") if request is not None else ""
+    allowed = [o.strip().rstrip("/") for o in (os.environ.get("CORS_ORIGINS") or "").split(",") if o.strip()]
+    if origin and origin in allowed:
+        return origin
+    return (os.environ.get("APP_URL") or "https://localhost").rstrip("/")
+
+
 def statement_email_enabled():
     """Practitioner "statement ready" email. Unset stays off."""
     return _flag("STATEMENT_EMAIL_ENABLED", False)
