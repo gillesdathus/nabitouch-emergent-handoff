@@ -280,6 +280,7 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
         recent = await db.nt_messages.count_documents({"appointmentId": aid, "authorId": user.get("id"), "createdAt": {"$gte": since}})
         if recent >= LIMIT:
             raise HTTPException(429, "Too many messages. Wait a few minutes and try again.")
+        delay = None
         if body.get("recordDelay"):
             if user.get("role") not in ("practitioner", "owner"):
                 raise HTTPException(403, "Only the assigned practitioner can record a delay")
@@ -290,11 +291,7 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             existing = await db.nt_messages.find_one({"idempotencyKey": key}, {"_id": 0})
             if existing:
                 return {"message": _public_message(existing), "duplicate": True}
-            note = _clean(reason) if reason else f"Running {chosen} minutes late"
-            events = appt.get("events", []) + [{"status": "delayed", "at": _now(), "actor": user.get("name") or "practitioner", "note": note}]
-            await coll("appointments").update_one({"id": aid}, {"$set": {"delayMin": chosen, "events": events}})
-            await add_audit(user.get("name") or "practitioner", f"{appt.get('ref')} → delayed · {chosen} min", aid)
-            await record_trip_notice(db, {**appt, "delayMin": chosen}, "delayed", chosen, reason)
+            delay = (chosen, _clean(reason) if reason else f"Running {chosen} minutes late")
         stamp = _now()
         labels = {"client": "Client", "practitioner": "Practitioner", "desk": "Reception", "owner": "Owner"}
         doc = {
@@ -326,6 +323,12 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
                 return {"message": _public_message(existing), "duplicate": True}
             raise
         doc.pop("_id", None)
+        if delay:
+            # The unique message key won the race, so the delay side effects run once.
+            chosen, note = delay
+            await coll("appointments").update_one({"id": aid}, {"$set": {"delayMin": chosen}, "$push": {"events": {"status": "delayed", "at": _now(), "actor": user.get("name") or "practitioner", "note": note}}})
+            await add_audit(user.get("name") or "practitioner", f"{appt.get('ref')} → delayed · {chosen} min", aid)
+            await record_trip_notice(db, {**appt, "delayMin": chosen}, "delayed", chosen, reason)
         await add_audit(user.get("name") or doc["authorLabel"], f"{appt.get('ref')} in-app message", aid)
         await _wake(aid, {"type": "message", "id": doc["id"]})
         return {"message": _public_message(doc), "duplicate": False}

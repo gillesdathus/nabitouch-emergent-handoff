@@ -34,7 +34,7 @@ function ProductForm({ onSaved }) {
         <Field label="Credits valid for (days)" hint={f.kind === "membership" ? "Default 60" : "Default 365"}><input type="number" min={7} max={730} className="nb-input h-11 w-full" value={f.validityDays} onChange={set("validityDays")} data-testid="plan-form-validity" /></Field>
       </div>
       <Field label="Description"><input className="nb-input h-11 w-full" value={f.description} onChange={set("description")} data-testid="plan-form-description" /></Field>
-      {service && f.duration && f.credits && f.price && <p className="text-xs text-nb-mute" data-testid="plan-form-preview">{(Number(f.price) / Number(f.credits)).toFixed(2)} per visit · regular {(service.prices[f.duration] * f.credits).toFixed(2)} · practitioners are paid on the per-visit price.</p>}
+      {service && f.duration && f.credits && f.price && <p className="text-xs text-nb-mute" data-testid="plan-form-preview">${(Number(f.price) / Number(f.credits)).toFixed(2)} per visit · regular ${(service.prices[f.duration] * f.credits).toFixed(2)} · practitioners are paid on the per-visit price.</p>}
       <button type="button" onClick={save} data-testid="plan-form-save" className="nb-btn-primary h-11 px-6 text-sm">Save draft</button>
     </section>
   );

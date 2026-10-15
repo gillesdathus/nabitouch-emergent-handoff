@@ -31,7 +31,7 @@ function Breakdown({ q, compact, settlement }) {
       {settlement && <>
         <Row l="Due now" v={formatCents(settlement.dueNowCents)} testid="breakdown-due-now" />
         <Row l="Remaining balance" v={formatCents(settlement.remainingCents)} testid="breakdown-remaining" />
-        <p className="text-xs text-nb-mute" data-testid="breakdown-settlement-note">{settlement.choice === "cash" ? "Cash is payable at the visit. This booking is not prepaid." : settlement.dueNowCents < settlement.totalCents ? "The deposit is due online. The remaining balance is collected later and is not paid yet." : "The full total is due online. It is paid only after Stripe verifies the payment."}</p>
+        <p className="text-xs text-nb-mute" data-testid="breakdown-settlement-note">{settlement.totalCents === 0 ? "Nothing is due online for this visit." : settlement.choice === "cash" ? "Cash is payable at the visit. This booking is not prepaid." : settlement.dueNowCents < settlement.totalCents ? "The deposit is due online. The remaining balance is collected later and is not paid yet." : "The full total is due online. It is paid only after Stripe verifies the payment."}</p>
       </>}
     </div>
   );
@@ -171,7 +171,7 @@ export default function Booking() {
                   <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
                   {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
                   {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
-                  <div className="p-5 text-xs text-nb-mute" data-testid="review-payment-choice">Payment choice: <b className="text-nb-ink">{paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></div>
+                  <div className="p-5 text-xs text-nb-mute" data-testid="review-payment-choice">Payment choice: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online. The credit covers this visit" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></div>
                 </div>
               </div>
             )}
@@ -189,7 +189,7 @@ export default function Booking() {
             <p className="text-sm font-semibold">Your booking</p>
             {service ? <><p className="mt-3 text-sm">{service.name} · {draft.duration} min</p>{draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}<div className="mt-4"><Breakdown q={step === 5 && serverQuote ? serverQuote : q} settlement={step === 5 ? settlement : null} compact /></div></> : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>
-          <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>
+          {!useCredit && !winbackCode && <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>}
           {!useCredit && !winbackCode && <PromoBanner compact eligible={welcomeOfferListed(state.promotions.find((p) => p.id === "promo-welcome"))} testid="booking-promo-banner" />}
         </div>
       </aside>

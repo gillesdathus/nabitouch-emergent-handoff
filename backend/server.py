@@ -607,6 +607,9 @@ async def apply_transition(appt, to, actor, note=None):
         await release_credit(db, appt["id"], actor, "Visit cancelled")
     if to in ("completed", "cancelled", "no_show"):
         await settle_invite(db, appt["id"], to)
+    if to in ("completed", "cancelled", "no_show", "closed"):
+        await db.nt_safety_events.update_many({"appointmentId": appt["id"], "alert": True, "status": {"$ne": "resolved"}},
+                                              {"$set": {"status": "resolved", "resolvedAt": ts, "resolvedBy": "system", "resolution": f"Visit {to.replace('_', ' ')}"}})
     if to in ("cancelled", "no_show"):
         await release_redemption(db, coll, saved.get("clientId"), saved.get("id"), (saved.get("pricing") or {}).get("loyaltyPoints"))
     return saved

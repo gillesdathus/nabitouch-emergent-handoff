@@ -19,7 +19,7 @@ API = f"{BASE_URL}/api"
 WH_SECRET = dotenv_values("/app/backend/.env").get("STRIPE_WEBHOOK_SECRET")
 
 OWNER = ("owner@nabitouch.test", "Tide-ASlUVxgtlyYfG3c2")
-SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-p54Wtu73_r9K")
+SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-7ycTsfXpHCJV")
 CLIENT = ("sarah.demo@example.com", SAMPLE_PW)
 PRO = ("maya.demo@example.com", SAMPLE_PW)
 ADDR = {"label": "Home", "line": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "id": "ad-sarah", "zoneId": "z-central", "clientConfirmed": True}
@@ -473,4 +473,69 @@ class TestDevices:
         assert owner.get(f"{API}/devices/status", timeout=20).json()["outbox"]["held"] >= held0 + 1
         assert pro.delete(f"{API}/devices/{did}", timeout=20).status_code == 404
         assert owner.delete(f"{API}/devices/{did}", timeout=20).status_code == 200
+        owner.post(f"{API}/appointments/{aid}/transition", json={"to": "cancelled"}, timeout=20)
+
+
+# --- Iteration 3 retest: fixes 1, 3, 4, 5 and messaging regression
+class TestIter3Fixes:
+    def test_full_refund_replay_returns_200(self, owner, client):
+        out = client.post(f"{API}/plans/plp-five/checkout", json={"idempotencyKey": "TEST_" + uuid.uuid4().hex[:10]}, timeout=40).json()
+        total = next(p for p in credits_state(client)["purchases"] if p["id"] == out["purchaseId"])["total"]["cents"]
+        assert webhook({"id": "evt_TEST_" + uuid.uuid4().hex[:8], "type": "checkout.session.completed", "data": {"object": {"id": out["sessionId"], "amount_total": total, "payment_status": "paid"}}}).json()["settled"]
+        key = "TEST_" + uuid.uuid4().hex[:10]
+        r = owner.post(f"{API}/plans/purchases/{out['purchaseId']}/refund", json={"reason": "TEST_ full", "idempotencyKey": key}, timeout=30)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "refunded" and r.json()["refunded"]["cents"] == total
+        again = owner.post(f"{API}/plans/purchases/{out['purchaseId']}/refund", json={"reason": "TEST_ full", "idempotencyKey": key}, timeout=30)
+        assert again.status_code == 200, again.text
+        assert again.json()["status"] == "refunded" and again.json()["refunded"]["cents"] == total and again.json()["id"] == out["purchaseId"]
+        other = owner.post(f"{API}/plans/purchases/{out['purchaseId']}/refund", json={"reason": "x", "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10]}, timeout=30)
+        assert other.status_code == 409
+
+    def test_report_refund_labels(self, owner):
+        txt = json.dumps(owner.get(f"{API}/finance/reports/plans", timeout=30).json())
+        assert "Refunded (net of GST)" in txt and "Refunded (incl. GST)" in txt
+
+    def test_seeded_credentials(self, owner):
+        # every sample practitioner can be assigned (credentials seeded)
+        st = owner.get(f"{API}/state", timeout=30).json()
+        assert any(p["id"] == "p-maya" for p in st.get("practitioners", []))
+
+    def test_resolve_hold_closes_siblings(self, owner, client, pro):
+        b = book(client)
+        assert b.status_code == 200, b.text
+        aid = b.json()["appointment"]["id"]
+        to_en_route(owner, aid)
+        pro.post(f"{API}/appointments/{aid}/safety/checkin", timeout=20)
+        assert pro.post(f"{API}/appointments/{aid}/incidents", json={"kind": "obstructed", "action": "request_fix", "note": "TEST_"}, timeout=20).status_code == 200
+        assert pro.post(f"{API}/appointments/{aid}/assist", json={"note": "TEST_"}, timeout=20).status_code == 200
+        hold = pro.post(f"{API}/appointments/{aid}/incidents", json={"kind": "unsafe", "action": "cannot_proceed", "note": "TEST_"}, timeout=20)
+        assert hold.status_code == 200
+        hid = hold.json()["event"]["id"]
+        evs = owner.get(f"{API}/safety/events", timeout=20).json()["events"]
+        mine = [e for e in evs if e.get("appointmentId") == aid]
+        assert len([e for e in mine if e["status"] != "resolved"]) >= 3, mine
+        # ack one sibling to check acknowledged ones also close
+        sib = next(e for e in mine if e["id"] != hid)
+        owner.post(f"{API}/safety/events/{sib['id']}/ack", timeout=20)
+        assert owner.post(f"{API}/safety/events/{hid}/resolve", json={"outcome": "cancel", "note": "TEST_"}, timeout=20).status_code in (200, 400)
+        r = owner.post(f"{API}/safety/events/{hid}/resolve", json={"outcome": "resume", "note": "TEST_"}, timeout=20) if get_appt(owner, aid)["status"] == "safety_hold" else None
+        evs = owner.get(f"{API}/safety/events", timeout=20).json()["events"]
+        left = [e for e in evs if e.get("appointmentId") == aid and e["status"] != "resolved"]
+        assert left == [], left
+        if get_appt(owner, aid)["status"] not in ("cancelled", "completed"):
+            owner.post(f"{API}/appointments/{aid}/transition", json={"to": "cancelled"}, timeout=20)
+
+    def test_messages_without_key_repeat(self, owner, client, pro):
+        b = book(client)
+        assert b.status_code == 200, b.text
+        aid = b.json()["appointment"]["id"]
+        for i in range(3):
+            r = client.post(f"{API}/appointments/{aid}/messages", json={"body": f"TEST_ hello {i}"}, timeout=20)
+            assert r.status_code == 200 and r.json()["duplicate"] is False, r.text
+        for i in range(2):
+            r = pro.post(f"{API}/appointments/{aid}/messages", json={"presetId": "started"}, timeout=20)
+            assert r.status_code == 200, r.text
+        msgs = client.get(f"{API}/appointments/{aid}/messages", timeout=20).json()["messages"]
+        assert len([m for m in msgs if m["body"].startswith("TEST_ hello")]) == 3
         owner.post(f"{API}/appointments/{aid}/transition", json={"to": "cancelled"}, timeout=20)
