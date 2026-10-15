@@ -10,6 +10,7 @@ import { useDemo } from "@/store/DemoStore";
 import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
 import { BOTTOM_NAV, PUBLIC_NAV, showsMarketingFooter } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
+import { registerPush } from "@/lib/nativeShell";
 
 const ICONS = {
   Home,
@@ -230,6 +231,7 @@ function StaffShellInner({ role }) {
   const { idx, practitionerId, user } = useDemo();
   const me = role === "pro" ? idx.practitioners[practitionerId] : null;
   const name = me?.name || user?.name || cfg.title;
+  useEffect(() => { registerPush().catch(() => {}); }, []);
   return (
     <div className="min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sky-100 bg-white px-4 py-6 lg:flex">

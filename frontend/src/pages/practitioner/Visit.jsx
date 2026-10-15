@@ -13,6 +13,7 @@ import { isLiveTrial, useLiveSession, shouldShowPosition } from "@/lib/tracking/
 import { etaCopy } from "@/lib/tracking/providers";
 import { Notice, Stepper } from "@/components/tide";
 import { SafetyCenter } from "@/components/SafetyCenter";
+import { openNavigation } from "@/lib/nativeShell";
 
 const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
 
@@ -79,7 +80,7 @@ function NavHandoff({ appt, mapsUrl }) {
       <div className="flex flex-wrap gap-1">
         {NAV_APPS.map(([key, label]) => <button key={key} type="button" data-testid={`nav-app-${key}`} onClick={() => choose(key)} className={app === key ? "nb-chip-on h-8 text-xs" : "nb-chip-off h-8 text-xs"}>{label}</button>)}
       </div>
-      <a href={href} target="_blank" rel="noopener noreferrer" data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
+      <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (window.Capacitor?.isNativePlatform?.()) { e.preventDefault(); openNavigation(app, lat, lng, line, href); } }} data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
     </div>
   );
 }

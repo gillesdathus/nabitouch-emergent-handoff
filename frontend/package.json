@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@aparajita/capacitor-secure-storage": "^7",
+    "@capacitor-community/background-geolocation": "^1.2.26",
+    "@capacitor/android": "^7",
+    "@capacitor/app": "^7",
+    "@capacitor/app-launcher": "^7",
+    "@capacitor/core": "^7",
+    "@capacitor/ios": "^7",
+    "@capacitor/push-notifications": "^7",
     "@hookform/resolvers": "5.0.1",
     "@radix-ui/react-accordion": "1.2.8",
     "@radix-ui/react-alert-dialog": "1.1.11",
@@ -79,6 +87,7 @@
     ]
   },
   "devDependencies": {
+    "@capacitor/cli": "^7",
     "@eslint/js": "9.23.0",
     "@types/lodash": "4.17.24",
     "@vitejs/plugin-react": "5.0.4",

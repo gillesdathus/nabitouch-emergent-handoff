@@ -27,15 +27,21 @@ PRACTITIONER_PRESETS = [
     {"id": "finding", "role": "practitioner", "body": "I'm having trouble finding the address."},
     {"id": "entrance", "role": "practitioner", "body": "Could you please confirm the entrance?"},
     {"id": "ready", "role": "practitioner", "body": "I'm ready when you are."},
+    {"id": "access", "role": "practitioner", "body": "I'm at the building. Could you let me in or share the buzzer or door code?"},
+    {"id": "area", "role": "practitioner", "body": "Where would you like me to set up? I need a clear area about 2 m by 3 m around the table."},
+    {"id": "assist", "role": "practitioner", "body": "Could you meet me at the door? I need a hand with access before I bring in the table."},
 ]
 CLIENT_PRESETS = [
-    {"id": "ready", "role": "client", "body": "Thank you, I'll be ready."},
+    {"id": "ready", "role": "client", "body": "I'm ready. The space is set up."},
+    {"id": "parking", "role": "client", "body": "Parking: there's visitor parking out front. Details are in my access notes."},
+    {"id": "client_late", "role": "client", "body": "I'm running {minutes} minutes late.", "minutes": True},
+    {"id": "door_code", "role": "client", "body": "The door code is in my access notes. Message me here if it doesn't work."},
     {"id": "side", "role": "client", "body": "Please use the side entrance."},
     {"id": "meet", "role": "client", "body": "I'll meet you at the entrance."},
     {"id": "minutes", "role": "client", "body": "Could you give me a few minutes?"},
     {"id": "help", "role": "client", "body": "I need help with my appointment."},
 ]
-PRESETS = {item["id"]: item for item in PRACTITIONER_PRESETS + CLIENT_PRESETS}
+PRESETS = {(item["role"], item["id"]): item for item in PRACTITIONER_PRESETS + CLIENT_PRESETS}
 
 NOTICE_COPY = {
     "en_route": "The practitioner started the trip. This status is in the app only.",
@@ -253,8 +259,8 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
         preset_id = body.get("presetId") or None
         minutes = body.get("minutes")
         reason = body.get("reason") or ""
-        preset = PRESETS.get(preset_id) if preset_id else None
-        if preset and preset["role"] != user.get("role"):
+        preset = PRESETS.get((user.get("role"), preset_id)) if preset_id else None
+        if preset_id and not preset:
             raise HTTPException(403, "That quick message is not available for your role")
         if preset:
             text = render_preset(preset, int(minutes) if str(minutes).isdigit() else minutes, reason)
@@ -284,6 +290,11 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             events = appt.get("events", []) + [{"status": "delayed", "at": _now(), "actor": user.get("name") or "practitioner", "note": note}]
             await coll("appointments").update_one({"id": aid}, {"$set": {"delayMin": chosen, "events": events}})
             await add_audit(user.get("name") or "practitioner", f"{appt.get('ref')} → delayed · {chosen} min", aid)
+            await record_trip_notice(db, {**appt, "delayMin": chosen}, "delayed", chosen, reason)
+            key = f"{aid}:{user.get('id')}:late:{chosen}:{_now()[:16]}"
+            existing = await db.nt_messages.find_one({"idempotencyKey": key}, {"_id": 0})
+            if existing:
+                return {"message": _public_message(existing), "duplicate": True}
         stamp = _now()
         labels = {"client": "Client", "practitioner": "Practitioner", "desk": "Reception", "owner": "Owner"}
         doc = {

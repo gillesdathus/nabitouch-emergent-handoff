@@ -1,3 +1,5 @@
+import { isNative } from '@/lib/native';
+import { nativeLocationProvider } from '@/lib/nativeShell';
 // Phone GPS publishes only for the owner-selected trial practitioner, or when REACT_APP_TRACKING_MODE=live.
 // The simulated adapter remains for tests. Operational visits do not publish it.
 import { tripState } from '@/lib/domain';
@@ -46,7 +48,10 @@ export function idleLocationProvider() {
   };
 }
 
-export const locationProviderFor = (_getAppt, live) => (live || TRACKING_CONFIG.mode === 'live' ? browserLocationProvider() : idleLocationProvider());
+export const locationProviderFor = (_getAppt, live) => {
+  if (!(live || TRACKING_CONFIG.mode === 'live')) return idleLocationProvider();
+  return isNative() ? nativeLocationProvider() : browserLocationProvider();
+};
 
 /** Road ETAs are calculated on the server. The browser never calls Mapbox Directions. */
 export function etaCopy(provider) {

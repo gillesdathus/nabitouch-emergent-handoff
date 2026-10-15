@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { LiveTripCard } from "@/components/LiveTripCard";
 import { ArrivalMoment } from "@/components/ArrivalMoment";
 import { PrepareCard } from "@/components/PrepareCard";
+import { PlanNudge } from "@/components/PlanNudge";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
@@ -229,6 +230,7 @@ export default function Me() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-6 space-y-6">
+          <PlanNudge />
           {lastDone && !lastDone.feedback && <Feedback appt={lastDone} />}
           <div>
             <SectionHead eyebrow="Favourites" title="Rebook in one tap" />

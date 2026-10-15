@@ -364,6 +364,29 @@ def build_plans_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Idempotency key is required")
         return key
 
+    @r.get("/nudge")
+    async def nudge(request: Request):
+        """After a recent completed visit, show what a matching published package would have saved. Read-only."""
+        user = await actor(request, "client")
+        cid = user.get("subject")
+        since = (datetime.now(timezone.utc) - timedelta(days=60)).date().isoformat()
+        visits = await coll("appointments").find({"clientId": cid, "status": {"$in": ["completed", "processing", "closed"]}, "date": {"$gte": since}},
+                                                 {"_id": 0, "id": 1, "ref": 1, "serviceSlug": 1, "duration": 1, "date": 1, "pricing": 1}).sort("date", -1).to_list(20)
+        for v in visits:
+            if (v.get("pricing") or {}).get("packageCredit"):
+                continue
+            if await available_credit(db, cid, v["serviceSlug"], v["duration"]):
+                return {"nudge": None}
+            plan = await db.nt_plan_products.find_one({"status": "published", "kind": "package", "serviceSlug": v["serviceSlug"], "duration": int(v["duration"])}, {"_id": 0}, sort=[("order", 1)])
+            if not plan:
+                continue
+            saving = int(plan.get("regularCents") or 0) - int(plan["priceCents"])
+            if saving <= 0:
+                continue
+            return {"nudge": {"productId": plan["id"], "name": plan["name"], "credits": plan["credits"], "serviceName": plan.get("serviceName"), "duration": plan["duration"],
+                              "saving": money(saving), "perVisitSaving": money(saving // plan["credits"]), "visitRef": v["ref"], "visitId": v["id"]}}
+        return {"nudge": None}
+
     @r.post("/{pid}/checkout")
     async def checkout(pid: str, request: Request):
         user = await actor(request, "client")

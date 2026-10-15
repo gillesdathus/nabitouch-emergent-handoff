@@ -1,0 +1,11 @@
+{
+  "appId": "com.nabitouch.pro",
+  "appName": "Nabitouch Pro",
+  "webDir": "build",
+  "backgroundColor": "#0B1B3F",
+  "ios": { "contentInset": "always", "limitsNavigationsToAppBoundDomains": false },
+  "android": { "allowMixedContent": false },
+  "plugins": {
+    "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] }
+  }
+}

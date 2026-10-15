@@ -64,6 +64,7 @@ from messaging import build_messaging_router, ensure_messaging, record_trip_noti
 from giftcards import build_giftcard_router, ensure_giftcards
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
+from devices import build_devices_router, ensure_devices
 from finance import build_finance_router
 from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
@@ -205,6 +206,7 @@ async def lifespan(_app):
     await ensure_giftcards(db)
     await ensure_plans(db)
     await ensure_safety(db)
+    await ensure_devices(db)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -2100,6 +2102,7 @@ app.include_router(build_giftcard_router(db, coll, add_audit, user_from, recepti
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_devices_router(db, user_from))
 app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)

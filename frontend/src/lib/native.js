@@ -11,6 +11,8 @@ export const isNative = () => typeof window !== 'undefined' && !!window.Capacito
 
 // The native shell passes a Keychain / Keystore adapter here at startup. The default is memory only.
 export const setTokenStore = (adapter) => { store = adapter; };
+let storeReady = Promise.resolve();
+export const deferStore = (pending) => { storeReady = pending.catch(() => {}); };
 
 const save = async (pair) => {
   if (pair?.accessToken) await store.set('nb.access', pair.accessToken);
@@ -21,6 +23,7 @@ export const clearTokens = async () => { await store.remove('nb.access'); await 
 export function attachNative(http) {
   http.interceptors.request.use(async (cfg) => {
     if (!isNative()) return cfg;
+    await storeReady;
     Object.assign(cfg.headers, HEADER);
     const access = await store.get('nb.access');
     if (access && !cfg.headers.Authorization) cfg.headers.Authorization = `Bearer ${access}`;

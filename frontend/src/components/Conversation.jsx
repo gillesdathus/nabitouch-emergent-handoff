@@ -49,6 +49,7 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
     return () => { alive = false; clearInterval(poll); if (source) source.close(); };
   }, [appointmentId]);
 
+  const timed = presets.find((p) => p.id === presetId)?.minutes === true;
   const choose = (preset) => {
     setPresetId(preset.id);
     const text = preset.body.replace("{minutes}", String(minutes));
@@ -61,7 +62,7 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
     setBusy(true);
     setError("");
     try {
-      await api.postMessage(appointmentId, { body: text, presetId: presetId || undefined, minutes: presetId === "late" ? minutes : undefined, reason: reason || undefined, recordDelay, idempotencyKey: `${Date.now()}` });
+      await api.postMessage(appointmentId, { body: text, presetId: presetId || undefined, minutes: timed ? minutes : undefined, reason: reason || undefined, recordDelay, idempotencyKey: `${Date.now()}` });
       setBody("");
       setReason("");
       setPresetId("");
@@ -109,7 +110,7 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
               {presets.map((preset) => <button key={preset.id} type="button" className={presetId === preset.id ? "nb-chip-on shrink-0" : "nb-chip-off shrink-0"} onClick={() => choose(preset)} data-testid={`preset-${preset.id}`}>{preset.body.replace("{minutes}", String(minutes))}</button>)}
             </div>
           )}
-          {presetId === "late" && (
+          {timed && (
             <div className="space-y-2" data-testid="delay-picker">
               <div className="flex gap-2">{[5, 10, 15, 20, 30].map((value) => <button key={value} type="button" className={minutes === value ? "nb-chip-on" : "nb-chip-off"} onClick={() => { setMinutes(value); setBody(`I'm running ${value} minutes late.${reason ? ` ${reason}` : ""}`); }} data-testid={`delay-${value}`}>{value} min</button>)}</div>
               <input className="nb-input h-10" placeholder="Optional reason" value={reason} onChange={(event) => setReason(event.target.value)} data-testid="delay-reason" />

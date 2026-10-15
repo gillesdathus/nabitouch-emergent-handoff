@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pymongo import ReturnDocument
 
+from devices import queue_push
+
 INCIDENT_KINDS = ("obstructed", "unsafe", "unhygienic", "unsuitable", "other")
 ACTIONS = ("request_fix", "cannot_proceed")
 CHECKIN_FROM = ("en_route", "arrived", "in_session", "interrupted")
@@ -71,6 +73,10 @@ def build_safety_router(db, coll, add_audit, user_from, apply_transition):
                "recipients": ["owner", *await managers()] if alert else [], "acks": [], **extra}
         await db.nt_safety_events.insert_one(dict(row))
         row.pop("_id", None)
+        if alert:
+            owners = [u["id"] for u in await db.nt_users.find({"role": "owner"}, {"_id": 0, "id": 1}).to_list(10)]
+            title = "Assistance requested" if kind == "assist" else "Unsafe space reported"
+            await queue_push(db, set(owners + row["recipients"][1:]), title, f"{user.get('name') or 'A practitioner'} · {appt.get('ref')}", {"eventId": row["id"], "path": "/owner/safety"}, f"safety:{row['id']}")
         await add_audit(user.get("name") or "Practitioner", f"Safety: {appt.get('ref')} {kind.replace('_', ' ')}{(' · ' + extra['incidentKind']) if extra.get('incidentKind') else ''}", appt["id"])
         return row
 

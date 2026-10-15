@@ -253,4 +253,7 @@ export const api = {
   safetyManagers: () => http.get('/safety/managers').then(data),
   saveSafetyManagers: (managers) => http.put('/safety/managers', { managers }).then(data),
   safetyMe: () => http.get('/safety/me').then(data),
+  registerDevice: (body) => http.post('/devices', body).then(data),
+  removeDevice: (id) => http.delete(`/devices/${id}`).then(data),
+  planNudge: () => http.get('/plans/nudge').then(data),
 };
