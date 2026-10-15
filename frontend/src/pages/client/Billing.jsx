@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, FileText, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { EmptyState, Notice, PageHeader, Reveal, Segmented } from "@/components/tide";
@@ -54,9 +57,22 @@ function InvoiceRow({ invoice, onOpen, i }) {
 
 export default function Billing() {
   const { me, idx } = useDemo();
-  const { rows, error, reload, replace } = useInvoices();
+  const { rows, error, reload, replace } = useInvoices(undefined, true, true);
   const [filter, setFilter] = useState("open");
   const [openId, setOpenId] = useState(null);
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const sid = params.get("session_id");
+    if (params.get("card") === "cancel") { toast.message("Checkout cancelled. Nothing was charged."); setParams({}); }
+    if (params.get("card") !== "return" || !sid) return;
+    let tries = 0;
+    const check = () => api.stripeReturn(sid).then((r) => {
+      if (r.confirmed) { toast.success("Payment confirmed by Stripe. Thank you!"); reload(); setParams({}); }
+      else if (++tries < 8) setTimeout(check, 2500);
+      else { toast.message("Payment is processing. It will appear here once Stripe confirms."); setParams({}); }
+    }).catch(() => {});
+    check();
+  }, [params, setParams, reload]);
   const flags = { cardsOn: restrictedFlag(idx?.settings, "cardCheckoutEnabled"), emailOn: restrictedFlag(idx?.settings, "invoiceEmailEnabled"), giftOn: restrictedFlag(idx?.settings, "giftCardsEnabled") };
   if (!me) return <div className="mx-auto max-w-xl px-5 py-16 text-center"><p>Please sign in to see your invoices.</p><Link to="/login" className="nb-btn-primary mt-4" data-testid="billing-signin-link">Sign in</Link></div>;
   const totals = sumInvoices(rows);
@@ -65,7 +81,7 @@ export default function Billing() {
   return (
     <div className="mx-auto max-w-5xl px-5 py-8 nb-page" data-testid="client-billing-page">
       <Link to="/me" data-testid="billing-back" className="mb-4 inline-flex items-center gap-1 text-sm text-nb-mute"><ArrowLeft className="h-4 w-4" />My Nabitouch</Link>
-      <PageHeader eyebrow="Billing" title="Invoices & payments" sub="Every amount comes from your issued invoices. Insurance counts as paid only once it is received." right={<button type="button" onClick={reload} aria-label="Refresh" data-testid="billing-refresh" className="grid h-10 w-10 place-items-center rounded-full bg-white ring-1 ring-sky-100"><RefreshCw className="h-4 w-4 text-nb-blue" /></button>} />
+      <PageHeader eyebrow="Billing" title="Invoices & payments" sub="Updates live as Nabitouch records insurance and payments. Insurance counts as paid only once it is received." right={<button type="button" onClick={reload} aria-label="Refresh" data-testid="billing-refresh" className="grid h-10 w-10 place-items-center rounded-full bg-white ring-1 ring-sky-100"><RefreshCw className="h-4 w-4 text-nb-blue" /></button>} />
       {rows === undefined ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[0, 1, 2, 3].map((n) => <div key={n} className="h-24 rounded-3xl nb-skeleton" />)}</div> : <Summary totals={totals} />}
       {error && <Notice className="mt-4" testid="billing-error">{error}</Notice>}
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Your invoices</h2><Segmented testid="billing-filter" value={filter} onChange={setFilter} options={FILTERS} /></div>

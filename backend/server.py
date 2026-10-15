@@ -63,7 +63,7 @@ from notifications import (
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
 from finance import build_finance_router
-from email_templates import invoice_email, payment_link_email, receipt_email
+from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import readiness as sms_readiness
 
@@ -1498,6 +1498,17 @@ async def _deliver_booking(note):
     """Build a booking email from the appointment and client rows. Clinical fields stay out of the message."""
     if note.get("kind") in ("invoice", "receipt", "payment_link"):
         return await _deliver_billing(note)
+    if note.get("kind") == "statement":
+        row = await db.nt_pay_statements.find_one({"id": note.get("statementId")}, NO_ID)
+        account = await db.nt_users.find_one({"role": "practitioner", "subject": (row or {}).get("practitionerId")}, NO_ID) if row else None
+        if not row or not account or not account.get("email") or account["email"].endswith("@example.com"):
+            raise CancelDelivery("no_recipient")
+        subject, html = statement_email(os.environ["EMAIL_FROM_NAME"], account.get("name") or "there", f"{row['start']} to {row['end']}", row["kpis"][0][1],
+                                        f"{os.environ['APP_URL'].rstrip('/')}/pro/earnings")
+        try:
+            return await send_email(to=account["email"], subject=subject, html=html, idempotency_key=note.get("id"))
+        except HTTPException as exc:
+            raise (TransientDelivery("provider_unavailable") if exc.status_code in (408, 429, 500, 503) else PermanentDelivery("provider_rejected")) from exc
     appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
     if not appt:
         raise PermanentDelivery("appointment_missing")

@@ -1,3 +1,4 @@
+import { RetentionNudges } from "@/components/RetentionNudges";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
@@ -134,6 +135,7 @@ export default function Dashboard() {
       {openId && <AppointmentSheet apptId={openId} role="owner" onClose={() => setOpenId(null)} />}
       {clientId && <ClientProfile clientId={clientId} onClose={() => setClientId(null)} />}
       {booking && <NewBookingDialog open onClose={() => setBooking(false)} />}
+      {!training && <RetentionNudges state={state} idx={idx} />}
     </div>
   );
 }

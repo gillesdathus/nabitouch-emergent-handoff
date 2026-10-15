@@ -105,13 +105,13 @@ async def activate_paid(db, checkout_row, event_id):
         return False
     try:
         await db.nt_gc_ledger.insert_one({"id": "gct-" + uuid.uuid4().hex[:12], "cardId": card["id"], "type": "issue", "amountCents": card["amountCents"], "status": "completed",
-                                          "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-" + event_id[:70], "at": now_iso(), "actorName": "Stripe"})
+                                          "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-" + checkout_row["sessionId"][:70], "at": now_iso(), "actorName": "Stripe"})
     except DuplicateKeyError:
         return True
     saved = await db.nt_giftcards.find_one_and_update({"id": card["id"], "status": "pending_payment"},
                                                       {"$set": {"status": "active", "balanceCents": card["amountCents"], "activatedAt": now_iso()}, "$inc": {"version": 1}})
     if not saved:
-        await db.nt_gc_ledger.delete_one({"idempotencyKey": "stripe-" + event_id[:70]})
+        await db.nt_gc_ledger.delete_one({"idempotencyKey": "stripe-" + checkout_row["sessionId"][:70]})
         return False
     return True
 

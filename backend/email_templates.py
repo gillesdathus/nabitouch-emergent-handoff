@@ -52,5 +52,10 @@ def recovery_email(brand, name, link):
     return (f"Reset your {brand} password", layout(brand, name, "We received a request to reset your password. If it wasn't you, ignore this email.", [], ("Choose a new password", link)))
 
 
+def statement_email(brand, name, period, pay, link):
+    return (f"Your {brand} statement is ready", layout(brand, name, f"Your pay statement for {period} has been approved and is ready to download.",
+                                                     [("Period", period), ("Total pay", pay)], ("Download statement", link), "Statements are not payroll or tax documents."))
+
+
 def booking_change_email(brand, client, title, rows, link):
     return (f"{title} — {brand}", layout(brand, client, f"{title}.", rows, ("View your visit", link)))

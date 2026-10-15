@@ -73,6 +73,11 @@ def invoice_email_enabled():
     return _flag("INVOICE_EMAIL_ENABLED", False)
 
 
+def statement_email_enabled():
+    """Practitioner "statement ready" email. Unset stays off."""
+    return _flag("STATEMENT_EMAIL_ENABLED", False)
+
+
 def giftcards_enabled():
     """Gift-card purchase, issuance, redemption, and void. Unset stays off."""
     return _flag("GIFTCARDS_ENABLED", False)

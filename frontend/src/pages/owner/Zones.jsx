@@ -1,3 +1,4 @@
+import { EtransferSettings } from "@/components/EtransferSettings";
 import { WhatsAppSettings } from "@/components/WhatsAppSettings";
 import { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -96,6 +97,8 @@ export default function Zones() {
       </div>
       <SectionHead eyebrow="Contact" title="WhatsApp on public pages" className="mt-10" />
       <div className="grid gap-4 md:grid-cols-2"><WhatsAppSettings settings={idx.settings} save={save} /></div>
+      <SectionHead eyebrow="Payments" title="e-Transfer instructions" className="mt-10" />
+      <div className="grid gap-4 md:grid-cols-2"><EtransferSettings /></div>
       <SectionHead eyebrow="Payments" title="What the customer pays now" className="mt-10" />
       <div className="grid gap-4 md:grid-cols-2">
         <label className="nb-card flex items-center justify-between p-4 text-sm"><span><b>Accept cash</b><span className="block text-xs text-nb-mute">Cash is recorded at the visit. It is not a prepayment.</span></span><Switch checked={!!policy.cashAccepted} onCheckedChange={(v) => save({ cashEnabled: v, paymentPolicy: { ...policy, cashAccepted: v } }, `Cash ${v ? "accepted" : "turned off"}`)} data-testid="settings-cash-switch" /></label>

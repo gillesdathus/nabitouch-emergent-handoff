@@ -4,14 +4,29 @@ import { CreditCard, Landmark, Loader2, Copy, Clock3 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { GiftCardApply } from "@/components/billing/GiftCardApply";
 
+const TIPS = [0, 10, 15, 20];
+
+function TipPicker({ invoice, tip, setTip }) {
+  const pct = (p) => Math.round((invoice.total.cents * p) / 100);
+  return (
+    <div className="mb-3" data-testid="billing-tip-picker">
+      <p className="mb-2 text-xs text-nb-mute">Add a tip? 100% goes to your practitioner.</p>
+      <div className="flex flex-wrap gap-2">
+        {TIPS.map((p) => <button key={p} type="button" onClick={() => setTip(pct(p))} data-testid={`billing-tip-${p}`} className={`h-9 rounded-full px-4 text-xs font-semibold ring-1 transition-colors ${tip === pct(p) ? "bg-nb-navy text-white ring-nb-navy" : "bg-white ring-sky-100"}`}>{p ? `${p}% · $${(pct(p) / 100).toFixed(2)}` : "No tip"}</button>)}
+      </div>
+    </div>
+  );
+}
+
 function CardPay({ invoice, enabled }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [tip, setTip] = useState(0);
   if (!enabled) return <p className="text-xs text-nb-mute" data-testid="billing-card-off">Card checkout is turned off for now. e-Transfer and cash at the visit remain available.</p>;
   const start = async () => {
     setBusy(true);
     try {
-      const started = await api.invoiceCheckout(invoice.id, { amountCents: invoice.balance.cents });
+      const started = await api.invoiceCheckout(invoice.id, { amountCents: invoice.balance.cents, tipCents: tip });
       if (started.url) window.location.assign(started.url);
       else setNote(`Checkout started for ${started.amount?.display}. Nothing is paid until Stripe confirms it.`);
     } catch (e) { setNote(apiError(e)); }
@@ -19,8 +34,9 @@ function CardPay({ invoice, enabled }) {
   };
   return (
     <div>
+      <TipPicker invoice={invoice} tip={tip} setTip={setTip} />
       <button type="button" onClick={start} disabled={busy} data-testid="billing-pay-card-btn" className="nb-btn-primary h-12 w-full">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}Pay {invoice.balance.display} by card
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}Pay ${((invoice.balance.cents + tip) / 100).toFixed(2)} by card
       </button>
       {note && <p className="mt-2 text-xs text-nb-mute" data-testid="billing-card-note">{note}</p>}
     </div>

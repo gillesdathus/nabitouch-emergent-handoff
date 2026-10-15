@@ -8,6 +8,7 @@ import { PayOptions } from "@/components/billing/PayOptions";
 import { downloadInvoicePdf, downloadReceiptPdf, newKey } from "@/lib/useInvoices";
 import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
+import { StaffInvoiceActions } from "@/components/billing/StaffInvoiceActions";
 import { fmtDate } from "@/lib/domain";
 
 const METHOD_ICON = { stripe: CreditCard, cash: Banknote, etransfer: Landmark, insurance: ShieldCheck, giftcard: Gift };
@@ -50,7 +51,8 @@ function Payments({ invoice }) {
   );
 }
 
-function Documents({ invoice, emailOn }) {
+function Documents({ invoice, emailOn, staff }) {
+  if (!staff && !invoice.releasedAt) return <p className="rounded-2xl p-4 text-xs text-nb-mute tint-ice" data-testid="invoice-pending-release">{invoice.state === "paid" ? "Paid in full. Your final invoice and receipt will be available here once Nabitouch approves them." : "Your invoice PDF and receipt become available once the balance is paid and Nabitouch approves the final invoice."}</p>;
   const [busy, setBusy] = useState("");
   const run = (what, fn) => async () => { setBusy(what); try { await fn(); } catch (e) { toast.error(apiError(e) || "That did not work."); } setBusy(""); };
   const email = run("email", async () => { const res = await api.emailInvoice(invoice.id, "invoice", newKey("mail")); toast.success(res.queued ? "Email queued. Delivery is confirmed only by the provider." : "Not queued"); });
@@ -84,11 +86,11 @@ export function InvoiceDrawer({ invoice, open, onOpenChange, flags = {}, onChang
             <div className="mt-5 space-y-6">
               <MoneyLedger invoice={invoice} />
               {staffLink
-                ? <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-primary h-11 w-full text-sm">Record payments in Payments<ArrowUpRight className="h-4 w-4" /></Link>
+                ? <><StaffInvoiceActions invoice={invoice} onChange={onChange} /><Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Record insurance and payments<ArrowUpRight className="h-4 w-4" /></Link></>
                 : <PayOptions invoice={invoice} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={onChange} />}
               <Lines invoice={invoice} />
               <Payments invoice={invoice} />
-              <Documents invoice={invoice} emailOn={flags.emailOn} />
+              <Documents invoice={invoice} emailOn={flags.emailOn} staff={Boolean(staffLink)} />
               {invoice.practitionerName && <p className="text-xs text-nb-mute">Practitioner: {invoice.practitionerName}{invoice.dueDate ? ` · Due ${fmtDate(invoice.dueDate.slice(0, 10))}` : ""}</p>}
             </div>
           </div>

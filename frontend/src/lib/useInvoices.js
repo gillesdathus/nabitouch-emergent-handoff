@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 
 export const newKey = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-export function useInvoices(params, enabled = true) {
+export function useInvoices(params, enabled = true, live = false) {
   const [rows, setRows] = useState(undefined);
   const [error, setError] = useState("");
   const query = JSON.stringify(params || {});
@@ -19,6 +19,13 @@ export function useInvoices(params, enabled = true) {
     }
   }, [query, enabled]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!live || !enabled) return undefined;
+    const quiet = () => { if (document.visibilityState === "visible") api.invoices({ limit: 100, ...JSON.parse(query) }).then((p) => setRows(p.items)).catch(() => {}); };
+    const timer = setInterval(quiet, 15000);
+    window.addEventListener("focus", quiet);
+    return () => { clearInterval(timer); window.removeEventListener("focus", quiet); };
+  }, [live, enabled, query]);
   const replace = (next) => setRows((prev) => (prev || []).map((row) => (row.id === next.id ? next : row)));
   return { rows, error, reload: load, replace };
 }

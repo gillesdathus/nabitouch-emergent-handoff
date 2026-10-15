@@ -161,6 +161,7 @@ def public_invoice(invoice, ledger, claims=None):
         "estimatedClientShare": money_view(max(0, balance - expected)),
         "overdue": overdue,
         "clientReportedTransfer": any(line["type"] == "transfer_reported" for line in ledger),
+        "releasedAt": invoice.get("releasedAt"),
         "claims": claims or [],
         "payments": [
             {"id": line["id"], "type": line["type"], "method": line.get("method"), "amount": money_view(line["amountCents"]),
@@ -261,6 +262,7 @@ async def ensure_billing(db):
     await db.nt_ledger.create_index("idempotencyKey", unique=True)
     await db.nt_ledger.create_index("invoiceId")
     await db.nt_claims.create_index("id", unique=True)
+    await db.nt_tips.create_index("idempotencyKey", unique=True)
     await db.nt_claims.create_index("invoiceId")
     await db.nt_files.create_index("id", unique=True)
     await db.nt_ledger.create_index([("claimId", 1), ("reference", 1)], unique=True, partialFilterExpression={"type": "insurance_receipt", "reference": {"$type": "string"}})
@@ -542,6 +544,8 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.get("/invoices/{iid}/pdf")
     async def invoice_pdf(iid: str, request: Request):
         user = await actor(request)
+        if user["role"] == "client" and not (await load(iid)).get("releasedAt"):
+            raise HTTPException(403, "Your invoice PDF is available once Nabitouch approves the final invoice")
         invoice = await load(iid)
         view = await view_for(user, invoice)
         if view["state"] == "draft":
@@ -586,6 +590,8 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.get("/invoices/{iid}/receipt")
     async def receipt(iid: str, request: Request):
         user = await actor(request)
+        if user["role"] == "client" and not (await load(iid)).get("releasedAt"):
+            raise HTTPException(403, "Your invoice PDF is available once Nabitouch approves the final invoice")
         view = await view_for(user, await load(iid))
         if view["received"]["cents"] <= 0:
             raise HTTPException(409, "There is no confirmed payment to receipt yet")
@@ -1083,6 +1089,9 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Amount must be within the outstanding balance")
         if user["role"] == "client" and visit.get("payNow") in ("full", "deposit") and amount not in allowed_online_amounts(balance, policy, received):
             raise HTTPException(400, "That amount is not one of the amounts due")
+        tip = body.get("tipCents") or 0
+        if not isinstance(tip, int) or tip < 0 or tip > min(20000, int(invoice["totalCents"])):
+            raise HTTPException(400, "Tip must be between $0 and the invoice total (max $200)")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
         session_id = None
         hosted_url = None
@@ -1093,14 +1102,17 @@ def build_billing_router(db, coll, add_audit, user_from):
             app_url = (os.environ.get("APP_URL") or "https://localhost").rstrip("/")
             form = {
                 "mode": "payment",
-                "success_url": app_url + "/me?card=return",
-                "cancel_url": app_url + "/me?card=cancel",
+                "success_url": app_url + "/me/billing?card=return&session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": app_url + "/me/billing?card=cancel",
                 "line_items[0][quantity]": "1",
                 "line_items[0][price_data][currency]": "cad",
                 "line_items[0][price_data][unit_amount]": str(amount),
                 "line_items[0][price_data][product_data][name]": invoice.get("number") or "Nabitouch invoice",
                 "metadata[invoiceId]": iid,
             }
+            if tip:
+                form.update({"line_items[1][quantity]": "1", "line_items[1][price_data][currency]": "cad", "line_items[1][price_data][unit_amount]": str(tip),
+                             "line_items[1][price_data][product_data][name]": "Tip for your practitioner (100% passed through)"})
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
             if resp.status_code >= 400:
@@ -1116,17 +1128,72 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(503, "Card checkout is not configured")
         await db.nt_checkouts.insert_one({
             "id": "chk-" + uuid.uuid4().hex[:12], "invoiceId": iid, "sessionId": session_id,
-            "amountCents": amount, "status": "pending", "at": now_iso(),
+            "amountCents": amount, "tipCents": tip, "chargeCents": amount + tip, "practitionerId": invoice.get("practitionerId"),
+            "createdBy": user.get("role"), "status": "pending", "at": now_iso(),
             "expiresAt": (now() + timedelta(minutes=CHECKOUT_HOLD_MINUTES)).isoformat(),
         })
-        return {"confirmed": False, "sessionId": session_id, "url": hosted_url, "amount": money_view(amount)}
+        return {"confirmed": False, "sessionId": session_id, "url": hosted_url, "amount": money_view(amount), "tip": money_view(tip)}
+
+    @r.post("/invoices/{iid}/release")
+    async def release_invoice(iid: str, request: Request):
+        user = await actor(request)
+        if not (user["role"] == "owner" or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to release invoices")
+        invoice = await load(iid)
+        _received, balance, state, _overdue = project(invoice, await ledger_for(iid))
+        if state != "paid" or balance > 0:
+            raise HTTPException(409, "Release the final invoice once it is paid in full")
+        if not invoice.get("releasedAt"):
+            await db.nt_invoices.update_one({"id": iid}, {"$set": {"releasedAt": now_iso(), "releasedBy": user.get("name")}})
+            await add_audit(user.get("name") or "staff", f"{invoice.get('number')} final invoice released to client", invoice.get("appointmentId"))
+        return await view_for(user, await load(iid))
+
+    @r.post("/invoices/{iid}/tip")
+    async def record_tip(iid: str, request: Request):
+        user = await actor(request)
+        if not (user["role"] == "owner" or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to record tips")
+        invoice = await load(iid)
+        body = await _body(request)
+        amount = body.get("amountCents")
+        if not isinstance(amount, int) or not 0 < amount <= 20000:
+            raise HTTPException(400, "Tip must be between $0.01 and $200")
+        if body.get("method") not in ("cash", "etransfer"):
+            raise HTTPException(400, "Record a cash or verified e-Transfer tip")
+        key = str(body.get("idempotencyKey") or "")
+        if not 8 <= len(key) <= 80:
+            raise HTTPException(400, "Idempotency key is required")
+        try:
+            await db.nt_tips.insert_one({"id": "tip-" + uuid.uuid4().hex[:10], "invoiceId": iid, "practitionerId": invoice.get("practitionerId"), "amountCents": amount,
+                                         "method": body["method"], "reference": str(body.get("reference") or "")[:80], "idempotencyKey": key, "at": now_iso(), "actorName": user.get("name")})
+        except DuplicateKeyError:
+            pass
+        await add_audit(user.get("name") or "staff", f"{invoice.get('number')} tip {money_view(amount)['display']} recorded", invoice.get("appointmentId"))
+        return {"recorded": True}
 
     @r.get("/billing/stripe/return")
-    async def stripe_return(request: Request):
+    async def stripe_return(request: Request, session_id: str = ""):
+        """Webhook fallback: confirm a returning checkout directly with Stripe. Settlement is idempotent."""
         await actor(request)
-        return {"confirmed": False}
+        row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0}) if session_id else None
+        if not row:
+            return {"confirmed": False}
+        if row.get("status") == "paid":
+            return {"confirmed": True}
+        key = os.environ.get("STRIPE_SECRET_KEY") or ""
+        if not key.startswith("sk_test_"):
+            return {"confirmed": False}
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"https://api.stripe.com/v1/checkout/sessions/{session_id}", auth=(key, ""))
+        session = resp.json() if resp.status_code < 400 else {}
+        if session.get("payment_status") != "paid":
+            return {"confirmed": False}
+        result = await process_event({"id": "poll-" + session_id, "type": "checkout.session.completed", "data": {"object": session}})
+        return {"confirmed": bool(result.get("settled"))}
 
     @r.post("/billing/stripe/webhook")
+    @r.post("/stripe/webhook")
     async def stripe_webhook(request: Request):
         payload = await request.body()
         secret = card_secret()
@@ -1138,6 +1205,9 @@ def build_billing_router(db, coll, add_audit, user_from):
             event = json.loads(payload)
         except json.JSONDecodeError:
             raise HTTPException(400, "Invalid event")
+        return await process_event(event)
+
+    async def process_event(event):
         event_id = str(event.get("id") or "")
         if len(event_id) < 8:
             raise HTTPException(400, "Event id is required")
@@ -1168,7 +1238,7 @@ def build_billing_router(db, coll, add_audit, user_from):
         checkout_row = await db.nt_checkouts.find_one({"sessionId": obj.get("id")})
         if not checkout_row:
             return {"received": True, "settled": False}
-        action = checkout_event_action(checkout_row.get("status"), obj.get("amount_total"), checkout_row["amountCents"])
+        action = checkout_event_action(checkout_row.get("status"), obj.get("amount_total"), checkout_row.get("chargeCents", checkout_row["amountCents"]))
         if action == "reject":
             raise HTTPException(409, "Checkout amount does not match the invoice")
         if action == "duplicate":
@@ -1190,12 +1260,18 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"type": "client_payment", "method": "stripe", "amountCents": checkout_row["amountCents"], "reference": checkout_row["sessionId"]}
 
         try:
-            saved = await mutate(invoice, {"name": "Stripe", "role": "owner"}, "stripe-" + event_id[:70], build)
+            saved = await mutate(invoice, {"name": "Stripe", "role": "owner"}, "stripe-" + str(obj.get("id"))[:70], build)
         except HTTPException as exc:
             if exc.status_code == 409:
                 return {"received": True, "settled": False}
             raise
         await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"status": "paid", "eventId": event_id}})
+        if checkout_row.get("tipCents"):
+            try:
+                await db.nt_tips.insert_one({"id": "tip-" + uuid.uuid4().hex[:10], "invoiceId": invoice["id"], "practitionerId": checkout_row.get("practitionerId") or invoice.get("practitionerId"),
+                                             "amountCents": checkout_row["tipCents"], "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-tip-" + str(obj.get("id"))[:60], "at": now_iso()})
+            except DuplicateKeyError:
+                pass
         await sync_payment_due(saved)
         await notify_client(saved, "stripe:" + event_id)
         return {"received": True, "settled": True}

@@ -104,7 +104,7 @@ export default function ClientWorkspace() {
   const [openId, setOpenId] = useState(null);
   useEffect(() => { api.clientWorkspace(id).then(setWs).catch((e) => setError(apiError(e))); }, [id]);
   const money = ws?.access?.invoices;
-  const { rows } = useInvoices({ clientId: id }, Boolean(money));
+  const { rows, replace } = useInvoices({ clientId: id }, Boolean(money));
   if (error) return <div className="mx-auto max-w-3xl px-5 py-12"><Notice testid="cw-error">{error}</Notice></div>;
   if (!ws) return <div className="mx-auto max-w-6xl space-y-4 px-5 py-8"><div className="h-48 rounded-[32px] nb-skeleton" /><div className="h-64 rounded-3xl nb-skeleton" /></div>;
   const invoiceRows = money ? rows : [];
@@ -127,7 +127,7 @@ export default function ClientWorkspace() {
         {ws.access.plans && <TabsContent value="plans" className="mt-5"><Plans rows={ws.plans} /></TabsContent>}
       </Tabs>
       <p className="mt-10 flex items-center gap-1.5 text-[11px] text-nb-mute" data-testid="cw-privacy-note"><Lock className="h-3 w-3" />Clinical notes are not shown in this record. Opening it is logged.</p>
-      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} />
+      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
     </div>
   );
 }

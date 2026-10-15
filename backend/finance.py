@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from billing import public_invoice
 from pdfbrand import report_pdf
+from config import statement_email_enabled
 
 KINDS = {
     "revenue": "Revenue report",
@@ -403,9 +404,15 @@ def build_finance_router(db, user_from, settings_doc):
                 pay += amount
                 net += base
                 rows.append([_day(v["serviceDate"]), v["number"], v["service"], f"{v.get('duration') or ''} min", cad(base), cad(amount)])
+            tips = [t for t in await db.nt_tips.find({"practitionerId": pid}, {"_id": 0}).to_list(5000) if start <= _day(t.get("at")) <= end]
+            tip_total = sum(int(t["amountCents"]) for t in tips)
+            for t in tips:
+                rows.append([_day(t["at"]), "Tip", f"{t.get('method') or ''} · 100% to you", "", "", cad(t["amountCents"])])
+            commission = pay
+            pay += tip_total
             doc = {"id": "pst-" + uuid.uuid4().hex[:10], "practitionerId": pid, "practitionerName": vs[0].get("practitionerName"), "start": start, "end": end,
                    "status": "draft", "rule": rule_label(rule), "createdAt": datetime.now(timezone.utc).isoformat(), "createdBy": user.get("name"),
-                   "kpis": [["Practitioner pay", cad(pay)], ["Visits", str(len(rows))], ["Commission base", cad(net)], ["Pay rule", rule_label(rule)]],
+                   "kpis": [["Practitioner pay", cad(pay)], ["Visits", str(len(vs))], ["Visit pay", cad(commission)], ["Tips (100%)", cad(tip_total)], ["Commission base", cad(net)], ["Pay rule", rule_label(rule)]],
                    "headers": ["Date", "Invoice", "Service", "Length", "Base", "Pay"], "rows": rows, "payCents": pay}
             await db.nt_pay_statements.insert_one(dict(doc))
             created.append(statement_view(doc, False))
@@ -437,6 +444,14 @@ def build_finance_router(db, user_from, settings_doc):
         saved = await db.nt_pay_statements.find_one_and_update({"id": sid, "status": "draft"}, {"$set": {"status": "approved", "approvedBy": user.get("name"), "approvedAt": datetime.now(timezone.utc).isoformat()}}, projection={"_id": 0}, return_document=True)
         if not saved:
             raise HTTPException(409, "Only a draft statement can be approved")
+        if statement_email_enabled():
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                await db.nt_notifications.insert_one({"id": "ntf-" + uuid.uuid4().hex[:16], "dedupeKey": f"statement:{sid}", "kind": "statement", "statementId": sid,
+                                                      "status": "pending", "attempts": 0, "maxAttempts": 5, "nextAttemptAt": now, "leaseUntil": None, "leaseOwner": None,
+                                                      "providerId": None, "deliveredAt": None, "lastError": None, "createdAt": now, "updatedAt": now})
+            except Exception:
+                pass
         return statement_view(saved, False)
 
     @r.delete("/statements/{sid}")
