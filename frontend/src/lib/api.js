@@ -256,4 +256,13 @@ export const api = {
   registerDevice: (body) => http.post('/devices', body).then(data),
   removeDevice: (id) => http.delete(`/devices/${id}`).then(data),
   planNudge: () => http.get('/plans/nudge').then(data),
+  visitMember: (id) => http.get(`/plans/visit/${id}/member`).then(data),
+  pushStatus: () => http.get('/devices/status').then(data),
+  winbackSettings: () => http.get('/winback/settings').then(data),
+  saveWinbackSettings: (body) => http.put('/winback/settings', body).then(data),
+  winbackCandidates: () => http.get('/winback/candidates').then(data),
+  createWinback: (clientId) => http.post('/winback/invites', { clientId }).then(data),
+  winbackInvites: () => http.get('/winback/invites').then(data),
+  voidWinback: (id) => http.post(`/winback/invites/${id}/void`, {}).then(data),
+  winbackMine: () => http.get('/winback/mine').then(data),
 };

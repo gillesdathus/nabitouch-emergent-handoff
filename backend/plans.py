@@ -364,6 +364,24 @@ def build_plans_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Idempotency key is required")
         return key
 
+    @r.get("/visit/{aid}/member")
+    async def visit_member(aid: str, request: Request):
+        """Membership badge for the visit screen: plan name and credits left this cycle. No billing details."""
+        user = await actor(request, "practitioner", "owner", "desk")
+        appt = await coll("appointments").find_one({"id": aid}, {"_id": 0, "clientId": 1, "practitionerId": 1})
+        if not appt or (user["role"] == "practitioner" and appt.get("practitionerId") != user.get("subject")):
+            raise HTTPException(404, "Appointment not found")
+        await expire_stale(db, appt["clientId"])
+        members = await db.nt_memberships.find({"clientId": appt["clientId"], "status": {"$in": ["active", "past_due"]}}, {"_id": 0}).to_list(5)
+        out = []
+        for m in members:
+            ids = [p["id"] for p in await db.nt_plan_purchases.find({"membershipId": m["id"], "status": {"$ne": "pending_payment"}}, {"_id": 0, "id": 1}).to_list(100)]
+            left = await db.nt_credits.count_documents({"purchaseId": {"$in": ids}, "state": "available"}) if ids else 0
+            held = await db.nt_credits.count_documents({"purchaseId": {"$in": ids}, "state": "reserved"}) if ids else 0
+            out.append({"id": m["id"], "name": m["productName"], "status": m["status"], "creditsLeft": left, "creditsHeld": held, "perCycle": m.get("creditsPerCycle"),
+                        "serviceName": m.get("serviceName"), "duration": m.get("duration"), "renewsAt": m.get("currentPeriodEnd"), "endingSoon": bool(m.get("cancelAtPeriodEnd"))})
+        return {"memberships": out}
+
     @r.get("/nudge")
     async def nudge(request: Request):
         """After a recent completed visit, show what a matching published package would have saved. Read-only."""

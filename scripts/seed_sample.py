@@ -42,7 +42,7 @@ def pid_name(pros, pid):
 
 async def purge(db):
     for name in ("nt_clients", "nt_appointments", "nt_practitioners", "nt_plans", "nt_invoices", "nt_ledger", "nt_claims", "nt_giftcards",
-                 "nt_gc_ledger", "nt_gc_products", "nt_plan_products", "nt_plan_purchases", "nt_credits", "nt_credit_ledger", "nt_memberships", "nt_safety_events", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
+                 "nt_gc_ledger", "nt_gc_products", "nt_plan_products", "nt_plan_purchases", "nt_credits", "nt_credit_ledger", "nt_memberships", "nt_safety_events", "nt_winback", "nt_devices", "nt_push_outbox", "nt_messages", "nt_trip_notices", "nt_consents", "nt_schedules", "nt_users", "nt_pay_statements"):
         await db[name].delete_many(SYN)
 
 
@@ -180,6 +180,20 @@ async def wellness(db, services):
         for kind in (["issued", "consumed"] if state == "consumed" else ["issued"]):
             await db.nt_credit_ledger.insert_one({"id": f"cl-{cid}-{kind}", "creditId": cid, "purchaseId": "pp-sample1", "clientId": "c-sarah", "type": kind, "unitCents": unit, "actor": "Sample data",
                                                   "idempotencyKey": f"seed-{cid}-{kind}", "at": paid, **SYN})
+    await membership(db, products[1]["priceCents"], svc)
+
+
+async def membership(db, products_price, svc):
+    now = datetime.now(timezone.utc)
+    await db.nt_memberships.insert_one({"id": "mem-sample1", "productId": "plp-monthly", "productName": "Monthly calm", "clientId": "c-sarah", "status": "active", "priceCents": products_price,
+                                        "creditsPerCycle": 1, "serviceSlug": svc["slug"], "serviceName": svc["name"], "duration": 60, "cancelAtPeriodEnd": False,
+                                        "createdAt": (now - timedelta(days=10)).isoformat(), "activatedAt": (now - timedelta(days=10)).isoformat(), "currentPeriodEnd": (now + timedelta(days=20)).isoformat(), **SYN})
+    await db.nt_plan_purchases.insert_one({"id": "pp-sample2", "idempotencyKey": "seed-pp-sample2", "productId": "plp-monthly", "productName": "Monthly calm", "kind": "membership", "clientId": "c-sarah",
+                                           "serviceSlug": svc["slug"], "serviceName": svc["name"], "duration": 60, "credits": 1, "priceCents": products_price, "taxCents": round(products_price * 0.05),
+                                           "totalCents": products_price + round(products_price * 0.05), "unitCents": products_price, "validityDays": 60, "membershipId": "mem-sample1", "status": "paid",
+                                           "refundedCents": 0, "createdAt": (now - timedelta(days=10)).isoformat(), "paidAt": (now - timedelta(days=10)).isoformat(), **SYN})
+    await db.nt_credits.insert_one({"id": "cr-sample2-1", "purchaseId": "pp-sample2", "productId": "plp-monthly", "clientId": "c-sarah", "kind": "membership", "serviceSlug": svc["slug"], "duration": 60,
+                                    "unitCents": products_price, "state": "available", "appointmentId": None, "issuedAt": (now - timedelta(days=10)).isoformat(), "expiresAt": (now + timedelta(days=50)).isoformat(), **SYN})
 
 
 async def conversations(db, appts):

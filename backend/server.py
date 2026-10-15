@@ -65,6 +65,7 @@ from giftcards import build_giftcard_router, ensure_giftcards
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
 from devices import build_devices_router, ensure_devices
+from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
 from finance import build_finance_router
 from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
@@ -207,6 +208,7 @@ async def lifespan(_app):
     await ensure_plans(db)
     await ensure_safety(db)
     await ensure_devices(db)
+    await ensure_winback(db)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -603,6 +605,8 @@ async def apply_transition(appt, to, actor, note=None):
         await consume_credit(db, appt["id"], actor)
     if to == "cancelled":
         await release_credit(db, appt["id"], actor, "Visit cancelled")
+    if to in ("completed", "cancelled", "no_show"):
+        await settle_invite(db, appt["id"], to)
     if to in ("cancelled", "no_show"):
         await release_redemption(db, coll, saved.get("clientId"), saved.get("id"), (saved.get("pricing") or {}).get("loyaltyPoints"))
     return saved
@@ -1246,6 +1250,14 @@ async def resolve_booking(payload, user):
     promotions = await coll("promotions").find({}, NO_ID).to_list(100)
     use_credit = bool(payload.get("useCredit"))
     credit = None
+    invite = None
+    if payload.get("winbackCode"):
+        if use_credit:
+            raise HTTPException(409, "A welcome-back code does not combine with a package credit")
+        if not client:
+            raise HTTPException(400, "Sign in to use a welcome-back code")
+        invite = await valid_invite(db, payload["winbackCode"], client["id"])
+        promotions = []
     if use_credit:
         if not client:
             raise HTTPException(400, "Sign in to use a package credit")
@@ -1257,6 +1269,8 @@ async def resolve_booking(payload, user):
         service=service, duration=duration, addons=fields.get("addonIds") or [], zone=zone, client=client,
         incoming=incoming, promotions=promotions, settings=settings, location=location, km=km, source=source,
     )
+    if invite:
+        quoted = winback_quote(quoted, float(invite["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     if credit:
         quoted = credit_quote(quoted, credit["unitCents"], float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     payment_policy = resolve_payment_policy(
@@ -1274,7 +1288,7 @@ async def resolve_booking(payload, user):
         "incoming": incoming, "source": source, "fields": fields, "service": service, "duration": duration,
         "location": location, "address": address, "zone": zone, "km": km, "settings": settings,
         "practitioner_id": practitioner_id, "client": client, "person": person, "promotions": promotions, "quoted": quoted,
-        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit),
+        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit), "winbackCode": invite["code"] if invite else None,
     }
 
 
@@ -1387,11 +1401,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             quoted = apply_campaign_price(quoted, campaign_reservation["percent"], settings.get("gst", 0.05), campaign_reservation.get("stackable"))
     appt_id = f"a-{uuid.uuid4().hex[:8]}"
     loyalty_points = 0
-    if ctx.get("useCredit") and (payload.get("redeemPoints") or campaign_reservation):
+    if (ctx.get("useCredit") or ctx.get("winbackCode")) and (payload.get("redeemPoints") or campaign_reservation):
         await release_campaign(db, campaign_reservation)
         if counted_online:
             await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
-        raise HTTPException(409, "A package credit does not combine with campaigns or rewards")
+        raise HTTPException(409, "Package credits and welcome-back codes do not combine with campaigns or rewards")
     if payload.get("redeemPoints") and quoted.get("welcomeOffer"):
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)
@@ -1432,7 +1446,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit") if k in quoted},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
@@ -1471,6 +1485,15 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             return {"appointment": existing, "clientId": client_id}
         raise HTTPException(409, "Booking could not be saved")
     appt.pop("_id", None)
+    if ctx.get("winbackCode"):
+        try:
+            await reserve_invite(db, ctx["winbackCode"], client_id, appt["id"])
+        except HTTPException:
+            await coll("appointments").delete_one({"id": appt["id"]})
+            await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise
     if ctx.get("useCredit"):
         try:
             reserved = await reserve_credit(db, client_id, service["slug"], duration, appt["id"], user["name"] if user else "client")
@@ -2103,6 +2126,7 @@ app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_devices_router(db, user_from))
+app.include_router(build_winback_router(db, coll, add_audit, user_from))
 app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)

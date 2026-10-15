@@ -13,6 +13,7 @@ import { isLiveTrial, useLiveSession, shouldShowPosition } from "@/lib/tracking/
 import { etaCopy } from "@/lib/tracking/providers";
 import { Notice, Stepper } from "@/components/tide";
 import { SafetyCenter } from "@/components/SafetyCenter";
+import { MemberBadge } from "@/components/MemberBadge";
 import { openNavigation } from "@/lib/nativeShell";
 
 const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
@@ -128,6 +129,7 @@ export default function Visit() {
       </div>
       <div className="nb-card space-y-2 p-4 text-sm">
         <p className="flex items-start gap-2"><MapPin className="mt-0.5 h-4 w-4 text-nb-teal" /><span data-testid="visit-arrival">{appt.address.line}{appt.address.unit ? `, unit ${appt.address.unit}` : ""}{appt.address.notes && <span className="block text-xs text-nb-mute">{appt.address.notes}</span>}{appt.address.arrival && <span className="block text-xs text-nb-mute">Arrival pin is saved separately from the street address.</span>}</span></p>
+        <div className="flex flex-wrap gap-1.5"><MemberBadge apptId={appt.id} /></div>
         <div className="flex flex-wrap gap-1.5">{[...(appt.preferences?.goals || []), ...(appt.preferences?.focus || [])].map((g) => <Pill key={g} tone="blue">{g}</Pill>)}</div>
         {appt.preferences?.notes && <p className="text-xs text-nb-mute">“{appt.preferences.notes}”</p>}
         {lastNote && <p className="rounded-xl bg-slate-50 p-2.5 text-xs text-nb-mute" data-testid="visit-history">Last visit: {lastNote.S.chips.join(", ")} · pain {lastNote.S.pain}/10 · plan: {lastNote.P.chips.join(", ")}</p>}

@@ -28,6 +28,13 @@ function Managers() {
   );
 }
 
+function PushStatus() {
+  const [s, setS] = useState(null);
+  useEffect(() => { api.pushStatus().then(setS).catch(() => {}); }, []);
+  if (!s) return null;
+  return <Notice testid="push-status">{s.pushEnabled ? `Push is on. ${s.outbox.sent} sent, ${s.outbox.failed} failed.` : `Push is off${s.firebaseConfigured ? "" : " (Firebase key not added)"}. ${s.outbox.held} alert${s.outbox.held === 1 ? "" : "s"} held for ${s.devices} registered phone${s.devices === 1 ? "" : "s"}.`}</Notice>;
+}
+
 function EventCard({ e, onChange }) {
   const [note, setNote] = useState("");
   const [outcome, setOutcome] = useState("resume");
@@ -72,6 +79,7 @@ export default function Safety() {
       <PageHeader eyebrow="Practitioner safety" title="Safety alerts" sub={data?.open ? `${data.open} open alert${data.open > 1 ? "s" : ""}` : "In-app alerts from practitioners in the field."} />
       <Notice icon={ShieldAlert} tone="warn" testid="safety-not-dispatch">{data?.assistLabel || "These are in-app alerts only. They are not emergency dispatch."}</Notice>
       {user?.role === "owner" && <Managers />}
+      {user?.role === "owner" && <PushStatus />}
       <Segmented options={[{ value: "open", label: "Open" }, { value: "acknowledged", label: "Acknowledged" }, { value: "resolved", label: "Resolved" }, { value: "all", label: "All" }]} value={filter} onChange={setFilter} testid="safety-filter" />
       {data?.error && <Notice testid="safety-error">{data.error}</Notice>}
       <div className="space-y-3">

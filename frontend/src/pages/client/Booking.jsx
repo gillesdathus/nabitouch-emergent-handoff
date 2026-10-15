@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, ArrowRight, MapPin, Clock, User, Layers } from "lucide-react";
+import { ArrowLeft, ArrowRight, MapPin, Clock, User, Layers, HeartHandshake } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { InstallCard } from "@/components/InstallCard";
 import { toast } from "sonner";
@@ -49,6 +49,9 @@ export default function Booking() {
   useEffect(() => { if (me) api.plansMine().then((r) => setWallet(r.wallet || [])).catch(() => setWallet([])); }, [me, api]);
   const creditGroup = wallet.find((w) => w.serviceSlug === draft.serviceSlug && Number(w.duration) === Number(draft.duration) && w.available > 0);
   const useCredit = !!(me && creditGroup && draft.useCredit);
+  const [winback, setWinback] = useState(null);
+  useEffect(() => { if (me) api.winbackMine().then((r) => setWinback(r.invite)).catch(() => setWinback(null)); }, [me, api]);
+  const winbackCode = !useCredit && winback && draft.useWinback ? winback.code : undefined;
   const g = draft.guest;
   const step = draft.step;
   const service = idx.services[draft.serviceSlug];
@@ -57,6 +60,7 @@ export default function Booking() {
   const shown = step === 5 && serverQuote ? serverQuote : q;
   const quotePayload = step === 5 ? {
     useCredit,
+    winbackCode,
     client: me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, email: g.email, phone: g.phone },
     practitionerId: draft.practitionerId || null,
     appointment: {
@@ -107,7 +111,8 @@ export default function Booking() {
       const res = await run(() => api.book({
         client, practitionerId: pid, actor: me ? fullNameOf(me) : `${g.firstName} (guest)`,
         useCredit,
-        campaignId: useCredit ? undefined : draft.campaignId || undefined,
+        winbackCode,
+        campaignId: useCredit || winbackCode ? undefined : draft.campaignId || undefined,
         recoveryCaseId: draft.recoveryCaseId || undefined,
         idempotencyKey: draft.idempotencyKey || undefined,
         appointment: { serviceSlug: draft.serviceSlug, duration: draft.duration, date: draft.date, time: draft.time, locationType: draft.locationType, address, addonIds: draft.addons, paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card", preferences: { goals: draft.goals, focus: draft.focus, notes: draft.notes }, checkedIn: false, feedback: null },
@@ -162,6 +167,7 @@ export default function Booking() {
                     [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", 0]].map(([I, t, s, st]) => (
                     <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button onClick={() => go(st)} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">Edit</button></div>))}
                   {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
+                  {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v })} data-testid="booking-winback-switch" /></label>}
                   <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
                   {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
                   {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
