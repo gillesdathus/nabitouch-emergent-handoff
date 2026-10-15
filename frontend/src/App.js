@@ -30,6 +30,8 @@ const ClientBilling = lazy(() => import("@/pages/client/Billing"));
 const ClientGiftCards = lazy(() => import("@/pages/client/GiftCards"));
 const GiftCardsAdmin = lazy(() => import("@/pages/owner/GiftCards"));
 const ClientWorkspace = lazy(() => import("@/pages/staff/ClientWorkspace"));
+const OwnerReports = lazy(() => import("@/pages/owner/Reports"));
+const ProEarnings = lazy(() => import("@/pages/practitioner/Earnings"));
 const ProToday = lazy(() => import("@/pages/practitioner/Today"));
 const ProVisit = lazy(() => import("@/pages/practitioner/Visit"));
 const NativeNav = lazy(() => import("@/pages/practitioner/NativeNav"));
@@ -110,6 +112,7 @@ export default function App() {
                   <Route path="/pro/visit/:id/native" element={<NativeNav />} />
                   <Route path="/pro/soap/:id" element={<ProSoap />} />
                   <Route path="/pro/plans" element={<ProPlans />} />
+                  <Route path="/pro/earnings" element={<ProEarnings />} />
                   <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
                   <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                   <Route path="/pro/recovery" element={<ProRecovery />} />
@@ -128,6 +131,7 @@ export default function App() {
                   <Route path="/owner/rewards" element={<OwnerRewards />} />
                   <Route path="/owner/zones" element={<Zones />} />
                   <Route path="/owner/insights" element={<Insights />} />
+                  <Route path="/owner/reports" element={<OwnerReports />} />
                   <Route path="/owner/permissions" element={<Permissions />} />
                   <Route path="/owner/payments" element={<Payments />} />
                   <Route path="/owner/credentials" element={<Credentials />} />

@@ -28,8 +28,16 @@ def _business(settings):
     clinic = (settings or {}).get("clinic") or {}
     return {
         "name": biz.get("legalName") or clinic.get("name") or "Nabitouch",
-        "lines": [x for x in (biz.get("address") or clinic.get("address"), biz.get("phone"), biz.get("email") or "info@nabitouch.com", f"GST {biz['gstNumber']}" if biz.get("gstNumber") else None) if x],
+        "lines": [x for x in (biz.get("address") or clinic.get("address"), biz.get("phone") or clinic.get("phoneDisplay") or "+1 780-235-6508", biz.get("email") or clinic.get("email") or "info@nabitouch.com", f"GST {biz['gstNumber']}" if biz.get("gstNumber") else None) if x],
     }
+
+
+def fit(text, font, size, width):
+    if pdfmetrics.stringWidth(text, font, size) <= width:
+        return text
+    while text and pdfmetrics.stringWidth(text + "…", font, size) > width:
+        text = text[:-1]
+    return text + "…"
 
 
 class Doc:
@@ -127,7 +135,8 @@ class Doc:
         self.y -= 16
 
     def table(self, headers, rows, widths, align=None):
-        align = align or ["l"] + ["r"] * (len(headers) - 1)
+        numeric = lambda i: headers[i] in ("Qty", "Visits") or any(str(r[i]).lstrip("-").startswith("$") for r in rows[:8])
+        align = align or ["r" if numeric(i) else "l" for i in range(len(headers))]
         total = sum(widths)
         xs, x = [], M
         for w in widths:
@@ -140,7 +149,7 @@ class Doc:
                 if align[i] == "r":
                     self.c.drawRightString(end, self.y, str(cell))
                 else:
-                    self.c.drawString(xs[i], self.y, str(cell)[:60])
+                    self.c.drawString(xs[i], self.y, fit(str(cell), _fonts[kind], 8.5, end - xs[i]))
         self.need(20)
         draw(headers, "m", MUTE)
         self.y -= 14
@@ -220,7 +229,7 @@ def receipt_pdf(view, settings):
 
 def report_pdf(title, period, kpis, sections, settings):
     d = Doc(title, settings)
-    d.hero(period, kpis[0][1] if kpis else "", [])
+    d.hero(f"{kpis[0][0]}  ·  {period}" if kpis else period, kpis[0][1] if kpis else "", [])
     d.facts(kpis[1:] if len(kpis) > 1 else [], cols=4)
     for name, headers, rows, widths in sections:
         d.section(name)

@@ -118,6 +118,8 @@ export const api = {
   giftProducts: () => http.get("/giftcards/products").then(data),
   giftCreateProduct: (body) => http.post("/giftcards/products", body).then(data),
   giftUpdateProduct: (id, body) => http.put(`/giftcards/products/${id}`, body).then(data),
+  giftCheckout: (id) => http.post(`/giftcards/${id}/checkout`, {}).then(data),
+  financeReport: (kind, params) => http.get(`/finance/reports/${kind}`, { params }).then(data),
   clientWorkspace: (id) => http.get(`/clients/${id}/workspace`).then(data),
   insurers: () => http.get("/billing/insurers").then(data),
   previewImport: (file) => { const body = new FormData(); body.append("upload", file); return http.post("/billing/imports/preview", body).then(data); },

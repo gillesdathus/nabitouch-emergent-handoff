@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from config import giftcards_enabled
+import os
+
+from config import giftcards_enabled, payments_simulated, stripe_card_checkout_enabled
 
 DESIGNS = ("lagoon", "tide", "meadow", "coral")
 MAX_CENTS = 500_000
@@ -94,6 +96,24 @@ async def debit(db, code, amount, key, reference, actor):
     await db.nt_gc_ledger.update_one({"id": row["id"]}, {"$set": {"status": "completed", "balanceAfterCents": updated["balanceCents"]}})
     row.update(status="completed", balanceAfterCents=updated["balanceCents"])
     return row
+
+
+async def activate_paid(db, checkout_row, event_id):
+    """Stripe webhook settlement for a gift-card checkout. One activation per event and per card."""
+    card = await db.nt_giftcards.find_one({"id": checkout_row["giftCardId"]}, {"_id": 0})
+    if not card or card["amountCents"] != checkout_row["amountCents"]:
+        return False
+    try:
+        await db.nt_gc_ledger.insert_one({"id": "gct-" + uuid.uuid4().hex[:12], "cardId": card["id"], "type": "issue", "amountCents": card["amountCents"], "status": "completed",
+                                          "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-" + event_id[:70], "at": now_iso(), "actorName": "Stripe"})
+    except DuplicateKeyError:
+        return True
+    saved = await db.nt_giftcards.find_one_and_update({"id": card["id"], "status": "pending_payment"},
+                                                      {"$set": {"status": "active", "balanceCents": card["amountCents"], "activatedAt": now_iso()}, "$inc": {"version": 1}})
+    if not saved:
+        await db.nt_gc_ledger.delete_one({"idempotencyKey": "stripe-" + event_id[:70]})
+        return False
+    return True
 
 
 async def reverse(db, txn, reason):
@@ -295,6 +315,39 @@ def build_giftcard_router(db, coll, add_audit, user_from, reception_perms):
                                           "reference": (body.get("reference") or kind)[:80], "method": method or None, "idempotencyKey": key + ":issue", "at": now_iso(), "actorName": user.get("name")})
         await add_audit(user.get("name") or "owner", f"Gift card ••{doc['code'][-4:]} issued {money(amount)['display']} ({kind})")
         return public_card(doc, full_code=True)
+
+    @r.post("/{cid}/checkout")
+    async def checkout(cid: str, request: Request):
+        user = await actor(request, "client")
+        require_enabled()
+        if not stripe_card_checkout_enabled():
+            raise HTTPException(503, "Card checkout is turned off")
+        card = await load(cid)
+        if card.get("purchaserId") != user.get("subject"):
+            raise HTTPException(404, "Gift card not found")
+        if card["status"] != "pending_payment":
+            raise HTTPException(409, "This gift card is not awaiting payment")
+        key = os.environ.get("STRIPE_SECRET_KEY") or ""
+        url = None
+        if key.startswith("sk_live"):
+            raise HTTPException(503, "Live card checkout is not enabled")
+        if key.startswith("sk_test_"):
+            import httpx
+            app_url = os.environ["APP_URL"].rstrip("/")
+            form = {"mode": "payment", "success_url": app_url + "/me/gifts?card=return", "cancel_url": app_url + "/me/gifts?card=cancel",
+                    "line_items[0][quantity]": "1", "line_items[0][price_data][currency]": "cad", "line_items[0][price_data][unit_amount]": str(card["amountCents"]),
+                    "line_items[0][price_data][product_data][name]": f"Nabitouch gift card ••{card['code'][-4:]}", "metadata[giftCardId]": cid}
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
+            if resp.status_code >= 400 or not resp.json().get("id"):
+                raise HTTPException(502, "Card checkout could not be started")
+            session_id, url = resp.json()["id"], resp.json().get("url")
+        elif payments_simulated():
+            session_id = "cs_test_" + uuid.uuid4().hex[:16]
+        else:
+            raise HTTPException(503, "Card checkout is not configured")
+        await db.nt_checkouts.insert_one({"id": "chk-" + uuid.uuid4().hex[:12], "giftCardId": cid, "sessionId": session_id, "amountCents": card["amountCents"], "status": "pending", "at": now_iso()})
+        return {"confirmed": False, "sessionId": session_id, "url": url, "amount": money(card["amountCents"])}
 
     @r.post("/{cid}/activate")
     async def activate(cid: str, request: Request):

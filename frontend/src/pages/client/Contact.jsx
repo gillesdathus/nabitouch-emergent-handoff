@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
+import { ContactCards } from "@/components/ContactCards";
 import { useDemo } from "@/store/DemoStore";
 import { api, apiError } from "@/lib/api";
 
@@ -37,16 +38,17 @@ export default function Contact() {
         <p className="nb-eyebrow">Edmonton</p>
         <h1 className="mt-2 text-4xl font-semibold tracking-tight text-nb-ink">Say <span className="font-display font-normal italic nb-gradient-text">hello</span></h1>
         <p className="mt-3 text-nb-mute">Questions about a visit, a zone, or a treatment can come through here. Booking itself stays in the appointment flow, including guest booking.</p>
-        <div className="mt-6 space-y-3 text-sm">
-          <p className="nb-card p-4"><b>Book a visit.</b> <Link to="/book" className="font-semibold text-nb-blue" data-testid="contact-book-link">Start a booking</Link></p>
-          <p className="nb-card p-4"><b>Already have an account?</b> <Link to="/login" className="font-semibold text-nb-blue">Sign in</Link></p>
-          {clinic && <p className="nb-card p-4" data-testid="contact-clinic"><b>Clinic.</b> {clinic}</p>}
-          {!clinic && <p className="nb-card p-4" data-testid="contact-mobile">Visits are mobile across the Edmonton service area. An in-clinic address appears here once Nabitouch publishes one.</p>}
-          {idx.settings?.clinic?.phoneTel && <p className="nb-card p-4" data-testid="contact-phone"><b>Phone.</b> <a className="font-semibold text-nb-blue" href={`tel:${idx.settings.clinic.phoneTel}`}>{idx.settings.clinic.phoneDisplay || idx.settings.clinic.phone}</a></p>}
-          {idx.settings?.clinic?.email && <p className="nb-card p-4" data-testid="contact-email"><b>Email.</b> <a className="font-semibold text-nb-blue" href={`mailto:${idx.settings.clinic.email}`}>{idx.settings.clinic.email}</a></p>}
-          {idx.settings?.clinic?.hours && <p className="nb-card p-4" data-testid="contact-hours"><b>Hours.</b> {idx.settings.clinic.hours}</p>}
-          {idx.settings?.cancellationPolicy?.status === "approved" && <p className="nb-card p-4" data-testid="contact-policy">{idx.settings.cancellationPolicy.text}</p>}
+        <div className="mt-8">
+          <ContactCards phoneDisplay={idx.settings?.clinic?.phoneDisplay || "+1 780-235-6508"} phoneTel={idx.settings?.clinic?.phoneTel || "+17802356508"} email={idx.settings?.clinic?.email || "info@nabitouch.com"} />
         </div>
+        {(clinic || idx.settings?.clinic?.hours) && (
+          <dl className="mt-6 space-y-3 border-l-2 border-nb-turq/40 pl-4 text-sm">
+            {clinic && <div data-testid="contact-clinic"><dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-nb-mute">Clinic</dt><dd className="mt-0.5 text-nb-ink">{clinic}</dd></div>}
+            {idx.settings?.clinic?.hours && <div data-testid="contact-hours"><dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-nb-mute">Hours</dt><dd className="mt-0.5 text-nb-ink">{idx.settings.clinic.hours}</dd></div>}
+          </dl>
+        )}
+        <p className="mt-6 text-sm text-nb-mute">Ready to book? <Link to="/book" className="font-semibold text-nb-blue underline-offset-4 hover:underline" data-testid="contact-book-link">Start a booking</Link> · <Link to="/login" className="font-semibold text-nb-blue underline-offset-4 hover:underline" data-testid="contact-signin-link">Sign in</Link></p>
+        {idx.settings?.cancellationPolicy?.status === "approved" && <p className="mt-4 text-xs text-nb-mute" data-testid="contact-policy">{idx.settings.cancellationPolicy.text}</p>}
       </div>
       {done ? (
         <div className="nb-card p-6" data-testid="contact-sent"><h2 className="text-xl font-semibold">Message received</h2><p className="mt-2 text-sm text-nb-mute">Nabitouch has your note. For an appointment time, continue with booking.</p></div>

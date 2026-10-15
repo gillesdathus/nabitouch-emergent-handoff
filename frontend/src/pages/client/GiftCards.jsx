@@ -5,11 +5,13 @@ import { EmptyState, Notice, PageHeader, Reveal } from "@/components/tide";
 import { GiftCardArt } from "@/components/giftcards/GiftCardArt";
 import { GiftCardDrawer } from "@/components/giftcards/GiftCardDrawer";
 import { GiftPurchase } from "@/components/giftcards/GiftPurchase";
+import { GiftCardPay } from "@/components/giftcards/GiftCardPay";
 import { api } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 
 export default function ClientGiftCards() {
-  const { me } = useDemo();
+  const { me, idx } = useDemo();
+  const cardsOn = idx?.settings?.giftCardsEnabled === true && idx?.settings?.cardCheckoutEnabled === true;
   const [cards, setCards] = useState(undefined);
   const [config, setConfig] = useState(null);
   const [error, setError] = useState("");
@@ -42,7 +44,7 @@ export default function ClientGiftCards() {
         <p className="mb-5 text-sm text-nb-mute">Pick a design and an amount. Usable on any Nabitouch visit.</p>
         {config ? <GiftPurchase config={config} onDone={load} /> : <div className="h-64 rounded-3xl nb-skeleton" />}
       </section>
-      <GiftCardDrawer card={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} />
+      <GiftCardDrawer card={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)}>{active && <GiftCardPay card={active} cardsOn={cardsOn} />}</GiftCardDrawer>
     </div>
   );
 }

@@ -26,6 +26,7 @@ const OWNER_MORE = [
   ["/owner/campaigns", "Flash campaigns"],
   ["/owner/promos", "Promotions & rewards"],
   ["/owner/giftcards", "Gift cards"],
+  ["/owner/reports", "Financial reports"],
   ["/owner/zones", "Zones & settings"],
   ["/owner/credentials", "Credentials"],
   ["/owner/availability", "Availability"],
@@ -48,6 +49,7 @@ const STAFF = {
     ],
     more: [
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
+      { to: "/pro/earnings", label: "Earnings", icon: ReceiptText },
       { to: "/pro/recovery", label: "Recovery", icon: RotateCcw },
     ],
   },

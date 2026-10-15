@@ -62,6 +62,7 @@ from notifications import (
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
+from finance import build_finance_router
 from email_templates import invoice_email, payment_link_email, receipt_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import readiness as sms_readiness
@@ -2027,6 +2028,7 @@ app.include_router(build_rewards_router(db, coll, add_audit, require, user_from)
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
+app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(TrackingPrivacy)

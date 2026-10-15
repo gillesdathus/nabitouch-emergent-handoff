@@ -42,7 +42,7 @@ Design reconciliation: the handoff `index.css` and `tailwind.config.js` are a st
 | 8 | Insurance ledger (claimed / approved / received) | **Implemented** | Manual recording. Insurer submission is disabled |
 | 9 | Gift cards `giftcards.py` (`/api/giftcards/*`) plus `POST /invoices/{id}/giftcard` | **Implemented, disabled (M3)** | `GIFTCARDS_ENABLED` off returns 503 for purchase, issue, activate, redeem and void. Atomic balance decrement with an idempotency key on a unique index. Ledger `nt_gc_ledger` and audit entries. The legacy generic giftcards writes now return 410 |
 | 10 | Rewards balances | **Partial** | Settings, `/rewards/me`, attribution, product preview. Programme flag-gated |
-| 11 | Financial reports (revenue, collections, A/R, insurance A/R, gift-card liability, refunds, retention, service performance), PDF and CSV | **Partial** | Only the practitioner period snapshot plus text PDF, and marketing analytics. No CSV |
+| 11 | `GET /finance/reports/{kind}` for revenue, collections, outstanding (aging), insurance, giftcards and earnings, as JSON (paginated), CSV or branded PDF | **Implemented (M4)** | Owner only. Practitioners get earnings for their own visits only. Retention and service-performance reports are still to do |
 | 12 | `GET /clients/{id}/workspace` | **Implemented (M3)** | Owner and desk, permission-shaped. Includes consents summary, threads and plans (owner only). Never SOAP or clinical notes. Every open is audited |
 | 13 | Branded transactional templates | **Partial (M3)** | `email_templates.py` covers invoice, receipt, payment link, invitation, recovery and change. Only the billing ones are wired. Invite and recovery still use their inline HTML |
 
@@ -80,3 +80,13 @@ No duplicate APIs were created. M3 (approved scope) implemented rows 1, 2, 3, 4,
 - The Mapbox `pk.` token is used in the browser. The server uses the second token, which is also `pk.` scope; the backend accepts this.
 - Stripe test key only. Card checkout, Resend, SMS and insurer submission remain off.
 - Client invoice views strip claim notes and staff-only documents (`billing.py view_for`).
+
+## Milestone 4 additions
+| Route | Role | Status |
+| --- | --- | --- |
+| `/owner/reports` | Owner | New Tide: six report types, range presets, practitioner filter, KPIs, bar groups, paginated detail, PDF and CSV |
+| `/pro/earnings` | Practitioner | New Tide: pay-period presets, hero total, statement PDF and CSV. Labelled "not payroll" |
+| `/me` arrival | Client | New `ArrivalMoment`, using the service's `prep` tips |
+| `/me/gifts` | Client | Card checkout through Stripe test (`POST /giftcards/{id}/checkout`). Needs both GIFTCARDS_ENABLED and card checkout. The webhook activates the card once per event |
+| `/contact` | Public | Phone, WhatsApp and email cards (+1 780-235-6508, info@nabitouch.com) |
+| All shells | All | The mobile header shows only the emblem |

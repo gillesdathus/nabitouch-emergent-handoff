@@ -19,9 +19,9 @@ export const LogoLink = ({ to = "/", testid = "brand-logo-link" }) => (
 export const Emblem = ({ className = "h-8" }) => <img src="/brand/emblem.png" alt="Nabitouch" className={`${className} w-auto object-contain`} />;
 
 export const Lockup = ({ to = "/", className = "", light = false, testid = "brand-lockup" }) => (
-  <Link to={to} data-testid={testid} aria-label="Nabitouch home" className={`flex items-center gap-2 ${className}`}>
-    <img src="/brand/emblem.png" alt="" className="h-8 w-auto" />
-    <img src="/brand/wordmark.png" alt="Nabitouch" className={`h-[18px] w-auto ${light ? "brightness-0 invert" : ""}`} />
+  <Link to={to} data-testid={testid} aria-label="Nabitouch home" className={`flex shrink-0 items-center gap-2 ${className}`}>
+    <img src="/brand/emblem.png" alt="Nabitouch" className="h-9 w-auto sm:h-8" />
+    <img src="/brand/wordmark.png" alt="" className={`hidden h-[18px] w-auto sm:block ${light ? "brightness-0 invert" : ""}`} />
   </Link>
 );
 

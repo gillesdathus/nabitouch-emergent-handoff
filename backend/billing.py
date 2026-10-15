@@ -12,7 +12,7 @@ from fastapi.responses import Response
 
 from documents import ScannerUnavailable, assess
 from config import giftcards_enabled, invoice_email_enabled
-from giftcards import debit as gift_debit, norm_code, reverse as gift_reverse
+from giftcards import activate_paid as gift_activate_paid, debit as gift_debit, norm_code, reverse as gift_reverse
 from notifications import enqueue_billing
 from pdfbrand import invoice_pdf as brand_invoice_pdf, receipt_pdf as brand_receipt_pdf
 
@@ -1175,6 +1175,12 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"received": True, "settled": True}
         if action != "settle":
             return {"received": True, "settled": False}
+        if checkout_row.get("giftCardId"):
+            settled = await gift_activate_paid(db, checkout_row, event_id)
+            if settled:
+                await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"status": "paid", "eventId": event_id}})
+                await add_audit("Stripe", f"Gift card checkout {checkout_row['sessionId']} paid")
+            return {"received": True, "settled": settled}
         invoice = await load(checkout_row["invoiceId"])
 
         def build(current, lines):
