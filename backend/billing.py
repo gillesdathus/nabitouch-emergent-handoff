@@ -11,6 +11,15 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from documents import ScannerUnavailable, assess
+from config import giftcards_enabled, invoice_email_enabled
+from giftcards import debit as gift_debit, norm_code, reverse as gift_reverse
+from notifications import enqueue_billing
+from pdfbrand import invoice_pdf as brand_invoice_pdf, receipt_pdf as brand_receipt_pdf
+
+
+def require_giftcards():
+    if not giftcards_enabled():
+        raise HTTPException(503, "Gift-card transactions are turned off")
 from fieldcrypto import open_bytes, seal_bytes
 from payment_policy import (
     CHECKOUT_HOLD_MINUTES, allowed_online_amounts, checkout_event_action, collection_status, deposit_cents,
@@ -537,9 +546,114 @@ def build_billing_router(db, coll, add_audit, user_from):
         view = await view_for(user, invoice)
         if view["state"] == "draft":
             raise HTTPException(409, "Issue the invoice before downloading it")
-        payload = render_pdf(invoice, view)
+        payload = brand_invoice_pdf(view, await settings())
         filename = (view["number"] or "invoice") + ".pdf"
         return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    async def can_list(user, client_id):
+        if user["role"] == "owner":
+            return True
+        if user["role"] == "desk":
+            return await desk_can(user, "managePayments") or await desk_can(user, "viewInsuranceStatus")
+        return user["role"] == "client" and (not client_id or client_id == user.get("subject"))
+
+    @r.get("/invoices")
+    async def list_invoices(request: Request, clientId: str = "", state: str = "", limit: int = 50, skip: int = 0):
+        user = await actor(request)
+        if not await can_list(user, clientId):
+            raise HTTPException(403, "Not permitted to list invoices")
+        query = {}
+        if user["role"] == "client":
+            query["clientId"] = user.get("subject")
+            query["state"] = {"$ne": "draft"}
+        elif clientId:
+            query["clientId"] = clientId
+        if state:
+            query["state"] = state
+        limit = max(1, min(int(limit), 100))
+        total = await db.nt_invoices.count_documents(query)
+        rows = await db.nt_invoices.find(query, {"_id": 0}).sort([("serviceDate", -1), ("issueDate", -1)]).skip(max(0, int(skip))).limit(limit).to_list(limit)
+        items = []
+        for row in rows:
+            view = public_invoice(row, await ledger_for(row["id"]), await claim_views(row["id"]))
+            if user["role"] == "client":
+                for claim in view["claims"]:
+                    claim["notes"] = ""
+                    claim["documents"] = [item for item in claim["documents"] if item["clientVisible"]]
+            items.append(view)
+        return {"items": items, "total": total, "limit": limit, "skip": skip}
+
+    @r.get("/invoices/{iid}/receipt")
+    async def receipt(iid: str, request: Request):
+        user = await actor(request)
+        view = await view_for(user, await load(iid))
+        if view["received"]["cents"] <= 0:
+            raise HTTPException(409, "There is no confirmed payment to receipt yet")
+        payload = brand_receipt_pdf(view, await settings())
+        return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="receipt-{view["number"] or iid}.pdf"'})
+
+    @r.post("/invoices/{iid}/email")
+    async def email_invoice(iid: str, request: Request):
+        user = await actor(request)
+        body = await _body(request)
+        invoice = await load(iid)
+        view = await view_for(user, invoice)
+        if user["role"] not in ("owner", "client") and not await desk_can(user, "managePayments"):
+            raise HTTPException(403, "Not permitted to email this invoice")
+        kind = body.get("kind") or "invoice"
+        if kind not in ("invoice", "receipt", "payment_link"):
+            raise HTTPException(400, "Unknown email type")
+        if view["state"] in ("draft", "voided"):
+            raise HTTPException(409, "Only an issued invoice can be emailed")
+        if not invoice_email_enabled():
+            raise HTTPException(503, "Invoice email is turned off")
+        key = str(body.get("idempotencyKey") or "")
+        if not 8 <= len(key) <= 80:
+            raise HTTPException(400, "Idempotency key is required")
+        note, created = await enqueue_billing(db, invoice, kind, key)
+        if created:
+            await add_audit(user.get("name") or "staff", f"{view['number']} {kind} email queued", invoice.get("appointmentId"))
+        return {"queued": True, "status": note.get("status"), "delivered": False}
+
+    @r.post("/invoices/{iid}/giftcard")
+    async def redeem_giftcard(iid: str, request: Request):
+        user = await actor(request)
+        require_giftcards()
+        body = await _body(request)
+        invoice = await load(iid)
+        view = await view_for(user, invoice)
+        if user["role"] == "client":
+            if view.get("clientId") != user.get("subject"):
+                raise HTTPException(404, "Invoice not found")
+        elif not (user["role"] == "owner" or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to apply a gift card")
+        if invoice["state"] not in ("issued", "partially_paid"):
+            raise HTTPException(409, "Only an issued invoice with a balance can take a gift card")
+        amount = body.get("amountCents")
+        if not isinstance(amount, int) or amount <= 0 or amount > view["balance"]["cents"]:
+            raise HTTPException(400, "Amount must be positive and no more than the balance")
+        key = str(body.get("idempotencyKey") or "")
+        if not 8 <= len(key) <= 80:
+            raise HTTPException(400, "Idempotency key is required")
+        txn = await gift_debit(db, body.get("code"), amount, "gc:" + key, iid, user)
+        if txn.get("status") != "completed":
+            raise HTTPException(409, "This gift-card redemption is not complete")
+
+        def build(current, lines):
+            _received, balance, _state, _overdue = project(current, lines)
+            if amount > balance:
+                raise HTTPException(409, "That amount is more than the outstanding balance")
+            return {"type": "client_payment", "method": "giftcard", "amountCents": amount, "reference": f"gift card ••{norm_code(body.get('code'))[-4:]}"}
+
+        try:
+            saved = await mutate(invoice, user, key, build)
+        except HTTPException:
+            if txn.get("status") == "completed" and not await db.nt_ledger.find_one({"idempotencyKey": key}):
+                await gift_reverse(db, txn, "invoice payment not recorded")
+            raise
+        await sync_payment_due(saved)
+        await notify_client(saved, "giftcard:" + key)
+        return await view_for(user, saved)
 
     @r.post("/invoices/{iid}/issue")
     async def issue(iid: str, request: Request):

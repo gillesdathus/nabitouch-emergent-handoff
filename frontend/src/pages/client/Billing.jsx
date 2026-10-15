@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, FileText, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
 import { EmptyState, Notice, PageHeader, Reveal, Segmented } from "@/components/tide";
@@ -53,12 +53,11 @@ function InvoiceRow({ invoice, onOpen, i }) {
 }
 
 export default function Billing() {
-  const { me, state, idx } = useDemo();
-  const mine = useMemo(() => (me ? state.appointments.filter((a) => a.clientId === me.id) : []), [me, state.appointments]);
-  const { rows, error, reload, replace } = useInvoices(mine);
+  const { me, idx } = useDemo();
+  const { rows, error, reload, replace } = useInvoices();
   const [filter, setFilter] = useState("open");
   const [openId, setOpenId] = useState(null);
-  const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
+  const flags = { cardsOn: restrictedFlag(idx?.settings, "cardCheckoutEnabled"), emailOn: restrictedFlag(idx?.settings, "invoiceEmailEnabled"), giftOn: restrictedFlag(idx?.settings, "giftCardsEnabled") };
   if (!me) return <div className="mx-auto max-w-xl px-5 py-16 text-center"><p>Please sign in to see your invoices.</p><Link to="/login" className="nb-btn-primary mt-4" data-testid="billing-signin-link">Sign in</Link></div>;
   const totals = sumInvoices(rows);
   const list = (rows || []).filter((r) => r.state !== "draft" && pick(filter, r));
@@ -76,7 +75,7 @@ export default function Billing() {
         {list.map((invoice, i) => <InvoiceRow key={invoice.id} invoice={invoice} i={i} onOpen={() => setOpenId(invoice.id)} />)}
       </div>
       <Notice className="mt-8" testid="billing-insurance-note">Nabitouch does not submit insurance claims for you. Approved insurance is shown separately and is never counted as a payment until the insurer's money is received.</Notice>
-      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} cardsOn={cardsOn} onChange={replace} />
+      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} flags={flags} onChange={replace} />
     </div>
   );
 }

@@ -25,6 +25,7 @@ const OWNER_MORE = [
   ["/owner/messages", "Visit messages"],
   ["/owner/campaigns", "Flash campaigns"],
   ["/owner/promos", "Promotions & rewards"],
+  ["/owner/giftcards", "Gift cards"],
   ["/owner/zones", "Zones & settings"],
   ["/owner/credentials", "Credentials"],
   ["/owner/availability", "Availability"],

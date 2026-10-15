@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-const BILLABLE = ["completed", "processing", "closed", "confirmed", "en_route", "arrived", "in_session"];
+export const newKey = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-export function useInvoices(appointments) {
+export function useInvoices(params, enabled = true) {
   const [rows, setRows] = useState(undefined);
   const [error, setError] = useState("");
-  const ids = appointments.filter((a) => BILLABLE.includes(a.status) || a.paymentStatus).map((a) => a.id).join(",");
+  const query = JSON.stringify(params || {});
   const load = useCallback(async () => {
     setError("");
-    const list = ids ? ids.split(",") : [];
-    const results = await Promise.all(list.map((id) => api.invoiceByAppointment(id).catch((e) => (e?.response?.status === 404 ? null : Promise.reject(e))))).catch((e) => { setError("Invoices could not be loaded. Please try again."); return null; });
-    if (results) setRows(results.filter(Boolean).sort((a, b) => String(b.serviceDate || b.issueDate || "").localeCompare(String(a.serviceDate || a.issueDate || ""))));
-    else setRows([]);
-  }, [ids]);
+    if (!enabled) { setRows(undefined); return; }
+    try {
+      const page = await api.invoices({ limit: 100, ...JSON.parse(query) });
+      setRows(page.items);
+    } catch {
+      setError("Invoices could not be loaded. Please try again.");
+      setRows([]);
+    }
+  }, [query, enabled]);
   useEffect(() => { load(); }, [load]);
   const replace = (next) => setRows((prev) => (prev || []).map((row) => (row.id === next.id ? next : row)));
   return { rows, error, reload: load, replace };
@@ -34,13 +38,16 @@ export function sumInvoices(rows) {
   };
 }
 
-export async function downloadInvoicePdf(invoice) {
-  const url = await api.mediaBlob(`/invoices/${invoice.id}/pdf`);
+export async function downloadFile(path, filename) {
+  const url = await api.mediaBlob(path);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${invoice.number || "invoice"}.pdf`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
+
+export const downloadInvoicePdf = (invoice) => downloadFile(`/invoices/${invoice.id}/pdf`, `${invoice.number || "invoice"}.pdf`);
+export const downloadReceiptPdf = (invoice) => downloadFile(`/invoices/${invoice.id}/receipt`, `receipt-${invoice.number || invoice.id}.pdf`);

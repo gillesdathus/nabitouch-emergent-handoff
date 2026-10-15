@@ -68,6 +68,16 @@ def stripe_card_checkout_enabled():
     return _flag("STRIPE_CARD_CHECKOUT_ENABLED", False)
 
 
+def invoice_email_enabled():
+    """Invoice, receipt, and payment-link email. Unset stays off."""
+    return _flag("INVOICE_EMAIL_ENABLED", False)
+
+
+def giftcards_enabled():
+    """Gift-card purchase, issuance, redemption, and void. Unset stays off."""
+    return _flag("GIFTCARDS_ENABLED", False)
+
+
 def legacy_patient_import_enabled():
     """Historical patient and invoice imports. Unset stays off. Production must set the variable explicitly."""
     return _flag("LEGACY_PATIENT_IMPORT_ENABLED", False)

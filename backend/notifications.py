@@ -150,6 +150,24 @@ async def enqueue_booking_confirmation(db, appt, client_id):
 
 
 OPERATIONAL_KINDS = {"cancellation", "reschedule", "assignment"}
+BILLING_KINDS = {"invoice", "receipt", "payment_link"}
+
+
+async def enqueue_billing(db, invoice, kind, key):
+    """Queue one invoice, receipt, or payment-link email. Callers must keep this behind INVOICE_EMAIL_ENABLED."""
+    if kind not in BILLING_KINDS:
+        raise ValueError("Unknown billing email")
+    now = _iso()
+    doc = {"id": "ntf-" + uuid.uuid4().hex[:16], "dedupeKey": f"{kind}:{invoice['id']}:{key}"[:200], "kind": kind, "invoiceId": invoice["id"],
+           "appointmentId": invoice.get("appointmentId"), "ref": invoice.get("number"), "clientId": invoice.get("clientId"), "status": PENDING,
+           "attempts": 0, "maxAttempts": max_attempts(), "nextAttemptAt": now, "leaseUntil": None, "leaseOwner": None, "providerId": None,
+           "providerAcceptedAt": None, "deliveredAt": None, "lastError": None, "createdAt": now, "updatedAt": now}
+    try:
+        await db.nt_notifications.insert_one(dict(doc))
+    except DuplicateKeyError:
+        return await db.nt_notifications.find_one({"dedupeKey": doc["dedupeKey"]}, {"_id": 0}), False
+    doc.pop("_id", None)
+    return doc, True
 
 
 async def enqueue_operational(db, appt, client_id, kind):

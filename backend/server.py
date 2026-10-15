@@ -61,6 +61,9 @@ from notifications import (
     enqueue_booking_confirmation, enqueue_operational, ensure_notifications, notification_summary, process_available,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
+from giftcards import build_giftcard_router, ensure_giftcards
+from email_templates import invoice_email, payment_link_email, receipt_email
+from config import giftcards_enabled, invoice_email_enabled
 from sms import readiness as sms_readiness
 
 ROOT_DIR = Path(__file__).parent
@@ -194,6 +197,7 @@ async def lifespan(_app):
     await ensure_legacy(db)
     await ensure_notifications(db)
     await ensure_messaging(db)
+    await ensure_giftcards(db)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -354,6 +358,8 @@ def shape_settings(docs, role):
     flags = {
         "documentUploadsEnabled": document_uploads_enabled(),
         "cardCheckoutEnabled": stripe_card_checkout_enabled(),
+        "invoiceEmailEnabled": invoice_email_enabled(),
+        "giftCardsEnabled": giftcards_enabled(),
     }
     return [{**doc, **flags} for doc in shaped]
 
@@ -371,6 +377,45 @@ def without_keys(doc, keys):
 async def reception_perms():
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
     return settings.get("receptionPerms") or {}
+
+
+@api.get("/clients/{client_id}/workspace")
+async def client_workspace(client_id: str, request: Request):
+    """Staff client record. Reception sees only what its permissions allow. Clinical notes are never included."""
+    user = await require(request, "owner", "desk")
+    perms = await reception_perms() if user["role"] == "desk" else {}
+    client = await coll("clients").find_one({"id": client_id}, NO_ID)
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if "insurance" in client:
+        client = {**client, "insurance": open_insurance(client.get("insurance"))}
+    appts = await coll("appointments").find({"clientId": client_id}, NO_ID).sort([("date", -1), ("time", -1)]).to_list(300)
+    if user["role"] == "desk":
+        appts = [hide_practitioner_home(a) for a in appts]
+        if not perms.get("viewAddresses"):
+            appts = [without_keys(a, {"address"}) for a in appts]
+            client = without_keys(client, {"addresses"})
+        if not perms.get("viewInsuranceStatus"):
+            client = without_keys(client, {"insurance"})
+    consents = await db.nt_consents.find({"clientId": client_id}, NO_ID).sort("at", -1).to_list(100)
+    consent_view = [{k: c.get(k) for k in ("id", "kind", "purpose", "version", "at", "withdrawnAt", "status")} for c in consents]
+    can_read_threads = user["role"] == "owner" or bool(perms.get("viewHistory") or perms.get("createBooking"))
+    threads = []
+    if can_read_threads:
+        for a in appts:
+            count = await db.nt_messages.count_documents({"appointmentId": a["id"]})
+            notices = await db.nt_trip_notices.count_documents({"appointmentId": a["id"]})
+            if not count and not notices:
+                continue
+            last = await db.nt_messages.find({"appointmentId": a["id"]}, NO_ID).sort("createdAt", -1).to_list(1)
+            threads.append({"appointmentId": a["id"], "ref": a.get("ref"), "date": a.get("date"), "time": a.get("time"), "messages": count, "notices": notices,
+                            "last": {k: last[0].get(k) for k in ("body", "authorRole", "authorLabel", "createdAt")} if last else None})
+    plans = await coll("plans").find({"clientId": client_id}, NO_ID).to_list(50) if user["role"] == "owner" else []
+    await add_audit(user.get("name") or "staff", f"Opened client record {client.get('firstName', '')} {client.get('lastName', '')}".strip())
+    return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans,
+            "access": {"role": user["role"], "threads": can_read_threads, "plans": user["role"] == "owner", "clinical": False,
+                       "invoices": user["role"] == "owner" or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
+                       "insurance": user["role"] == "owner" or bool(perms.get("viewInsuranceStatus"))}}
 
 
 @api.get("/state")
@@ -1425,8 +1470,33 @@ async def _maybe_lifecycle_mail(appt, kind):
         await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
 
 
+async def _deliver_billing(note):
+    """Invoice, receipt, and payment-link mail. Amounts come from the invoice ledger view."""
+    from billing import public_invoice
+    invoice = await db.nt_invoices.find_one({"id": note.get("invoiceId")}, NO_ID)
+    if not invoice:
+        raise PermanentDelivery("invoice_missing")
+    client = await coll("clients").find_one({"id": invoice.get("clientId")}, NO_ID) or {}
+    to = (client.get("email") or "").strip().lower()
+    if not to or to.endswith("@example.com"):
+        raise CancelDelivery("no_recipient")
+    ledger = await db.nt_ledger.find({"invoiceId": invoice["id"]}, NO_ID).sort("at", 1).to_list(500)
+    view = public_invoice(invoice, ledger)
+    link = f"{os.environ['APP_URL'].rstrip('/')}/me/billing"
+    build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email}[note["kind"]]
+    subject, html = build(os.environ["EMAIL_FROM_NAME"], client.get("preferredName") or client.get("firstName") or "there", view, link)
+    try:
+        return await send_email(to=to, subject=subject, html=html, idempotency_key=note.get("id"))
+    except HTTPException as exc:
+        if exc.status_code in (408, 429, 500, 503):
+            raise TransientDelivery("provider_unavailable") from exc
+        raise PermanentDelivery("provider_rejected") from exc
+
+
 async def _deliver_booking(note):
     """Build a booking email from the appointment and client rows. Clinical fields stay out of the message."""
+    if note.get("kind") in ("invoice", "receipt", "payment_link"):
+        return await _deliver_billing(note)
     appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
     if not appt:
         raise PermanentDelivery("appointment_missing")
@@ -1705,8 +1775,7 @@ async def create_doc(name: str, request: Request, doc: dict = Body(...)):
     if name in ("soap", "audit", "appointments", "settings", "clients", "services", "zones", "promotions", "practitioners", "templates"):
         raise HTTPException(403, "Not permitted")
     if name == "giftcards":
-        if user["role"] != "owner":
-            raise HTTPException(403, "Not permitted")
+        raise HTTPException(410, "Gift cards use the audited /api/giftcards endpoints")
         amount = float(doc.get("amount") or 0)
         if amount <= 0 or amount > 5000:
             raise HTTPException(400, "Gift card amount must be between 0 and 5000")
@@ -1869,8 +1938,7 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
         else:
             raise HTTPException(403, "Not permitted")
     elif name == "giftcards":
-        if role != "owner":
-            raise HTTPException(403, "Not permitted")
+        raise HTTPException(410, "Gift cards use the audited /api/giftcards endpoints")
         doc = only_fields(doc, {"status", "balance", "recipient"}, {"code", "amount"})
     else:
         raise HTTPException(403, "Not permitted")
@@ -1958,6 +2026,7 @@ app.include_router(build_training_router(client, require))
 app.include_router(build_rewards_router(db, coll, add_audit, require, user_from))
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
 app.include_router(build_media_router(db, user_from))
+app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)
 app.add_middleware(TrackingPrivacy)

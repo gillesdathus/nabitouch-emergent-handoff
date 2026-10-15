@@ -385,7 +385,7 @@ export default function Manage() {
             const visits = state.appointments.filter((a) => a.clientId === c.id);
             const next = visits.filter((a) => a.date >= todayISO() && !["cancelled", "no_show"].includes(a.status)).sort((a, b) => a.date.localeCompare(b.date))[0];
             const due = visits.reduce((sum, a) => sum + (a.settle?.balance || 0), 0);
-            return <button key={c.id} type="button" onClick={() => setClientId(c.id)} className="nb-card flex w-full items-center gap-3 p-4 text-left" data-testid={`manage-client-${c.id}`}><Avatar person={c} photo={c.photo} /><div className="flex-1"><p className="font-semibold">{c.firstName} {c.lastName}</p><p className="text-xs text-nb-mute">{c.email} · {c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p></div>{c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}</button>;
+            return <button key={c.id} type="button" onClick={() => setClientId(c.id)} className="nb-card flex w-full items-center gap-3 p-4 text-left" data-testid={`manage-client-${c.id}`}><Avatar person={c} photo={c.photo} /><div className="flex-1"><p className="font-semibold">{c.firstName} {c.lastName}</p><p className="text-xs text-nb-mute">{c.email} · {c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p></div>{c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}<Link to={`/owner/clients/${c.id}`} onClick={(e) => e.stopPropagation()} data-testid={`manage-client-open-${c.id}`} className="nb-btn-ghost h-9 px-3 text-xs">Full record</Link></button>;
           })}
         </TabsContent>
       </Tabs>

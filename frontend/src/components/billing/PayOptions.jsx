@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CreditCard, Landmark, Loader2, Copy, Clock3 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
+import { GiftCardApply } from "@/components/billing/GiftCardApply";
 
 function CardPay({ invoice, enabled }) {
   const [busy, setBusy] = useState(false);
@@ -52,12 +53,13 @@ function Transfer({ invoice, onChange }) {
   );
 }
 
-export function PayOptions({ invoice, cardsOn, onChange }) {
+export function PayOptions({ invoice, cardsOn, giftOn, onChange }) {
   if (!invoice || invoice.balance.cents <= 0 || invoice.state === "voided" || invoice.state === "draft") return null;
   return (
     <section className="space-y-3" data-testid="billing-pay-options">
       <p className="nb-eyebrow">Pay remaining balance</p>
       <CardPay invoice={invoice} enabled={cardsOn} />
+      {giftOn && <GiftCardApply invoice={invoice} onChange={onChange} />}
       <Transfer invoice={invoice} onChange={onChange} />
     </section>
   );

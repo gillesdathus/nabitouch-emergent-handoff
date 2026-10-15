@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { LiveTrack } from "@/components/LiveTrack";
+import { LiveTripCard } from "@/components/LiveTripCard";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
@@ -146,7 +146,6 @@ export default function Me() {
   const bday = state.promotions.find((p) => p.id === "promo-birthday");
   const bdayOk = bday && promoEligibility(bday, me, "swedish");
   const plans = state.plans.filter((p) => p.clientId === me.id && p.visibleToClient);
-  const gifts = state.giftcards.filter((g) => g.recipient?.includes(me.firstName) || g.purchaser?.includes(me.firstName));
   const rebook = (a, slug) => { const s = slug || a.serviceSlug; patchDraft({ serviceSlug: s, duration: a?.duration || Number(Object.keys(idx.services[s].prices).includes("60") ? 60 : Object.keys(idx.services[s].prices)[0]), practitionerId: a?.practitionerId || me.preferredPractitioners[0] || "", locationType: a?.locationType || "home", address: me.addresses[0] || null, addressQuery: me.addresses[0]?.line || "", step: 2, date: null, time: null }); nav("/book"); };
 
   return (
@@ -199,13 +198,8 @@ export default function Me() {
           </div>
           <div className="nb-card p-5">
             <ClientTracker appt={next} />
-            {next.status === "en_route" && next.trip?.sharing && <div className="mt-4" id="client-live"><LiveTrack appt={next} practitioner={idx.practitioners[next.practitionerId]} /></div>}
+            {(next.status === "en_route" || next.status === "arrived") && <div className="mt-4" id="client-live"><LiveTripCard appt={next} practitioner={idx.practitioners[next.practitionerId]} /></div>}
             {next.status === "en_route" && !next.trip?.sharing && <p className="mt-3 flex items-center gap-2 rounded-2xl bg-cyan-50 p-3 text-sm text-cyan-800" data-testid="eta-notice"><Navigation className="h-4 w-4" />Your practitioner is on the way. A live position appears only after they start sharing. An estimate is not a confirmed arrival.</p>}
-            {(next.status === "en_route" || next.status === "arrived") && (
-              <div className="mt-3" data-testid="client-trip-alerts">
-                <Notice>This status is in the app. No SMS or email is sent from this page.</Notice>
-              </div>
-            )}
             {next.practitionerId && <Link to={`/me/messages/${next.id}`} data-testid="client-message-practitioner" className="nb-btn-ghost mt-3 h-11">Message practitioner</Link>}
             <div className="mt-4 space-y-3"><BillingFacts appointmentId={next.id} /><PaymentPanel appt={next} role="client" /></div>
           </div>
@@ -265,7 +259,7 @@ export default function Me() {
             <div className="space-y-3">{me.insurance.map((i) => <div key={i.id} className="nb-card flex items-center gap-4 p-4" data-testid={`wallet-insurance-${i.id}`}><ShieldCheck className="h-5 w-5 text-nb-teal" /><div className="flex-1"><p className="text-sm font-semibold">{i.insurer}</p><p className="text-xs text-nb-mute">Member {i.memberId || "—"} · {i.relationship}</p></div><PayPill status={i.status} /></div>)}
               {me.insurance.length === 0 && <p className="text-sm text-nb-mute">No insurance saved. You can always pay yourself.</p>}</div></div>
           <div className="nb-card flex items-center gap-4 p-4"><CreditCard className="h-5 w-5 text-nb-blue" /><div className="flex-1"><p className="text-sm font-semibold">Payment preference</p><p className="text-xs text-nb-mute">Insurance billing is not connected. Card and cash follow the payment recorded on each visit.</p></div></div>
-          <div><SectionHead eyebrow="Gift cards" title="Gift cards" />{gifts.map((g) => <div key={g.id} className="nb-gradient mb-3 rounded-3xl p-5 text-white" data-testid={`giftcard-${g.id}`}><Gift className="h-5 w-5" /><p className="mt-3 font-mono text-sm">{g.code}</p><p className="text-2xl font-semibold">{money(g.balance)} <span className="text-sm font-normal opacity-80">of {money(g.amount)}</span></p><p className="text-xs opacity-80">{g.purchaser === `${me.firstName} ${me.lastName}` ? `Gift for ${g.recipient}` : `From ${g.purchaser}`} · {g.status}</p></div>)}{gifts.length === 0 && <p className="text-sm text-nb-mute">No gift cards yet.</p>}</div>
+          <Link to="/me/gifts" data-testid="wallet-giftcards-link" className="relative block overflow-hidden rounded-3xl p-5 text-white nb-lagoon"><Gift className="h-5 w-5" /><p className="mt-3 font-semibold">Gift cards</p><p className="text-xs text-white/80">Balances, history and sending a gift.</p></Link>
           <div><SectionHead eyebrow="Receipts" title="Receipts & invoices" />{history.filter((a) => DONE.includes(a.status)).map((a) => <button key={a.id} onClick={() => setReceipt(a)} data-testid={`wallet-receipt-${a.id}`} className="nb-card mb-2 flex w-full items-center gap-3 p-4 text-left"><Receipt className="h-4 w-4 text-nb-mute" /><span className="flex-1 text-sm">{a.ref} · {fmtDate(a.date)}</span><span className="text-sm font-semibold">{money(a.pricing.total)}</span></button>)}</div>
         </TabsContent>
 

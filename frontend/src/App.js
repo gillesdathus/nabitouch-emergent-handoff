@@ -27,6 +27,9 @@ const ProfileForm = lazy(() => import("@/pages/client/ProfileForm"));
 const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
 const ClientBilling = lazy(() => import("@/pages/client/Billing"));
+const ClientGiftCards = lazy(() => import("@/pages/client/GiftCards"));
+const GiftCardsAdmin = lazy(() => import("@/pages/owner/GiftCards"));
+const ClientWorkspace = lazy(() => import("@/pages/staff/ClientWorkspace"));
 const ProToday = lazy(() => import("@/pages/practitioner/Today"));
 const ProVisit = lazy(() => import("@/pages/practitioner/Visit"));
 const NativeNav = lazy(() => import("@/pages/practitioner/NativeNav"));
@@ -96,6 +99,7 @@ export default function App() {
                   <Route path="/me/intake" element={<Intake />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />
+                  <Route path="/me/gifts" element={<ClientGiftCards />} />
                   <Route path="/me/messages/:id" element={<Thread viewerRole="client" backTo="/me" />} />
                 </Route>
                 <Route element={<StaffShell role="pro" />}>
@@ -117,6 +121,8 @@ export default function App() {
                   <Route path="/owner/messages" element={<Messages />} />
                   <Route path="/owner/manage" element={<Manage />} />
                   <Route path="/owner/promos" element={<Promos />} />
+                  <Route path="/owner/giftcards" element={<GiftCardsAdmin />} />
+                  <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />
                   <Route path="/owner/rewards" element={<OwnerRewards />} />
@@ -134,6 +140,8 @@ export default function App() {
                   <Route path="/desk" element={<Desk />} />
                   <Route path="/desk/dispatch" element={<Dispatch role="desk" />} />
                   <Route path="/desk/clients" element={<DeskClients />} />
+                  <Route path="/desk/clients/:id" element={<ClientWorkspace />} />
+                  <Route path="/desk/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/desk/verify" element={<Verify />} />
                   <Route path="/desk/messages" element={<Messages />} />
                 </Route>

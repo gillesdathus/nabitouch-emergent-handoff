@@ -1,14 +1,16 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Download, Mail, Receipt, Loader2, CreditCard, Banknote, Landmark, ShieldCheck, Undo2 } from "lucide-react";
+import { Download, Mail, Receipt, Loader2, CreditCard, Banknote, Landmark, ShieldCheck, Undo2, Gift, ArrowUpRight } from "lucide-react";
 import { Drawer, DrawerContent, DrawerTitle, DrawerDescription } from "@/components/ui/drawer";
 import { InvoiceStatePill, MoneyLedger, TideBar } from "@/components/billing/InvoiceBits";
 import { PayOptions } from "@/components/billing/PayOptions";
-import { downloadInvoicePdf } from "@/lib/useInvoices";
+import { downloadInvoicePdf, downloadReceiptPdf, newKey } from "@/lib/useInvoices";
+import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
 import { fmtDate } from "@/lib/domain";
 
-const METHOD_ICON = { stripe: CreditCard, cash: Banknote, etransfer: Landmark, insurance: ShieldCheck };
+const METHOD_ICON = { stripe: CreditCard, cash: Banknote, etransfer: Landmark, insurance: ShieldCheck, giftcard: Gift };
 const TYPE_LABEL = { client_payment: "Payment", insurance_receipt: "Insurance payment", refund: "Refund", reversal: "Reversal", adjustment: "Adjustment", credit: "Credit", void: "Voided" };
 
 function Lines({ invoice }) {
@@ -38,7 +40,7 @@ function Payments({ invoice }) {
           return (
             <li key={p.id} className="flex items-center gap-3 rounded-2xl bg-white p-3 ring-1 ring-sky-100" data-testid={`invoice-payment-${p.id}`}>
               <span className="grid h-9 w-9 place-items-center rounded-xl tint-mint"><Icon className="h-4 w-4 text-nb-teal" /></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{TYPE_LABEL[p.type] || p.type}{p.method ? ` · ${p.method}` : ""}</span><span className="block text-xs text-nb-mute">{p.at ? new Date(p.at).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" }) : ""}</span></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{TYPE_LABEL[p.type] || p.type}{p.method ? ` · ${p.method}` : ""}</span><span className="block text-xs text-nb-mute">{p.at ? new Date(p.at).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" }) : ""}{p.reference ? ` · ${p.reference}` : ""}</span></span>
               <span className="nb-num text-sm font-semibold">{p.amount.display}</span>
             </li>
           );
@@ -48,19 +50,21 @@ function Payments({ invoice }) {
   );
 }
 
-function Documents({ invoice }) {
-  const [busy, setBusy] = useState(false);
-  const pdf = async () => { setBusy(true); try { await downloadInvoicePdf(invoice); } catch { toast.error("The PDF could not be downloaded."); } setBusy(false); };
+function Documents({ invoice, emailOn }) {
+  const [busy, setBusy] = useState("");
+  const run = (what, fn) => async () => { setBusy(what); try { await fn(); } catch (e) { toast.error(apiError(e) || "That did not work."); } setBusy(""); };
+  const email = run("email", async () => { const res = await api.emailInvoice(invoice.id, "invoice", newKey("mail")); toast.success(res.queued ? "Email queued. Delivery is confirmed only by the provider." : "Not queued"); });
+  const hasReceipt = invoice.received.cents > 0;
   return (
     <section className="grid gap-2 sm:grid-cols-3" data-testid="invoice-documents">
-      <button type="button" onClick={pdf} disabled={busy || invoice.state === "draft"} data-testid="invoice-download-pdf" className="nb-btn-dark h-11 text-sm">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Invoice PDF</button>
-      <button type="button" disabled data-testid="invoice-download-receipt" title="Receipt PDF is not available yet" className="nb-btn-ghost h-11 text-sm"><Receipt className="h-4 w-4" />Receipt · soon</button>
-      <button type="button" disabled data-testid="invoice-email" title="Email delivery is not enabled" className="nb-btn-ghost h-11 text-sm"><Mail className="h-4 w-4" />Email · off</button>
+      <button type="button" onClick={run("pdf", () => downloadInvoicePdf(invoice))} disabled={Boolean(busy) || invoice.state === "draft"} data-testid="invoice-download-pdf" className="nb-btn-dark h-11 text-sm">{busy === "pdf" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}Invoice PDF</button>
+      <button type="button" onClick={run("receipt", () => downloadReceiptPdf(invoice))} disabled={Boolean(busy) || !hasReceipt} title={hasReceipt ? "Download receipt" : "A receipt is available after a confirmed payment"} data-testid="invoice-download-receipt" className="nb-btn-ghost h-11 text-sm">{busy === "receipt" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}Receipt</button>
+      <button type="button" onClick={email} disabled={Boolean(busy) || !emailOn} title={emailOn ? "Email this invoice" : "Invoice email is turned off"} data-testid="invoice-email" className="nb-btn-ghost h-11 text-sm">{busy === "email" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}{emailOn ? "Email" : "Email · off"}</button>
     </section>
   );
 }
 
-export function InvoiceDrawer({ invoice, open, onOpenChange, cardsOn, onChange }) {
+export function InvoiceDrawer({ invoice, open, onOpenChange, flags = {}, onChange, staffLink }) {
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent className="mx-auto max-h-[92vh] max-w-2xl rounded-t-[32px] border-0 bg-nb-canvas" data-testid="invoice-drawer">
@@ -69,7 +73,7 @@ export function InvoiceDrawer({ invoice, open, onOpenChange, cardsOn, onChange }
             <div className="relative mt-3 overflow-hidden rounded-[28px] p-5 text-white nb-lagoon">
               <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-nb-turq/40 blur-2xl" />
               <div className="relative flex items-start justify-between gap-3">
-                <div><DrawerTitle className="text-lg font-semibold text-white" data-testid="invoice-drawer-number">{invoice.number || "Draft invoice"}</DrawerTitle><DrawerDescription className="text-sm text-white/75">{invoice.service}{invoice.duration ? ` · ${invoice.duration} min` : ""}{invoice.serviceDate ? ` · ${fmtDate(invoice.serviceDate)}` : ""}</DrawerDescription></div>
+                <div><DrawerTitle className="text-lg font-semibold text-white" data-testid="invoice-drawer-number">{invoice.number || "Draft invoice"}</DrawerTitle><DrawerDescription className="text-sm text-white/75">{invoice.clientName && staffLink ? `${invoice.clientName} · ` : ""}{invoice.service}{invoice.duration ? ` · ${invoice.duration} min` : ""}{invoice.serviceDate ? ` · ${fmtDate(invoice.serviceDate)}` : ""}</DrawerDescription></div>
                 <InvoiceStatePill invoice={invoice} testid="invoice-drawer-state" />
               </div>
               <p className="relative mt-5 text-xs text-white/70">Outstanding</p>
@@ -79,10 +83,12 @@ export function InvoiceDrawer({ invoice, open, onOpenChange, cardsOn, onChange }
             </div>
             <div className="mt-5 space-y-6">
               <MoneyLedger invoice={invoice} />
-              <PayOptions invoice={invoice} cardsOn={cardsOn} onChange={onChange} />
+              {staffLink
+                ? <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-primary h-11 w-full text-sm">Record payments in Payments<ArrowUpRight className="h-4 w-4" /></Link>
+                : <PayOptions invoice={invoice} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={onChange} />}
               <Lines invoice={invoice} />
               <Payments invoice={invoice} />
-              <Documents invoice={invoice} />
+              <Documents invoice={invoice} emailOn={flags.emailOn} />
               {invoice.practitionerName && <p className="text-xs text-nb-mute">Practitioner: {invoice.practitionerName}{invoice.dueDate ? ` · Due ${fmtDate(invoice.dueDate.slice(0, 10))}` : ""}</p>}
             </div>
           </div>

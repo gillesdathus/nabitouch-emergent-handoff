@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Gift } from "lucide-react";
@@ -51,8 +52,8 @@ export default function Promos() {
       <div className="grid gap-4 xl:grid-cols-2">{state.promotions.map((p) => <PromoCard key={p.id} p={p} />)}</div>
       <div>
         <SectionHead eyebrow="Gifting" title="Gift cards" />
-        <p className="nb-card p-4 text-sm text-nb-mute" data-testid="giftcard-inactive">Gift cards stay inactive until their commercial rules are approved. Existing cards remain on file and cannot be issued from here.</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{state.giftcards.map((c) => <div key={c.id} className="nb-card p-4" data-testid={`owner-giftcard-${c.id}`}><Gift className="h-5 w-5 text-nb-teal" /><p className="mt-2 font-mono text-sm">{c.code}</p><p className="text-lg font-semibold">{money(c.balance)} / {money(c.amount)}</p><p className="text-xs text-nb-mute">{c.purchaser} → {c.recipient}</p><Pill tone={c.status === "active" ? "green" : "slate"}>{c.status}</Pill></div>)}</div>
+        <Link to="/owner/giftcards" data-testid="giftcard-console-link" className="nb-card flex items-center gap-3 p-4 text-sm"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1">Gift cards now live in their own ledger-backed console: products, issuance, activation, redemption and voids.</span><span className="font-semibold text-nb-blue">Open</span></Link>
+        
       </div>
     </div>
   );

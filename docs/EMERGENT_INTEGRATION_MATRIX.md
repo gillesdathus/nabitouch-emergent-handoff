@@ -32,21 +32,21 @@ Design reconciliation: the handoff `index.css` and `tailwind.config.js` are a st
 
 | # | Contract | Status | Notes |
 | --- | --- | --- | --- |
-| 1 | Client invoice list (`GET /invoices?mine`) | **Missing** | The UI works around it by looking up each appointment (N requests) |
-| 2 | Branded invoice PDF | **Partial** | `/invoices/{id}/pdf` exists. Plain Helvetica text, no logo or branding |
-| 3 | Receipt PDF | **Missing** | Payments carry `RCPT-` codes only |
-| 4 | Email invoice / receipt / payment link | **Missing** | The outbox has only `booking_confirmation` plus lifecycle mail |
+| 1 | Invoice list `GET /invoices` (client: own; owner/desk with payments or insurance permission: `?clientId`) | **Implemented (M3)** | Paginated, no drafts for clients, claim notes stripped |
+| 2 | Branded invoice PDF | **Implemented (M3)** | `/invoices/{id}/pdf` now uses `pdfbrand.py` (ReportLab, Poppins, logo, lagoon band) |
+| 3 | Receipt PDF `GET /invoices/{id}/receipt` | **Implemented (M3)** | Confirmed payments only. 409 when nothing has been received |
+| 4 | `POST /invoices/{id}/email` (invoice, receipt, payment_link) | **Implemented, disabled** | `INVOICE_EMAIL_ENABLED` off returns 503. When on, it queues to the existing outbox with idempotency and branded `email_templates.py` |
 | 5 | Stripe invoice checkout + webhook | **Implemented, disabled** | `STRIPE_CARD_CHECKOUT_ENABLED` is off and the webhook secret is empty. Test key present |
 | 6 | Reusable payment link | **Partial** | A Checkout Session URL is created on demand. No persistent or shareable link |
 | 7 | e-Transfer report + staff verification | **Implemented** | Reporting never marks the invoice paid |
 | 8 | Insurance ledger (claimed / approved / received) | **Implemented** | Manual recording. Insurer submission is disabled |
-| 9 | Gift cards: products, purchase, issue, deliver, redeem, void, transactions | **Missing** | Only generic `POST /api/giftcards` with an amount check. No redemption locking, no ledger |
+| 9 | Gift cards `giftcards.py` (`/api/giftcards/*`) plus `POST /invoices/{id}/giftcard` | **Implemented, disabled (M3)** | `GIFTCARDS_ENABLED` off returns 503 for purchase, issue, activate, redeem and void. Atomic balance decrement with an idempotency key on a unique index. Ledger `nt_gc_ledger` and audit entries. The legacy generic giftcards writes now return 410 |
 | 10 | Rewards balances | **Partial** | Settings, `/rewards/me`, attribution, product preview. Programme flag-gated |
 | 11 | Financial reports (revenue, collections, A/R, insurance A/R, gift-card liability, refunds, retention, service performance), PDF and CSV | **Partial** | Only the practitioner period snapshot plus text PDF, and marketing analytics. No CSV |
-| 12 | Per-client communication history for staff | **Partial** | Per-appointment threads and `/inbox` exist. No client-scoped aggregate |
-| 13 | Branded transactional templates (change, invoice, receipt, invite, recovery) | **Partial** | Booking and lifecycle only. Invite and recovery mail are inline |
+| 12 | `GET /clients/{id}/workspace` | **Implemented (M3)** | Owner and desk, permission-shaped. Includes consents summary, threads and plans (owner only). Never SOAP or clinical notes. Every open is audited |
+| 13 | Branded transactional templates | **Partial (M3)** | `email_templates.py` covers invoice, receipt, payment link, invitation, recovery and change. Only the billing ones are wired. Invite and recovery still use their inline HTML |
 
-No duplicate APIs were created. Backend changes for rows 1, 3, 4, 9, 11 and 12 await your approval of the backend-change scope.
+No duplicate APIs were created. M3 (approved scope) implemented rows 1, 2, 3, 4, 9 and 12. Row 11 (financial reports and CSV) is next: `pdfbrand.report_pdf` is ready to use.
 
 ## 3. Route matrix
 
@@ -61,7 +61,11 @@ No duplicate APIs were created. Backend changes for rows 1, 3, 4, 9, 11 and 12 a
 | `/login`, `/join`, `/forgot-password`, `/reset-password` | Public | Tide/partial | `/auth/*` incl. MFA | Real | Yes | Composition refresh |
 | `/track`, `/track/:token` | Public | Tide/partial | `/tracking/guest/*` | Real | Yes | Freshness indicator review |
 | `/me` | Client | Tide | `/state`, `/billing/notices` | Real | Yes | Wallet tab overlaps with the new Billing page |
-| **`/me/billing`** | Client | **New Tide** | `/invoices/by-appointment`, `/invoices/{id}/pdf`, `/invoices/{id}/checkout`, `/billing/etransfer`, `/invoices/{id}/etransfer-notice` | Real | Yes | Rows 1, 3 and 4 missing. Receipt and email buttons shown as off |
+| **`/me/billing`** | Client | **New Tide** | `/invoices`, `/pdf`, `/receipt`, `/email`, `/checkout`, `/giftcard`, `/billing/etransfer`, `/etransfer-notice` | Real; card, email and gift card behind flags | Yes | Not yet tested |
+| **`/me/gifts`** | Client | **New Tide** | `/giftcards/mine`, `/config`, `/purchase` | Real; purchase flag-gated | Yes | Not yet tested |
+| **`/owner/giftcards`**, **`/desk/giftcards`** | Owner, Desk (payments) | **New Tide** | list, detail, liability, issue, activate, void, products | Real; mutations flag-gated | Yes | Not yet tested |
+| **`/owner/clients/:id`**, **`/desk/clients/:id`** | Owner, Desk | **New Tide** | `/clients/{id}/workspace`, `/invoices?clientId`, Stage 5 thread | Real | Yes | Not yet tested |
+| `/me` live trip | Client | **New Tide `LiveTripCard`** | tracking session SSE or poll, `/appointments/{id}/messages` notices | Real (no fabricated ETA) | Yes | Not yet tested |
 | `/me/profile`, `/me/intake`, `/me/insurance` | Client | Tide/partial | `/clients`, `/intake`, `/consents` | Real | Yes | Insurance page composition |
 | `/me/rewards` | Client | Tide/partial | `/rewards/me` | Flag-gated | Yes | — |
 | `/me/messages/:id` | Client | Tide/partial | Stage 5 | Real | Yes | Thread header composition |
