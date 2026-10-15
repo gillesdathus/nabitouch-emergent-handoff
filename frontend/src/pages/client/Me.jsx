@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { LiveTripCard } from "@/components/LiveTripCard";
 import { ArrivalMoment } from "@/components/ArrivalMoment";
+import { PrepareCard } from "@/components/PrepareCard";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
@@ -200,6 +201,7 @@ export default function Me() {
           <div className="nb-card p-5">
             <ClientTracker appt={next} />
             {next.status === "arrived" && <div className="mt-4"><ArrivalMoment appt={next} practitioner={idx.practitioners[next.practitionerId]} service={idx.services[next.serviceSlug]} /></div>}
+            {["requested", "confirmed", "assigned", "preparing", "en_route"].includes(next.status) && <div className="mt-4"><PrepareCard appt={next} /></div>}
             {next.status === "en_route" && <div className="mt-4" id="client-live"><LiveTripCard appt={next} practitioner={idx.practitioners[next.practitionerId]} /></div>}
             {next.status === "en_route" && !next.trip?.sharing && <p className="mt-3 flex items-center gap-2 rounded-2xl bg-cyan-50 p-3 text-sm text-cyan-800" data-testid="eta-notice"><Navigation className="h-4 w-4" />Your practitioner is on the way. A live position appears only after they start sharing. An estimate is not a confirmed arrival.</p>}
             {next.practitionerId && <Link to={`/me/messages/${next.id}`} data-testid="client-message-practitioner" className="nb-btn-ghost mt-3 h-11">Message practitioner</Link>}

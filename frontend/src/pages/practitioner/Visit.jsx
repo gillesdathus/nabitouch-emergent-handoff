@@ -6,6 +6,7 @@ import { Confirm, OpsTimeline, StatusPill, useNow, SuccessMark, Pill } from "@/c
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { LiveMap } from "@/components/LiveMap";
 import { useDemo } from "@/store/DemoStore";
+import { ReadinessBadge } from "@/components/PrepareCard";
 import { ACTIONS, sessionElapsed, fmtClock, fmtTime, fmtDate } from "@/lib/domain";
 import { useTrackingPublisher } from "@/lib/tracking/useTrackingPublisher";
 import { isLiveTrial, useLiveSession, shouldShowPosition } from "@/lib/tracking/live";
@@ -61,8 +62,10 @@ const NAV_APPS = [
 ];
 
 function NavHandoff({ appt, mapsUrl }) {
-  const stored = typeof window !== "undefined" ? window.localStorage.getItem("nb-nav-pref") : "google";
-  const [app, setApp] = useState(stored || "google");
+  const { idx, practitionerId, api: store } = useDemo();
+  const me = idx.practitioners[practitionerId];
+  const [app, setApp] = useState(me?.preferredNavApp || "google");
+  const choose = (key) => { setApp(key); if (me?.id) store.patch("practitioners", me.id, { preferredNavApp: key }).catch(() => {}); };
   const lat = appt.address?.arrival?.lat;
   const lng = appt.address?.arrival?.lng;
   const line = appt.address?.line || "";
@@ -71,7 +74,7 @@ function NavHandoff({ appt, mapsUrl }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
       <div className="flex flex-wrap gap-1">
-        {NAV_APPS.map(([key, label]) => <button key={key} type="button" data-testid={`nav-app-${key}`} onClick={() => { setApp(key); window.localStorage.setItem("nb-nav-pref", key); }} className={app === key ? "nb-chip-on h-8 text-xs" : "nb-chip-off h-8 text-xs"}>{label}</button>)}
+        {NAV_APPS.map(([key, label]) => <button key={key} type="button" data-testid={`nav-app-${key}`} onClick={() => choose(key)} className={app === key ? "nb-chip-on h-8 text-xs" : "nb-chip-off h-8 text-xs"}>{label}</button>)}
       </div>
       <a href={href} target="_blank" rel="noopener noreferrer" data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
     </div>
@@ -147,6 +150,7 @@ export default function Visit() {
       </div>
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2">
+          {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <ReadinessBadge readiness={appt.readiness} />}
           {["assigned", "confirmed", "preparing", "en_route"].includes(appt.status) && <NavHandoff appt={appt} mapsUrl={mapsUrl} />}
           {actions.filter((x) => x !== primary).map((a) => <button key={a.label} disabled={pending} onClick={() => tap(a)} data-testid={`lifecycle-${a.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-ghost h-12 flex-1">{a.label}</button>)}
           {["en_route", "preparing", "assigned"].includes(appt.status) && <button type="button" onClick={() => setLate(true)} data-testid="lifecycle-running-late-btn" className="nb-btn-ghost h-12 flex-1"><Clock className="h-4 w-4" />Running late</button>}

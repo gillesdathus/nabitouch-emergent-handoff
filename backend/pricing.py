@@ -158,6 +158,8 @@ def promo_eligible(promo, client, slug, today=None):
     if kind == "first_online":
         if client is None or "_welcomeHistory" not in client or client.get("_welcomeHistory") is None:
             return False
+        if client.get("_profileComplete") is False:
+            return False
         return not welcome_history_blocks(client.get("_welcomeHistory"))
     if kind == "birthday_month":
         dob = (client or {}).get("dob") or ""

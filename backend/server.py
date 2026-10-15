@@ -63,6 +63,7 @@ from notifications import (
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
 from finance import build_finance_router
+from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import readiness as sms_readiness
@@ -1147,7 +1148,18 @@ def booking_person(client, incoming):
         "dob": source_client.get("dob") or incoming.get("dob") or "",
         "marketingConsent": source_client.get("marketingConsent") if client else bool(incoming.get("marketingConsent")),
         "onlineBookings": source_client.get("onlineBookings") or 0,
+        "_profileComplete": profile_complete(client),
     }
+
+
+def profile_complete(client):
+    """Welcome offer gate: an existing app profile with contact details, a service address and an insurance answer."""
+    if not client:
+        return False
+    address = (client.get("addresses") or [{}])[0] or {}
+    has_contact = all(str(client.get(k) or "").strip() for k in ("firstName", "lastName", "email", "phone"))
+    insurance_answered = bool(client.get("insurance")) or client.get("noInsurance") is True
+    return has_contact and bool(str(address.get("line") or "").strip()) and insurance_answered
 
 
 async def price_welcome(*, service, duration, addons, zone, client, incoming, promotions, settings, location, km, source):
@@ -1576,7 +1588,7 @@ async def _deliver_booking(note):
         raise PermanentDelivery("provider_rejected") from exc
 
 
-CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "dob", "language", "contactMethod",
+CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "dob", "language", "contactMethod", "noInsurance", "preferredNavApp",
                  "emergencyContact", "marketingConsent", "photo", "addresses", "paymentPreference", "insurance",
                  "favorites", "preferredPractitioners"}
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
@@ -1942,7 +1954,9 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
     elif name == "practitioners":
         if role not in ("owner", "practitioner") or (role == "practitioner" and doc_id != sub):
             raise HTTPException(403, "Not permitted")
-        doc = only_fields(doc, {"available"})
+        doc = only_fields(doc, {"available", "preferredNavApp"})
+        if "preferredNavApp" in doc and doc["preferredNavApp"] not in ("google", "apple", "waze"):
+            raise HTTPException(400, "Choose Google Maps, Apple Maps or Waze")
         if doc.get("available") is True and target.get("onboardingStatus") not in (None, "approved"):
             raise HTTPException(409, "This practitioner profile is not active")
         if doc.get("available") is True:
@@ -2044,6 +2058,7 @@ app.include_router(build_rewards_router(db, coll, add_audit, require, user_from)
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
+app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_finance_router(db, user_from, lambda: coll("settings").find_one({"id": "app"}, NO_ID)))
 app.include_router(api)
 app.add_middleware(CSRFMiddleware)

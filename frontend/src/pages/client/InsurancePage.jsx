@@ -16,6 +16,11 @@ export default function InsurancePage() {
     <div className="mx-auto max-w-2xl px-5 py-10">
       <PageHeader eyebrow="Insurance" title="Coverage details" sub="Saving a plan does not submit a claim. Direct insurer billing is not connected." />
       <Notice className="mb-5" testid="insurance-not-connected">Insurance submission is not available. Receipts stay on your account for you to send yourself.</Notice>
+      <button type="button" data-testid="insurance-none-btn" onClick={async () => { await run(() => api.patch("clients", me.id, { noInsurance: !me.noInsurance, _actor: "Client" }), me.noInsurance ? "Cleared" : "Saved: no insurance"); }}
+        className={`mb-5 flex w-full items-center justify-between rounded-3xl p-4 text-left ring-1 transition-colors ${me.noInsurance ? "bg-nb-navy text-white ring-nb-navy" : "bg-white ring-sky-100"}`}>
+        <span><b className="block text-sm">I don't have insurance coverage</b><span className={`text-xs ${me.noInsurance ? "text-white/75" : "text-nb-mute"}`}>Answering either way completes your profile for the welcome offer.</span></span>
+        <span className="text-xs font-semibold">{me.noInsurance ? "Selected" : "Select"}</span>
+      </button>
       <InsuranceWizard uploadsEnabled={restrictedFlag(idx?.settings, "documentUploadsEnabled")} onSave={save} onCancel={() => nav("/me")} />
     </div>
   );

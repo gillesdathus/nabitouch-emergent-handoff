@@ -130,6 +130,8 @@ export const api = {
   approveStatement: (id) => http.post(`/finance/statements/${id}/approve`, {}).then(data),
   deleteStatement: (id) => http.delete(`/finance/statements/${id}`).then(data),
   financeReport: (kind, params) => http.get(`/finance/reports/${kind}`, { params }).then(data),
+  preparation: (id) => http.get(`/appointments/${id}/preparation`).then(data),
+  saveReadiness: (id, items) => http.put(`/appointments/${id}/readiness`, { items }).then(data),
   clientWorkspace: (id) => http.get(`/clients/${id}/workspace`).then(data),
   insurers: () => http.get("/billing/insurers").then(data),
   previewImport: (file) => { const body = new FormData(); body.append("upload", file); return http.post("/billing/imports/preview", body).then(data); },
