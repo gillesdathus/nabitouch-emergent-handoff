@@ -84,6 +84,12 @@ def classify(hit, requested_line, requested_postal, arrival=None):
     else:
         postal_status = "match"
     requested = parse_civic(requested_line)
+    if requested.get("number") and civic.get("number") and requested["number"].casefold() != civic["number"].casefold():
+        confidence = "review"
+    def city_key(value):
+        return " ".join(str(value or "").casefold().replace(".", "").split())
+    if requested.get("city") and civic.get("city") and city_key(requested["city"]) != city_key(civic["city"]):
+        confidence = "review"
     if requested.get("direction") and civic.get("direction") and requested["direction"] != civic["direction"]:
         confidence = "review"
     if requested.get("type") and civic.get("type") and requested["type"].lower()[:2] != civic["type"].lower()[:2]:

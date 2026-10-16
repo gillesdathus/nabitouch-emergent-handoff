@@ -31,6 +31,12 @@ def test_low_confidence_and_invalid_provider_coordinates_are_not_verified():
     assert _feature(bad) is None
 
 
+@pytest.mark.parametrize("requested", ["10150 104 St NW, Leduc, AB", "99999 104 St NW, Edmonton, AB"])
+def test_provider_substitution_of_city_or_civic_number_requires_review(requested):
+    hit = _feature(feature())
+    assert classify(hit, requested, "T5J 2R4")["confidence"] == "review"
+
+
 def test_temporary_geocodes_are_not_cached_or_used_for_stored_visits(monkeypatch):
     monkeypatch.setenv("MAPBOX_TOKEN", "pk.synthetic-only")
     monkeypatch.setenv("MAPBOX_PERMANENT_GEOCODING", "false")

@@ -1,6 +1,11 @@
 # Mapbox integration readiness — 16 October 2026
 
-**External acceptance: BLOCKED / NOT RUN.** No Mapbox server or browser token was
+Latest: [real provider and local browser/application acceptance](MAPBOX_REAL_ACCEPTANCE_2026-10-16.md)
+resolves the local credential blocker and records genuine Mapbox outcomes after
+the owner authorized synthetic permanent geocoding. Device/staging gates remain.
+The readiness observations below are the earlier snapshot at commit ab094744.
+
+**Historical external acceptance: BLOCKED / NOT RUN.** No Mapbox server or browser token was
 found in the normal local env-file locations or process environment. No real
 Mapbox geocoding/directions transaction is claimed. The safe example smoke command
 returned BLOCKED before any provider call. Synthetic tests below are separate.

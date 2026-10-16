@@ -22,6 +22,10 @@ The VPS, hostname and HTTPS endpoint are not assumed to exist. Keep PR #1 draft.
 
 ## Mapbox
 
+Local genuine provider/browser/application results are recorded in
+[real Mapbox acceptance](MAPBOX_REAL_ACCEPTANCE_2026-10-16.md). They do not certify
+staging origin restrictions, a deployed trip map or physical-device navigation.
+
 Provision independent least-privilege server and URL-restricted pk. browser tokens
 outside Git. Confirm Geocoding permanent-result eligibility before setting
 MAPBOX_PERMANENT_GEOCODING=true. Only the browser token enters the frontend build.
