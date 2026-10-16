@@ -135,6 +135,7 @@ export const api = {
   etransferSettings: () => http.get("/billing/etransfer").then(data),
   saveEtransfer: (body) => http.put("/billing/etransfer", body).then(data),
   stripeReturn: (sessionId) => http.get("/billing/stripe/return", { params: { session_id: sessionId } }).then(data),
+  cancelStripeCheckout: (sessionId) => http.post(`/billing/stripe/checkout/${encodeURIComponent(sessionId)}/cancel`, {}).then(data),
   releaseInvoice: (id) => http.post(`/invoices/${id}/release`, {}).then(data),
   recordTip: (id, body) => http.post(`/invoices/${id}/tip`, body).then(data),
   invoices: (params) => http.get("/invoices", { params }).then(data),

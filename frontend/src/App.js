@@ -9,6 +9,7 @@ import { ClientShell, StaffShell } from "@/components/shells";
 import { PageSkeleton } from "@/components/ui-kit";
 
 const Login = lazy(() => import("@/pages/Login"));
+const PaymentResult = lazy(() => import("@/pages/client/PaymentResult"));
 const Join = lazy(() => import("@/pages/Join"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
@@ -113,6 +114,7 @@ export default function App() {
                   <Route path="/me/reviews" element={<ClientReviews />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />
+                  <Route path="/me/billing/payment-result" element={<PaymentResult />} />
                   <Route path="/me/gifts" element={<ClientGiftCards />} />
                   <Route path="/me/plans" element={<ClientPlans />} />
                   <Route path="/me/messages/:id" element={<Thread viewerRole="client" backTo="/me" />} />

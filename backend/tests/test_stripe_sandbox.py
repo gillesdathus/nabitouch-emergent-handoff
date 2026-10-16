@@ -31,13 +31,20 @@ def sandbox(monkeypatch):
     motor = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = motor[os.environ["DB_NAME"]]
     calls = []
+    remote_status = "open"
 
     async def provider(method, path, **kwargs):
+        nonlocal remote_status
         calls.append((method, path, kwargs))
         if path == "checkout/sessions":
             return {"id": sid, "url": "https://checkout.stripe.com/c/pay/synthetic", "livemode": False}
         if path == "refunds":
             return {"id": "re_fixture_" + mid, "status": "succeeded", "livemode": False}
+        if method == "GET" and path.startswith("checkout/sessions/"):
+            return {"id": sid, "status": remote_status, "payment_status": "unpaid", "livemode": False}
+        if method == "POST" and path.endswith("/expire"):
+            remote_status = "expired"
+            return {"id": sid, "status": "expired", "payment_status": "unpaid", "livemode": False}
         raise AssertionError("Unexpected provider request: " + path)
 
     monkeypatch.setattr(billing, "stripe_request", provider)
@@ -94,8 +101,54 @@ def test_browser_return_cannot_settle(sandbox):
     client, iid, aid, sid, pi, calls = sandbox
     start(sandbox)
     assert client.get("/api/billing/stripe/return", params={"session_id": sid}).json()["confirmed"] is False
-    assert len(calls) == 1
+    assert len(calls) == 2 and calls[-1][0] == "GET"
     assert DB.nt_ledger.count_documents({"invoiceId": iid}) == 0
+
+
+def test_provider_paid_return_remains_pending_until_signed_webhook(sandbox, monkeypatch):
+    client, iid, aid, sid, pi, calls = sandbox
+    start(sandbox)
+    async def paid(*args, **kwargs):
+        return {"id": sid, "status": "complete", "payment_status": "paid", "payment_intent": pi, "livemode": False}
+    monkeypatch.setattr(billing, "stripe_request", paid)
+    result = client.get("/api/billing/stripe/return", params={"session_id": sid, "success": "true"}).json()
+    assert result["status"] == "pending" and result["confirmed"] is False
+    assert DB.nt_ledger.count_documents({"invoiceId": iid, "type": "client_payment"}) == 0
+
+
+def test_explicit_authenticated_checkout_cancellation_never_cancels_appointment(sandbox):
+    client, iid, aid, sid, pi, calls = sandbox
+    start(sandbox)
+    result = client.post(f"/api/billing/stripe/checkout/{sid}/cancel", json={})
+    assert result.status_code == 200 and result.json()["status"] == "cancelled"
+    assert DB.nt_appointments.find_one({"id": aid})["paymentDue"]["status"] == "deposit_pending"
+    assert DB.nt_ledger.count_documents({"invoiceId": iid, "type": "client_payment"}) == 0
+    expiry_calls = [call for call in calls if call[0] == "POST" and call[1].endswith("/expire")]
+    assert len(expiry_calls) == 1 and expiry_calls[0][2]["idempotency_key"].startswith("expire-")
+
+
+def test_result_endpoint_enforces_invoice_ownership_and_paid_ledger(sandbox):
+    client, iid, aid, sid, pi, calls = sandbox
+    start(sandbox)
+    DB.nt_invoices.update_one({"id": iid}, {"$set": {"clientId": "another-client"}})
+    DB.nt_appointments.update_one({"id": aid}, {"$set": {"clientId": "another-client"}})
+    result = client.get("/api/billing/stripe/return", params={"session_id": sid}, headers={"x-fixture-role": "client"})
+    assert result.status_code == 404
+    DB.nt_checkouts.update_one({"sessionId": sid}, {"$set": {"status": "paid"}})
+    assert client.get("/api/billing/stripe/return", params={"session_id": sid}).status_code == 503
+
+
+def test_void_after_verified_refund_closes_appointment_balance(sandbox):
+    client, iid, aid, sid, pi, calls = sandbox
+    obj = start(sandbox)
+    assert event(client, "checkout.session.completed", obj).status_code == 200
+    refund = {"id": "re_void_" + uuid.uuid4().hex, "payment_intent": pi, "status": "succeeded", "currency": "cad", "amount": 2520}
+    assert event(client, "refund.updated", refund).status_code == 200
+    result = client.post(f"/api/invoices/{iid}/void", json={"idempotencyKey": uuid.uuid4().hex})
+    assert result.status_code == 200 and result.json()["state"] == "voided"
+    assert result.json()["balance"]["cents"] == 0
+    due = DB.nt_appointments.find_one({"id": aid})["paymentDue"]
+    assert due["remainingCents"] == 0 and due["refundedCents"] == 2520 and due["status"] == "refunded"
 
 
 def test_expiry_failure_late_success_replay_and_refund(sandbox):

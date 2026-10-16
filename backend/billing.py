@@ -327,7 +327,7 @@ def build_billing_router(db, coll, add_audit, user_from):
         lines = await ledger_for(invoice["id"])
         received, _balance, _state, _overdue = project(invoice, lines)
         refunded = sum(int(line["amountCents"]) for line in lines if line["type"] in ("refund", "reversal"))
-        fields = due_after_payment(invoice["totalCents"], received, refunded)
+        fields = due_after_payment(0 if invoice.get("state") == "voided" else invoice["totalCents"], received, refunded)
         await coll("appointments").update_one(
             {"id": invoice.get("appointmentId"), "paymentDue": {"$type": "object"}},
             {"$set": {f"paymentDue.{key}": value for key, value in fields.items()}},
@@ -847,6 +847,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"type": "void", "method": None, "amountCents": 0, "reference": (body.get("reason") or "void")[:160]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await sync_payment_due(saved)
         return await view_for(user, saved)
 
     async def can_claim(user, appt):
@@ -1199,8 +1200,8 @@ def build_billing_router(db, coll, add_audit, user_from):
             form = {
                 "mode": "payment",
                 "integration_identifier": "nabitouch_qlagoonx",
-                "success_url": app_url + "/me/billing?card=return&session_id={CHECKOUT_SESSION_ID}",
-                "cancel_url": app_url + "/me/billing?card=cancel",
+                "success_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
                 "line_items[0][quantity]": "1",
                 "line_items[0][price_data][currency]": "cad",
                 "line_items[0][price_data][unit_amount]": str(amount),
@@ -1271,14 +1272,66 @@ def build_billing_router(db, coll, add_audit, user_from):
         user = await actor(request)
         row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0}) if session_id else None
         if not row:
-            return {"confirmed": False}
-        if user["role"] == "client":
-            owner_id = row.get("clientId") or (await db.nt_invoices.find_one({"id": row.get("invoiceId")}, {"_id": 0, "clientId": 1}) or {}).get("clientId") if row.get("invoiceId") else (await db.nt_giftcards.find_one({"id": row.get("giftCardId")}, {"_id": 0, "purchaserId": 1}) or {}).get("purchaserId")
-            if owner_id != user.get("subject"):
-                return {"confirmed": False}
+            raise HTTPException(404, "Checkout not found")
+        invoice = await load(row["invoiceId"]) if row.get("invoiceId") else None
+        if invoice:
+            await view_for(user, invoice)
+        elif user["role"] != "owner" and (user["role"] != "client" or row.get("clientId") != user.get("subject")):
+            raise HTTPException(404, "Checkout not found")
+        status = "pending"
+        reason = None
         if row.get("status") == "paid":
-            return {"confirmed": True}
-        return {"confirmed": False, "status": row.get("status", "pending")}
+            status = "confirmed"
+            if invoice:
+                lines = await ledger_for(invoice["id"])
+                payment = next((line for line in lines if line["type"] == "client_payment" and line.get("reference") == session_id), None)
+                if not payment:
+                    raise HTTPException(503, "Payment verification temporarily unavailable")
+                refunded = sum(line["amountCents"] for line in lines if line["type"] == "refund" and line.get("reference") == payment["id"])
+                if refunded:
+                    status = "refunded" if refunded >= payment["amountCents"] else "partially_refunded"
+        elif row.get("status") == "expired":
+            status = "cancelled" if row.get("cancelledByUser") else "failed"
+            reason = row.get("failureReason") or "expired"
+        elif row.get("provider") == "stripe":
+            remote = await stripe_request("GET", "checkout/sessions/" + session_id + "?expand[]=payment_intent")
+            if remote.get("status") == "expired":
+                status, reason = ("cancelled" if row.get("cancelledByUser") else "failed"), "expired"
+            else:
+                intent = remote.get("payment_intent")
+                if isinstance(intent, dict) and intent.get("status") == "requires_payment_method" and intent.get("last_payment_error"):
+                    status, reason = "failed", "payment_failed"
+            # Even provider-paid is pending until the signed webhook ledger exists.
+        response = {"confirmed": status == "confirmed", "status": status, "reason": reason}
+        if invoice:
+            _received, balance, _state, _overdue = project(invoice, await ledger_for(invoice["id"]))
+            response.update(amount=money_view(row["amountCents"]), balance=money_view(balance))
+        return response
+
+    @r.post("/billing/stripe/checkout/{session_id}/cancel")
+    async def cancel_checkout(session_id: str, request: Request):
+        user = await actor(request)
+        if user["role"] not in ("client", "owner") and not await desk_can(user, "managePayments"):
+            raise HTTPException(403, "Not permitted to cancel checkout")
+        row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0})
+        if not row or not row.get("invoiceId"):
+            raise HTTPException(404, "Checkout not found")
+        await view_for(user, await load(row["invoiceId"]))
+        if row.get("status") == "paid":
+            raise HTTPException(409, "Payment already completed; refresh its status")
+        if row.get("provider") != "stripe":
+            raise HTTPException(409, "Provider cancellation is unavailable")
+        remote = await stripe_request("GET", "checkout/sessions/" + session_id)
+        if remote.get("status") != "expired":
+            if remote.get("status") != "open":
+                raise HTTPException(409, "Payment already submitted; await verification")
+            remote = await stripe_request("POST", "checkout/sessions/" + session_id + "/expire", data={}, idempotency_key="expire-" + hashlib.sha256(session_id.encode()).hexdigest())
+        if remote.get("status") != "expired":
+            raise HTTPException(503, "Cancellation verification temporarily unavailable")
+        # Leave the expiry transition to its signed webhook so appointment
+        # payment-review updates are not skipped by an early local status write.
+        await db.nt_checkouts.update_one({"id": row["id"], "status": {"$ne": "paid"}}, {"$set": {"cancelledByUser": True}})
+        return await stripe_return(request, session_id)
 
     @r.post("/billing/stripe/webhook")
     @r.post("/stripe/webhook")
@@ -1380,7 +1433,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             if not known:
                 raise HTTPException(503, "Checkout failure/expiry awaits checkout creation")
             expired = await db.nt_checkouts.find_one_and_update(
-                {"sessionId": obj.get("id"), "status": "pending"}, {"$set": {"status": "expired"}}, return_document=ReturnDocument.AFTER,
+                {"sessionId": obj.get("id"), "status": "pending"}, {"$set": {"status": "expired", "failureReason": "payment_failed" if kind.endswith("failed") else "expired"}}, return_document=ReturnDocument.AFTER,
             )
             review = False
             if expired and expired.get("invoiceId"):

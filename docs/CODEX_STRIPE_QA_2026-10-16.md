@@ -1,5 +1,8 @@
 # Stripe sandbox implementation verification — 16 October 2026
 
+Latest: [lifecycle acceptance and return UX](STRIPE_LIFECYCLE_ACCEPTANCE_2026-10-16.md)
+records the expanded real provider evidence and updated regression counts.
+
 This is the earlier implementation-only record. Subsequent genuine provider
 verification is recorded in
 [real deposit acceptance](STRIPE_SANDBOX_ACCEPTANCE_2026-10-16.md); its paid

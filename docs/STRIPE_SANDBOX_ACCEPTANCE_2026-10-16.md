@@ -1,5 +1,9 @@
 # Real Stripe sandbox deposit acceptance — 16 October 2026
 
+Historical deposit snapshot: subsequent balance collection, refunds and the repaired
+frontend return are recorded in the [lifecycle report](STRIPE_LIFECYCLE_ACCEPTANCE_2026-10-16.md).
+The original deposit evidence and amounts below describe their original observation.
+
 **PASS for one real deposit payment and application-side settlement.** Full
 Stripe lifecycle/release acceptance remains incomplete. Evidence checked at
 09:40 MDT (15:40 UTC) against implementation commit

@@ -1,6 +1,10 @@
 # Stripe sandbox integration and acceptance
 
-Status: **one real deposit/backend settlement accepted** on 16 October 2026;
+Latest: [card lifecycle and return UX acceptance](STRIPE_LIFECYCLE_ACCEPTANCE_2026-10-16.md)
+passes full payment, 3DS, decline, expiry, refunds and deposit-to-balance collection.
+Delayed success/failure remain BLOCKED. Overall Stripe acceptance is incomplete.
+
+Historical status: **one real deposit/backend settlement accepted** on 16 October 2026;
 full lifecycle acceptance remains incomplete. The owner-provided Nabitouch test
 key and real CLI forwarding verified a paid CAD $25.20 Checkout, succeeded
 PaymentIntent/Charge and signed webhook settlement. See the redacted
