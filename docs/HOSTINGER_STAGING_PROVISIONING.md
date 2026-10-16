@@ -57,6 +57,14 @@ provider-token isolation. Stripe/Resend/Firebase credentials remain absent.
 
 ## Deployed operational checks and backup custody
 
+The interrupted bootstrap initially left four new staging env/access files at
+0644. Final audit corrected them to 0600 and replaced staging passwords, JWT/field
+keys and database/cache credentials; synthetic owner sessions/MFA were revoked
+and re-enrolled. Final permissions, authentication, browser and backup checks
+passed. Use only the final local access file, not any earlier cached password or
+MFA seed. Initial field key is retained privately for initial synthetic recovery;
+production credentials were not rotated.
+
 All four staging services are healthy and recovered after an intentional restart;
 HTTPS, SPA fallbacks, owner login/MFA, same-origin browser authentication,
 CORS/CSRF, database/Redis readiness and production noninterference passed.

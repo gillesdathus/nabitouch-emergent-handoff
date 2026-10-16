@@ -13,8 +13,8 @@ stopped on unsafe production credential permissions as instructed. The owner the
 explicitly authorized the exact repair: the root-owned regular nonsymlink files
 `/opt/nt-next/backend/.env` and `.nt-m1.env` changed from `0666` to `0600`, and the
 containing directory from `0777` to `0755`. File inode/device/size/mtime stayed
-unchanged. No credential contents were read during this repair. No secret value
-was printed, rotated or committed; production services were not restarted.
+unchanged. No credential contents were read during this repair. No production
+secret value was printed, rotated or committed; production services were not restarted.
 Historical possible exposure still requires a separate credential rotation review.
 
 No merge, production deployment, production database query, production webhook
@@ -114,6 +114,22 @@ staging vhost was added. Six existing Nabitouch production container/image/start
 identities stayed unchanged, their health checks remained healthy, production API
 Mongo/Redis readiness stayed ok, and https://nabitouch.com returned HTTP 200 after
 staging deployment/restart. No production database records or logs were inspected.
+
+### Final staging credential-custody correction
+
+A final permission audit caught four new staging configuration/access files at
+0644 after an interrupted provisioning step. The agent corrected all four to
+root-only 0600, replaced the staging owner/gateway passwords, JWT/field keys,
+Mongo app password and Redis password, revoked old synthetic owner sessions/MFA,
+and re-enrolled MFA. Only staging services were reloaded. All HTTPS, cookie,
+CORS/CSRF, MFA, disabled-email and fresh browser tests passed again. Final exact
+secret-file mode audit and production noninterference checks passed. No evidence
+of actual access by another host account was investigated or claimed.
+
+Initial staging field key remains root-private for initial backup recovery and
+synthetic compatibility; production keys were unchanged. The new local ignored
+access file contains the final credentials/MFA details. Encrypted backup execution
+also passed with the replacement Mongo credentials. No recovery key was exported.
 
 ## Backup and recovery — on-host restore PASS; off-host restore BLOCKED
 
@@ -252,6 +268,10 @@ clean Python audit and runtime image imports. Five skips remain the separately
 covered live Mapbox case, three optional absent Deep Tissue 5-pack cases and the
 generic hosted-checkout-configured flow; see prior CI review for names. Git check
 runs. Local tests are not substituted for remote CI.
+
+Actual [run #12 also passed for operational/helper commit 00a166d](https://github.com/gillesdathus/nabitouch-emergent-handoff/actions/runs/38974273337),
+including the four new backup-isolation refusal tests in the configuration job.
+Later documentation-only checkpoint CI is reported separately on Draft PR #1.
 
 An initial reused-container targeted run had three login failures because another
 synthetic server already occupied the port. A fresh QA stack passed all cases.
