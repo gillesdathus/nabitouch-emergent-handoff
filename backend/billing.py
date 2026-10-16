@@ -271,6 +271,7 @@ async def ensure_billing(db):
     await db.nt_ledger.create_index("id", unique=True)
     await db.nt_ledger.create_index("idempotencyKey", unique=True)
     await db.nt_ledger.create_index("invoiceId")
+    await db.nt_ledger.create_index("paymentIntent", sparse=True)
     await db.nt_claims.create_index("id", unique=True)
     await db.nt_tips.create_index("idempotencyKey", unique=True)
     await db.nt_claims.create_index("invoiceId")
@@ -1314,8 +1315,12 @@ def build_billing_router(db, coll, add_audit, user_from):
         if obj.get("status") != "succeeded":
             await db.nt_stripe_refunds.update_many({"stripeRefundId": obj.get("id"), "status": {"$ne": "reconciled"}}, {"$set": {"status": obj.get("status")}})
             return {"received": True, "settled": False}
-        if obj.get("currency") != "cad" or not isinstance(obj.get("amount"), int) or obj["amount"] <= 0:
+        if obj.get("currency") != "cad" or type(obj.get("amount")) is not int or obj["amount"] <= 0:
             raise HTTPException(409, "Refund amount/currency requires review")
+        # A null lookup would match legacy ledger rows with no PaymentIntent.
+        # Never allocate a legacy Charge refund to an unrelated invoice.
+        if not isinstance(obj.get("payment_intent"), str) or not obj["payment_intent"].startswith("pi_"):
+            raise HTTPException(409, "Refund requires a reconciled PaymentIntent reference")
         payment = await db.nt_ledger.find_one({"type": "client_payment", "method": "stripe", "paymentIntent": obj.get("payment_intent")}, {"_id": 0})
         if not payment:
             # Refund can arrive before checkout success. Non-2xx asks Stripe to

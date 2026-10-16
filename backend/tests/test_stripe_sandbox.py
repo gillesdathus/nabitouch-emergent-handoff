@@ -142,6 +142,7 @@ def test_reject_mismatch_live_event_unknown_checkout_and_refund_before_capture(s
     assert event(client, "checkout.session.completed", obj, live=True).status_code == 400
     assert event(client, "checkout.session.completed", {**obj, "id": "cs_test_unknown"}).status_code == 503
     refund = {"id": "re_early", "payment_intent": pi, "amount": 1000, "currency": "cad", "status": "succeeded"}
+    assert event(client, "refund.created", {**refund, "payment_intent": None}).status_code == 409
     assert event(client, "refund.created", refund).status_code == 503
     assert event(client, "checkout.session.completed", obj).json()["settled"] is True
     assert event(client, "refund.created", refund).json()["settled"] is True
