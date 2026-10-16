@@ -165,7 +165,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </Gate>
-          <Toaster position="top-center" richColors closeButton />
+          <Toaster position="bottom-right" richColors closeButton />
         </BrowserRouter>
       </DemoProvider>
     </MotionConfig>

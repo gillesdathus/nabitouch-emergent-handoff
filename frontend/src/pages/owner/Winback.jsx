@@ -41,13 +41,13 @@ function Candidates({ rows, reload }) {
 }
 
 function Invites({ rows, reload }) {
-  const voidIt = (i) => api.voidWinback(i.id).then(() => { toast.success("Code voided"); reload(); }).catch((e) => toast.error(apiError(e)));
+  const voidIt = (i) => window.confirm(`Void ${i.code}? The client will no longer be able to use it.`) && api.voidWinback(i.id).then(() => { toast.success("Code voided"); reload(); }).catch((e) => toast.error(apiError(e)));
   return (
     <div className="nb-card divide-y divide-sky-100" data-testid="winback-invites">
       {rows.map((i) => (
         <div key={i.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm" data-testid={`winback-invite-${i.id}`}>
           <button type="button" onClick={() => copy(i.code)} className="font-mono font-semibold text-nb-blue">{i.code}</button>
-          <span className="flex-1 text-xs text-nb-mute">{i.clientId} · {i.percent}% off · expires {fmtDate(i.expiresAt.slice(0, 10))}</span>
+          <span className="flex-1 text-xs text-nb-mute">{i.clientName || i.clientId} · {i.percent}% off · expires {fmtDate(i.expiresAt.slice(0, 10))}</span>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold capitalize">{i.status}</span>
           {i.status === "issued" && <button type="button" onClick={() => voidIt(i)} data-testid={`winback-void-${i.id}`} className="nb-btn-ghost h-8 px-3 text-xs">Void</button>}
         </div>
@@ -68,7 +68,7 @@ export default function Winback() {
   useEffect(() => { load(); }, [load]);
   return (
     <div className="mx-auto max-w-4xl space-y-6" data-testid="winback-page">
-      <PageHeader eyebrow="Retention" title="Welcome-back invites" sub={data ? `${data.candidates.length} clients inactive for ${data.settings.inactiveDays}+ days` : "Loading…"} />
+      <PageHeader eyebrow="Retention" title="Welcome-back invites" sub={data ? `${data.candidates.length} ${data.candidates.length === 1 ? "client" : "clients"} inactive for ${data.settings.inactiveDays}+ days` : "Loading…"} />
       <Notice testid="winback-copy-only">Codes are one-time and tied to one client. Nothing is emailed or texted; copy the code and share it yourself. Codes do not combine with other discounts, package credits or rewards.</Notice>
       {data && <SettingsForm cfg={data.settings} onSaved={load} />}
       <Segmented options={[{ value: "candidates", label: "Inactive clients" }, { value: "invites", label: "All codes" }]} value={tab} onChange={setTab} testid="winback-tab" />

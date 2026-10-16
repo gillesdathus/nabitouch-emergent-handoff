@@ -14,7 +14,7 @@ import { useDemo } from "@/store/DemoStore";
 const FILTERS = [{ value: "", label: "All" }, { value: "pending_payment", label: "Awaiting payment" }, { value: "active", label: "Active" }, { value: "redeemed", label: "Redeemed" }, { value: "voided", label: "Voided" }];
 
 function Liability({ data }) {
-  const tiles = [["Outstanding liability", data?.outstanding?.display, "gift-liability-outstanding"], ["Issued (paid + comp)", data?.issued?.display, "gift-liability-issued"], ["Redeemed", data?.redeemed?.display, "gift-liability-redeemed"], ["Awaiting payment", data ? `${data.pendingCount} cards` : "", "gift-liability-pending"]];
+  const tiles = [["Outstanding liability", data?.outstanding?.display, "gift-liability-outstanding"], ["Issued (paid + comp)", data?.issued?.display, "gift-liability-issued"], ["Redeemed", data?.redeemed?.display, "gift-liability-redeemed"], ["Awaiting payment", data ? `${data.pendingCount} ${data.pendingCount === 1 ? "card" : "cards"}` : "", "gift-liability-pending"]];
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="gift-liability">
       {tiles.map(([label, value, id], i) => <div key={id} data-testid={id} className={`rounded-3xl p-4 ${i === 0 ? "nb-lagoon text-white" : "nb-card"}`}><p className={`text-xs ${i ? "text-nb-mute" : "text-white/75"}`}>{label}</p><p className="nb-num mt-1 text-2xl font-semibold">{value ?? "—"}</p></div>)}

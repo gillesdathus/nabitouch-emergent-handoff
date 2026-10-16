@@ -387,7 +387,8 @@ def build_plans_router(db, coll, add_audit, user_from):
         """After a recent completed visit, show what a matching published package would have saved. Read-only."""
         user = await actor(request, "client")
         cid = user.get("subject")
-        since = (datetime.now(timezone.utc) - timedelta(days=60)).date().isoformat()
+        from zoneinfo import ZoneInfo
+        since = (datetime.now(ZoneInfo("America/Edmonton")) - timedelta(days=60)).date().isoformat()
         visits = await coll("appointments").find({"clientId": cid, "status": {"$in": ["completed", "processing", "closed"]}, "date": {"$gte": since}},
                                                  {"_id": 0, "id": 1, "ref": 1, "serviceSlug": 1, "duration": 1, "date": 1, "pricing": 1}).sort("date", -1).to_list(20)
         for v in visits:

@@ -404,8 +404,7 @@ def build_finance_router(db, user_from, settings_doc):
             try:
                 await db.nt_statement_locks.insert_one({"id": pid, "at": datetime.now(timezone.utc)})
             except DuplicateKeyError:
-                skipped.append(vs[0].get("practitionerName"))
-                continue
+                raise HTTPException(409, "Statement generation is already in progress for this practitioner. Try again in a moment.")
             try:
                 overlap = await db.nt_pay_statements.find_one({"practitionerId": pid, "status": {"$ne": "voided"}, "start": {"$lte": end}, "end": {"$gte": start}}, {"_id": 0, "id": 1})
                 if overlap:

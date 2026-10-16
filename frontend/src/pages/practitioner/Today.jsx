@@ -27,7 +27,7 @@ export default function Today() {
           <Avatar person={me} size={46} />
           <div className="flex-1"><p className="text-xs text-white/60">{new Date().toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}</p><p className="font-semibold">Hi {me.name.split(" ")[0]}</p></div>
         </div>
-        <h1 className="mt-6 text-4xl font-semibold leading-tight tracking-tight">You have <span className="nb-gradient-text">{list.filter((a) => OPEN.includes(a.status)).length}</span> visits ahead</h1>
+        <h1 className="mt-6 text-4xl font-semibold leading-tight tracking-tight">You have <span className="nb-gradient-text">{list.filter((a) => OPEN.includes(a.status)).length}</span> {list.filter((a) => OPEN.includes(a.status)).length === 1 ? "visit" : "visits"} ahead</h1>
       </div>
       <label className="nb-card flex items-center justify-between p-4"><span className="text-sm"><b>{me.available ? "Available for bookings" : "Unavailable"}</b><span className="block text-xs text-nb-mute">Off-duty status hides you from new bookings and location views.</span></span><Switch checked={me.available} onCheckedChange={(v) => run(() => api.patch("practitioners", me.id, { available: v }))} data-testid="pro-availability-switch" /></label>
 

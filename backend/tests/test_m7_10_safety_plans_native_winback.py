@@ -50,6 +50,21 @@ def pro():
     return login(PRO)
 
 
+
+def quote_free(sess, extra):
+    """Quote sarah/maya swedish 60 on the first slot without a schedule/travel conflict (test data accumulates across runs)."""
+    q = None
+    for i in range(20):
+        d = (date.today() + timedelta(days=12 + i)).isoformat()
+        for t in ("10:00", "13:00", "15:00"):
+            body = {"source": "online", "practitionerId": "p-maya", "appointment": {
+                "serviceSlug": "swedish", "duration": 60, "date": d, "time": t, "locationType": "home", "paymentMethod": "self", "addressId": "ad-sarah", "address": ADDR}}
+            body.update(extra)
+            q = sess.post(f"{API}/bookings/quote", json=body, timeout=20)
+            if not (q.status_code == 409 and any(w in q.text.lower() for w in ("travel", "slot", "available", "booked"))):
+                return q
+    return q
+
 def book(sess, service="swedish", duration=60, extra=None, expect=200):
     """Book sarah with maya on a random far-future clinic slot; retries slot conflicts."""
     last = None
@@ -243,8 +258,7 @@ class TestCheckout:
 # --- Credit booking
 class TestCreditBooking:
     def test_quote_with_credit(self, client):
-        q = client.post(f"{API}/bookings/quote", json={"source": "online", "practitionerId": "p-maya", "useCredit": True, "appointment": {
-            "serviceSlug": "swedish", "duration": 60, "date": (date.today() + timedelta(days=12)).isoformat(), "time": "10:00", "locationType": "home", "paymentMethod": "self", "addressId": "ad-sarah", "address": ADDR}}, timeout=20)
+        q = quote_free(client, {"useCredit": True})
         assert q.status_code == 200, q.text
         p = q.json().get("pricing") or q.json()
         assert p["packageCredit"] is True and p["discount"] == p["base"]
@@ -425,8 +439,7 @@ class TestWinback:
         assert client.get(f"{API}/winback/mine", timeout=20).json()["invite"]["code"] == code
         assert book(client, extra={"winbackCode": code, "useCredit": True}, expect=409).status_code == 409
         assert book(client, extra={"winbackCode": "BACK-ZZZZZZ"}, expect=404).status_code == 404
-        q = client.post(f"{API}/bookings/quote", json={"source": "online", "practitionerId": "p-maya", "winbackCode": code, "appointment": {
-            "serviceSlug": "swedish", "duration": 60, "date": (date.today() + timedelta(days=12)).isoformat(), "time": "10:00", "locationType": "home", "paymentMethod": "self", "addressId": "ad-sarah", "address": ADDR}}, timeout=20)
+        q = quote_free(client, {"winbackCode": code})
         p = q.json().get("pricing") or q.json()
         assert q.status_code == 200 and "Welcome back offer" in p["promoName"] and abs(p["discount"] - round(p["base"] * 0.15, 2)) < 0.02
         b = book(client, extra={"winbackCode": code})
@@ -438,6 +451,7 @@ class TestWinback:
         st = [i for i in owner.get(f"{API}/winback/invites", timeout=20).json() if i["code"] == code][0]
         assert st["status"] == "issued"
         b = book(client, extra={"winbackCode": code})
+        assert b.status_code == 200, b.text
         aid = b.json()["appointment"]["id"]
         to_en_route(owner, aid)
         drive(owner, aid, ["arrived", "in_session", "session_ended", "leaving", "completed"])

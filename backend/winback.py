@@ -4,6 +4,8 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
+from zoneinfo import ZoneInfo
+
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -11,6 +13,10 @@ DEFAULTS = {"inactiveDays": 60, "percent": 15, "validDays": 30}
 DONE = ("completed", "processing", "closed")
 OPEN = ("requested", "confirmed", "assigned", "preparing", "en_route", "arrived", "in_session", "interrupted", "safety_hold")
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def today_local():
+    return datetime.now(ZoneInfo("America/Edmonton")).date()
 
 
 def now_iso():
@@ -105,11 +111,11 @@ def build_winback_router(db, coll, add_audit, user_from):
     async def candidates(request: Request):
         await owner(request)
         cfg = await winback_settings(db)
-        cutoff = (date.today() - timedelta(days=cfg["inactiveDays"])).isoformat()
+        cutoff = (today_local() - timedelta(days=cfg["inactiveDays"])).isoformat()
         appts = await coll("appointments").find({"status": {"$in": list(DONE + OPEN)}}, {"_id": 0, "clientId": 1, "date": 1, "status": 1}).to_list(50000)
         last, upcoming = {}, set()
         for a in appts:
-            if a["status"] in OPEN and a.get("date", "") >= date.today().isoformat():
+            if a["status"] in OPEN and a.get("date", "") >= today_local().isoformat():
                 upcoming.add(a["clientId"])
             if a["status"] in DONE:
                 last[a["clientId"]] = max(last.get(a["clientId"], ""), a.get("date", ""))
@@ -117,7 +123,7 @@ def build_winback_router(db, coll, add_audit, user_from):
         clients = {c["id"]: c for c in await coll("clients").find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1, "email": 1}).to_list(5000)}
         live = {i["clientId"]: i for i in await db.nt_winback.find({"clientId": {"$in": ids}, "status": {"$in": ["issued", "reserved"]}}, {"_id": 0}).to_list(5000)}
         rows = [{"clientId": cid, "name": f"{clients[cid].get('firstName', '')} {clients[cid].get('lastName', '')}".strip(), "lastVisit": last[cid],
-                 "daysInactive": (date.today() - date.fromisoformat(last[cid][:10])).days, "invite": live.get(cid)} for cid in ids if cid in clients]
+                 "daysInactive": (today_local() - date.fromisoformat(last[cid][:10])).days, "invite": live.get(cid)} for cid in ids if cid in clients]
         return {"settings": cfg, "candidates": sorted(rows, key=lambda r: r["lastVisit"])}
 
     @r.post("/invites")
@@ -144,7 +150,9 @@ def build_winback_router(db, coll, add_audit, user_from):
     @r.get("/invites")
     async def invites(request: Request):
         await owner(request)
-        return await db.nt_winback.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
+        rows = await db.nt_winback.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
+        names = {c["id"]: f"{c.get('firstName', '')} {c.get('lastName', '')}".strip() for c in await coll("clients").find({"id": {"$in": list({r["clientId"] for r in rows})}}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1}).to_list(500)}
+        return [{**r, "clientName": names.get(r["clientId"])} for r in rows]
 
     @r.post("/invites/{wid}/void")
     async def void(wid: str, request: Request):

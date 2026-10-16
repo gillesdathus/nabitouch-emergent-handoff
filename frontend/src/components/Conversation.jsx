@@ -107,7 +107,7 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
         <div className="space-y-3 border-t border-sky-100 px-4 py-3">
           {presets.length > 0 && (
             <div className="flex gap-2 overflow-x-auto no-scrollbar" data-testid="message-presets">
-              {presets.map((preset) => <button key={preset.id} type="button" className={presetId === preset.id ? "nb-chip-on shrink-0" : "nb-chip-off shrink-0"} onClick={() => choose(preset)} data-testid={`preset-${preset.id}`}>{preset.body.replace("{minutes}", String(minutes))}</button>)}
+              {presets.map((preset) => <button key={preset.id} type="button" className={presetId === preset.id ? "nb-chip-on shrink-0" : "nb-chip-off shrink-0"} onClick={() => choose(preset)} data-testid={`preset-${preset.id}`} title={preset.body.replace("{minutes}", String(minutes))}>{preset.label || preset.body.replace("{minutes}", String(minutes))}</button>)}
             </div>
           )}
           {timed && (

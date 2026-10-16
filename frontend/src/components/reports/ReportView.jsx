@@ -30,7 +30,7 @@ export function RangePicker({ range, setRange, presets = PRESETS }) {
       </div>
       <DateField value={range[0]} max={range[1]} onChange={(v) => setRange([v, range[1]])} testid="report-start" />
       <span className="text-xs text-nb-mute">to</span>
-      <DateField value={range[1]} min={range[0]} onChange={(v) => setRange([range[0], v])} testid="report-end" />
+      <DateField value={range[1]} min={range[0]} max={new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton" }).format(new Date())} onChange={(v) => setRange([range[0], v])} testid="report-end" />
     </div>
   );
 }

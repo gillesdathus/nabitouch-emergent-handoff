@@ -34,7 +34,7 @@ function ProductForm({ onSaved }) {
         <Field label="Credits valid for (days)" hint={f.kind === "membership" ? "Default 60" : "Default 365"}><input type="number" min={7} max={730} className="nb-input h-11 w-full" value={f.validityDays} onChange={set("validityDays")} data-testid="plan-form-validity" /></Field>
       </div>
       <Field label="Description"><input className="nb-input h-11 w-full" value={f.description} onChange={set("description")} data-testid="plan-form-description" /></Field>
-      {service && f.duration && f.credits && f.price && <p className="text-xs text-nb-mute" data-testid="plan-form-preview">${(Number(f.price) / Number(f.credits)).toFixed(2)} per visit · regular ${(service.prices[f.duration] * f.credits).toFixed(2)} · practitioners are paid on the per-visit price.</p>}
+      {service && f.duration && f.credits && f.price && <p className="text-xs text-nb-mute" data-testid="plan-form-preview">${(Number(f.price) / Number(f.credits)).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per visit · regular ${(service.prices[f.duration] * f.credits).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · practitioners are paid on the per-visit price.</p>}
       <button type="button" onClick={save} data-testid="plan-form-save" className="nb-btn-primary h-11 px-6 text-sm">Save draft</button>
     </section>
   );
@@ -47,7 +47,7 @@ function Products({ rows, reload }) {
       {rows.map((p) => (
         <div key={p.id} className="nb-card flex flex-wrap items-center gap-4 p-4" data-testid={`plan-product-${p.id}`}>
           {p.kind === "membership" ? <Repeat className="h-5 w-5 text-nb-teal" /> : <Layers className="h-5 w-5 text-nb-blue" />}
-          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-nb-mute">{p.credits} × {p.serviceName} {p.duration} min · {p.price.display}{p.kind === "membership" ? "/mo" : ""} · {p.perCredit.display}/visit</p></div>
+          <div className="min-w-[12rem] flex-1"><p className="text-sm font-semibold">{p.name}</p><p className="text-xs text-nb-mute">{p.credits} × {p.serviceName} {p.duration} min · {p.price.display}{p.kind === "membership" ? "/mo" : ""} · {p.perCredit.display}/visit</p></div>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold capitalize" data-testid={`plan-product-status-${p.id}`}>{p.status}</span>
           {NEXT[p.status].map((s) => <button key={s} type="button" onClick={() => move(p, s)} data-testid={`plan-product-${s}-${p.id}`} className="nb-btn-ghost h-9 px-4 text-xs">{LABEL[s]}</button>)}
         </div>
@@ -88,6 +88,7 @@ export default function OwnerPlans() {
   const [products, setProducts] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [members, setMembers] = useState([]);
+  const [showArchived, setShowArchived] = useState(false);
   const load = useCallback(() => {
     api.planProducts().then(setProducts).catch(() => {});
     api.planPurchases().then(setPurchases).catch(() => {});
@@ -99,7 +100,8 @@ export default function OwnerPlans() {
       <PageHeader eyebrow="Wellness plans" title="Packages & memberships" sub={`${products.filter((p) => p.status === "published").length} on sale · ${members.filter((m) => m.status === "active").length} active members`} right={<Link to="/owner/reports?kind=plans" data-testid="plans-report-link" className="nb-btn-ghost h-10 text-sm">Deferred revenue report</Link>} />
       <Notice testid="plans-accounting-note">A purchase is deferred revenue. It is recognised one credit at a time when a visit is completed. Credits never combine with promotions, gift cards or rewards.</Notice>
       <Segmented options={[{ value: "plans", label: "Plans" }, { value: "sales", label: "Sales" }, { value: "members", label: "Members" }]} value={tab} onChange={setTab} testid="plans-tab" />
-      {tab === "plans" && <><ProductForm onSaved={load} /><Products rows={products} reload={load} /></>}
+      {tab === "plans" && <><ProductForm onSaved={load} /><Products rows={products.filter((p) => showArchived || p.status !== "archived")} reload={load} />
+        {products.some((p) => p.status === "archived") && <button type="button" onClick={() => setShowArchived((v) => !v)} data-testid="plans-toggle-archived" className="text-xs font-medium text-nb-blue">{showArchived ? "Hide archived plans" : `Show ${products.filter((p) => p.status === "archived").length} archived`}</button>}</>}
       {tab === "sales" && <Purchases rows={purchases} reload={load} />}
       {tab === "members" && (
         <section className="space-y-2" data-testid="plan-members">

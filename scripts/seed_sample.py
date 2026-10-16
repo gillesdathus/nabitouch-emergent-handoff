@@ -216,8 +216,10 @@ async def conversations(db, appts):
 
 async def main():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-    if os.environ.get("APP_ENV") == "production":
+    if os.environ.get("APP_ENV") == "production" or "prod" in os.environ["DB_NAME"].lower():
         raise SystemExit("Refusing to seed sample data in production")
+    if not os.environ["DB_NAME"].lower().endswith(("_dev", "_staging", "_test")) and os.environ.get("SAMPLE_DATA_ALLOW") != "1":
+        raise SystemExit("Sample data only targets *_dev, *_staging or *_test databases (set SAMPLE_DATA_ALLOW=1 to override)")
     await purge(db)
     data = build_seed()
     services = await db.nt_services.find({}, {"_id": 0}).to_list(50) or data["services"]
