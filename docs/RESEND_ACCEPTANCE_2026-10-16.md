@@ -1,5 +1,67 @@
 # Resend integration and acceptance — 16 October 2026
 
+## Latest owner-approved preview and production callback finding
+
+The corrected exact HTML is approved by the owner, SHA-256
+`5300e580b1536f55edbcafb4abb2dc9e29cc7c6b0fc6be8a3282e5491a9bea3b`.
+Subject: **Nabitouch — Email Delivery Test**. Sender:
+`Nabitouch <bookings@nabitouch.com>`. Recipient: `info@nabitouch.com`.
+This supersedes the earlier unapproved, duplicated-shell candidate and its
+"Nabitouch email test" subject. No email has been sent. Approval is limited to
+that exact preview; provider isolation is still a blocking independent gate.
+
+`scripts/render_resend_preview.py` reproduces the candidate and corresponding
+plain text in ignored `test_reports/`. It preserves the previous HTML as
+`resend-test-preview-before-correction.html` before replacing it. Differences:
+one responsive outer shell instead of nested brand cards; requested subject,
+paragraphs and slogan; no account link, empty detail table or timezone paragraph;
+inline styles, table layout and solid-color header fallback retained. Chrome
+rendering at 760/390 CSS pixels showed no horizontal overflow; this is browser
+preview evidence, not delivered-mail client evidence. Regeneration labels the
+manifest NOT APPROVED: only the exact fingerprint above has owner approval.
+
+Read-only SSH inspection confirmed that the exact Nginx callback location goes
+to `127.0.0.1:8011`, `nt-next-api`, APP_ENV=production, DB_NAME=nabitouch_prod.
+Its deployed handler updates `nt_notifications`; it has no durable
+`nt_email_events` journal. The feature branch's journal is **not deployed**.
+Provider metadata enables delivered/bounced/complained. The provider/local and
+deployed/local signing-secret comparisons matched in memory; no value was
+printed. No genuine event delivery was triggered. Earlier statements below that
+the environment or recipient were unconfirmed describe the previous checkpoint.
+
+The owner-authorized staging deployment is now verified, after a separately
+approved production permission repair; see [current report](MASTER_READINESS_2026-10-16.md).
+The staging callback route is `https://api-staging.nabitouch.com/api/notifications/resend`,
+but it has no provider registration/signing key and sending stays disabled.
+Do not copy the
+production callback secret into staging or add a second callback in the same
+provider boundary and call it isolated. The documented webhook creation API has
+endpoint/events parameters, without a per-domain/API-key filter; domain-scoped
+sending keys do not establish callback isolation. Safest proposed arrangement:
+a separately verified Resend team/account boundary and its staging-only callback,
+with provider confirmation that approved sender `bookings@nabitouch.com` can be
+used without transferring/removing production's domain. If that cannot be done,
+obtain a separate sender/domain decision; do not silently substitute a sender.
+
+Acceptance mode now requires `EMAIL_PROVIDER_ISOLATION_CONFIRMED=true` plus
+`EMAIL_APPROVED_PREVIEW_SHA256` matching the exact generated HTML and fixed
+subject. These settings record independently obtained evidence/approval; they
+cannot create it. The owner test route checks these gates before inserting an
+outbox row; send and direct Resend helper paths check again. Leave isolation
+false and sending disabled until the boundary is proven. General notifications
+remain disabled even during a later single-message test.
+
+Sources inspected: [webhook API](https://resend.com/docs/api-reference/webhooks/create-webhook),
+[API-key scope](https://resend.com/docs/dashboard/api-keys/introduction),
+[domain ownership restriction](https://resend.com/docs/knowledge-base/domain-already-registered).
+The last source confirms a domain can be active on only one account at a time.
+Do not transfer production's root domain. Owner decision on a separate staging
+team/subdomain/sender is pending; the approved exact HTML remains unchanged.
+
+The following sections retain the historical 6fbab46 checkpoint. Their older
+unknown-environment, unapproved-preview and no-deployment statements are
+superseded by the current section/report; no genuine delivery is claimed.
+
 **PASS: real read-only provider/domain/DNS verification. BLOCKED: real send,
 inbox receipt and genuine webhook acceptance. No real email has been sent.**
 Stripe and Mapbox acceptance evidence is preserved; those provider cases were not

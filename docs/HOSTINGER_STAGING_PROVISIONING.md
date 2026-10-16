@@ -1,8 +1,95 @@
-# Hostinger VPS staging provisioning — preparation only
+# Hostinger VPS staging provisioning and operations
 
-Hostinger VPS with Docker Compose was explicitly selected for this phase. **No VPS was accessed and nothing was provisioned or deployed.** The VPS identity/IP, whether it is dedicated or shared, staging DNS name, tester access CIDRs and deployment authorization are still required. Do not infer authorization from the commands below.
+Hostinger VPS with Docker Compose was explicitly selected. The owner authorized isolated staging and created both A records. Preflight stopped on unsafe production credential permissions; the owner separately authorized their exact repair, which passed noninterference checks. **The isolated staging foundation is now deployed and verified.** See [actual deployment, tests, images and remaining gates](MASTER_READINESS_2026-10-16.md). The procedures below remain a rebuild/rollback runbook, not permission to repeat provisioning or to deploy production.
 
-The new project is `nabitouch-staging`; it uses its own Mongo volume, authenticated staging-only users, replica set, TLS Redis and network. It does not join the existing `nt-next`/production networks or reference their volumes. Only the web container publishes a loopback port, default `127.0.0.1:18081`. HTTPS is a separate, reviewed host Nginx vhost. Existing production Nginx/DNS are never replaced by this guide.
+The deployed project is `nabitouch-staging`; it uses its own Mongo volume, authenticated staging-only users, replica set, TLS Redis and networks. It does not join the existing `nt-next`/production networks or reference their volumes. Only web publishes `127.0.0.1:18081`. HTTPS is a new, separate host Nginx vhost. Existing production Nginx files and routes remain unchanged.
+
+The deployed Compose limits are API 768 MiB/0.50 CPU, Mongo 768 MiB/0.40 CPU
+(256 MiB WiredTiger cache), Redis 192 MiB/0.15 CPU (96 MiB no-eviction cache),
+and web 128 MiB/0.15 CPU: 1,856 MiB and 1.20 CPUs maximum in aggregate. These
+are initial ceilings, not measured sufficient operating allocations. Build images
+locally or in CI; do not load the shared VPS with builds. Observe host and existing
+services before/after starting staging; stop staging on resource pressure or
+production latency/health regression. No production tuning is authorized here.
+
+The selected edge example uses Nginx Basic authentication on both tester entry
+points. Create a staging-only htpasswd credential outside Git and deliver it using
+the owner's secure channel. The browser frontend must use the **same-origin**
+`https://staging.nabitouch.com/api` proxy (`REACT_APP_BACKEND_URL`/APP_URL/CORS all
+`https://staging.nabitouch.com`), so the browser's Basic authentication cache and
+the app's cookie/CSRF flow are shared. Basic auth does not replace app login/MFA.
+`api-staging.nabitouch.com/api` is a second protected API entry for diagnostics;
+only its two signed provider callbacks bypass the edge gate. Native Bearer mode
+conflicts with Basic on the same Authorization header: a separately verified
+native-compatible gateway will be required before physical-device acceptance.
+Do not weaken the edge gate or point the native app at production.
+
+Issue a **new** Let's Encrypt certificate with both staging names using the
+existing supported Certbot tooling. Inspect current challenge/renewal support
+without editing existing certificates/vhosts. A standalone challenge cannot bind
+80/443 while production Nginx runs. Prefer a new staging-only HTTP challenge vhost
+and webroot with a dry-run before issuance; preserve every production server
+block and test the combined configuration before reload. Do not reuse the
+production certificate private key. The proposed staging HTTP/DNS/TLS change
+was subsequently authorized and executed after the separately approved production
+permission repair; actual verification is recorded below and in the report.
+
+The edge and container Nginx access logs contain method/status/size/latency only,
+omitting URL, query, IP and Authorization; Nginx error logging is suppressed
+because default errors can include complete sensitive URLs. Monitor container
+health and status/latency counters instead, with explicit operator ownership and
+alerts before release. Uvicorn access logs are disabled in the candidate image.
+The deployed staging logs passed the harmless query-canary check recorded in the
+report; this does not certify every future error/clinical-data path.
+
+Current access details are in ignored `backend/.env.staging-access.local` on the
+owner workstation (JSON, owner/SYSTEM ACL), including gateway credentials and
+synthetic owner TOTP/recovery information. Import the staging TOTP URI in the
+owner's authenticator securely; do not paste it into chat. App MFA enforcement is
+enabled on staging. The API-host root returns 404 intentionally; use `/api/health`
+after the Basic challenge. Browser API calls stay on the frontend origin.
+
+The existing supplied Mapbox server token was found to be shared with production.
+No staging provider calls were performed. Supply independent staging Mapbox
+credentials and verify browser origin restrictions before acceptance. Do not
+rotate production tokens or mistake independent Mongo/JWT secrets for complete
+provider-token isolation. Stripe/Resend/Firebase credentials remain absent.
+
+## Deployed operational checks and backup custody
+
+All four staging services are healthy and recovered after an intentional restart;
+HTTPS, SPA fallbacks, owner login/MFA, same-origin browser authentication,
+CORS/CSRF, database/Redis readiness and production noninterference passed.
+Let's Encrypt covers both staging names through 14 January 2027. Certbot
+reconfigure tested renewal and saved a staging-only Nginx validation/reload hook.
+No production certificate configuration was changed.
+
+`deploy/staging/backup.py` is installed as root-private
+`/opt/nabitouch-staging/ops/backup.py`. It refuses non-staging Mongo destinations,
+container/project/network/volume identities and unversioned encryption images.
+It uses `/etc/nabitouch-staging/api.env` and `compose.env`, stores AES-256-GCM
+ciphertext under `backups/`, and keeps AES/field recovery keys separately in
+root-only `recovery/`. Its temporary plaintext files are removed after encryption.
+`/etc/cron.d/nabitouch-staging-backup` schedules 03:17 UTC daily; MAILTO is empty,
+logs root-private, and no destructive retention pruning exists. Schedule execution
+has not yet occurred; automated off-host copy and alert/retention ownership remain.
+
+One encrypted synthetic archive was restored into a new recovery database in the
+same isolated staging Mongo container: all 77 collection counts / 30 documents
+matched. An encrypted copy on the owner workstation has a matching checksum.
+This is **not off-host restore verification**. Recovery-key egress was rejected
+by automatic approval review pending explicit owner permission. Never export keys
+as part of an unreviewed backup command or put them next to ciphertext in Git.
+Production backups and patient records were not accessed.
+
+On a rebuild, account for umask and container UIDs: Mongo keyfile 0400 owned by
+the Mongo UID; Mongo secret files narrowly readable by that container group;
+Redis TLS directory explicitly 0750 after creation, key 0640 with its group;
+Nginx traversal only to its htpasswd file; API/access env files 0600. Read actual
+image UIDs/GIDs; do not assume host and container group names mean the same thing.
+Wait for first-volume Mongo initialization before replica initiation, then require
+both data-service health checks before starting API/web. Do not delete a volume
+to recover from a permission or initialization error.
 
 ## 1. Confirm the host and candidate before access
 
@@ -62,9 +149,9 @@ Health checks require an authenticated writable Mongo primary, authenticated TLS
 
 ## 5. Activate HTTPS and controlled tester access, later
 
-Have the authorized operator review `deploy/staging/nginx-https.example.conf`. Replace the placeholder hostname, certificate paths and documentation-only CIDR. Confirm the loopback port is free and use a new staging vhost. Test with `nginx -t` before an authorized reload; do not replace production site files or bind a new container to ports 80/443. Keep tester/VPN access restrictions until a separate exposure decision.
+Have the authorized operator review `deploy/staging/nginx-https.example.conf`. Configure the two staging hostnames, dedicated certificate paths and protected staging htpasswd file. Confirm the loopback port is free and use only the staging vhost. Test with `nginx -t` before reload; do not replace production site files or bind a new container to ports 80/443. Keep the tester authentication gate until a separate exposure decision.
 
-The Stripe and Resend callback locations bypass the tester CIDR gate because provider callbacks cannot join the tester VPN. Their application signature checks must remain enforced; configure actual provider endpoints only in the authorized external-test phase. Do not expose generic admin/API routes publicly. Confirm HTTPS, cookie security, origin behavior, owner MFA, request limits, access/error-log redaction and both health layers. No public booking cutover follows from staging health.
+The exact Stripe and Resend callback locations bypass the tester authentication gate because providers cannot supply tester credentials. Their application signature checks must remain enforced; configure actual provider endpoints only in their acceptance phase. Do not expose generic admin/API routes publicly. Confirm HTTPS, cookie security, origin behavior, owner MFA, request limits, access/error-log redaction and both health layers. No public booking cutover follows from staging health.
 
 ## 6. External acceptance handoff
 
@@ -84,10 +171,32 @@ The local QA runner always forces isolated mocks and is not a staging server. Do
 
 ## Rollback and recovery checklist
 
+This is the first staging application release; there is no earlier approved
+staging image to switch back to. For an acceptance failure, keep the staging TLS
+and tester gate, stop only staging `api` and `web` with the exact Compose/env paths
+below, and preserve Mongo/Redis volumes and evidence. A staging 502/503 during
+containment is preferable to forwarding staging hostnames into production. Restore
+the reviewed staging image/configuration only after the cause is understood.
+
+```bash
+docker compose --env-file /etc/nabitouch-staging/compose.env \
+  -f /opt/nabitouch-staging/releases/97fde6f383505c54ced07823c3d2f012afd118c8/deploy/staging/compose.yml \
+  stop api web
+```
+
+This containment command is documented, not executed as a release rollback. The
+four-service restart and new-database restore tests were executed separately.
+Never use `down -v`, remove the staging vhost into a production default route,
+overwrite production Nginx files, or restore a recovery archive over the app DB.
+
 - [ ] Before any authorized change, record prior staging image digests, configuration version, volume names, counts and indexes, and take an encrypted staging-only backup. Hold field keys separately; verify an off-host copy and restoration/decryption into a new staging recovery database.
 - [ ] Record the currently active staging vhost and tester restriction configuration. Identify an operator who can stop the candidate and restore the prior staging images/vhost without touching production.
 - [ ] If health/authentication/payment/privacy acceptance fails, disable the staging vhost/candidate and preserve evidence; restore prior staging images/configuration. Do not automatically drop indexes or overwrite the database.
 - [ ] If recovery is needed, restore to a new staging database, reconcile intervening synthetic transactions and obtain separate cutover authorization. Do not use `down -v`, `--drop`, a production namespace or a production volume in staging rollback instructions.
 - [ ] Recheck HTTPS, owner MFA, both health layers, booking/card/delivery guards and data counts after rollback. Record what actually ran and the resulting image/configuration identities.
 
-Current recommendation remains NO-GO for release. This guide and Compose file are prepared and statically validated; no Hostinger staging stack, TLS setup or rollback was executed.
+Current recommendation remains NO-GO for production release. Staging deployment,
+HTTPS/renewal, authentication, restart and on-host synthetic restore were executed
+and passed. Provider isolation/acceptance, off-host recovery and the remaining
+master release gates are recorded in the current report; a production cutover or
+production rollback was not performed.

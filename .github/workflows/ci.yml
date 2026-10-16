@@ -21,7 +21,9 @@ jobs:
       - name: Repository secret exclusions and redacted history inventory
         run: python3 scripts/check_repository.py
       - name: Staging preflight guards
-        run: python3 scripts/test_staging_preflight.py
+        run: |
+          python3 scripts/test_staging_preflight.py
+          python3 scripts/test_staging_backup.py
       - name: Validate QA and staging examples without starting staging
         env:
           STAGING_API_ENV: ${{ github.workspace }}/deploy/staging/api.env.example

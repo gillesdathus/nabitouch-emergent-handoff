@@ -1,8 +1,15 @@
-# Hostinger provider activation handoff — preparation only
+# Hostinger provider activation handoff
 
 Use the [existing Hostinger Docker Compose guide](HOSTINGER_STAGING_PROVISIONING.md).
-This document authorizes no VPS/DNS changes, deployment or provider activation.
-The VPS, hostname and HTTPS endpoint are not assumed to exist. Keep PR #1 draft.
+The owner subsequently authorized and completed the isolated staging foundation;
+see [actual deployment evidence and remaining gates](MASTER_READINESS_2026-10-16.md).
+This procedure itself grants no additional authorization. Keep PR #1 draft.
+Staging is live behind tester authentication at staging.nabitouch.com and
+api-staging.nabitouch.com. No provider webhook is registered and payments and
+all notifications remain disabled. Use the dedicated API-host callback URLs.
+The supplied Mapbox server token is shared with production; separate staging
+tokens are requested before genuine staging Mapbox calls. Do not rotate the
+production token or treat local provider acceptance as staging acceptance.
 
 ## Prerequisites for a later authorized staging phase
 
