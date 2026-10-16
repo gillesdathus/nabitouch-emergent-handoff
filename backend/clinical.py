@@ -311,7 +311,8 @@ def build_clinical_router(db, coll, add_audit, user_from):
         service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, {"_id": 0, "name": 1, "equipment": 1}) or {}
         rows = await db.nt_intake.find({"clientId": appt.get("clientId")}, {"_id": 0}).sort("version", -1).to_list(1)
         latest = open_tree(rows[0]) if rows else None
-        consent = await db.nt_consents.find_one({"clientId": appt.get("clientId"), "withdrawnAt": None}, {"_id": 1})
+        from session_care import session_status
+        readiness = await session_status(db, appt)
         address = appt.get("address") or {}
         await log_access(user, "mobile_brief", appt_id)
         return {
@@ -321,7 +322,9 @@ def build_clinical_router(db, coll, add_audit, user_from):
             "equipment": service.get("equipment") or [],
             "serviceName": service.get("name") or "",
             "precautions": {"allergies": (latest or {}).get("allergies") or "", "contraindications": (latest or {}).get("contraindications") or ""},
-            "consentOnFile": bool(consent),
+            "consentOnFile": readiness["consentState"] == "signed",
+            "intakeState": readiness["intakeState"],
+            "restrictions": (readiness["consent"] or {}).get("restrictions"),
             "sharing": bool((appt.get("trip") or {}).get("sharing")),
         }
 
@@ -370,8 +373,12 @@ def build_clinical_router(db, coll, add_audit, user_from):
         notes = await coll("soap").find({"clientId": client_id}, {"_id": 0, "appointmentId": 1, "status": 1, "signedAt": 1}).to_list(100)
         intake = [open_tree(row) for row in await db.nt_intake.find({"clientId": client_id}, {"_id": 0}).sort("version", 1).to_list(50)]
         consents = await db.nt_consents.find({"clientId": client_id}, {"_id": 0}).to_list(50)
+        confirmations = [open_tree(row) for row in await db.nt_intake_confirmations.find({"clientId": client_id}, {"_id": 0}).sort("at", 1).to_list(500)]
+        session_consents = [open_tree(row) for row in await db.nt_session_consents.find({"clientId": client_id}, {"_id": 0, "signature": 0}).sort("at", 1).to_list(500)]
+        withdrawals = [open_tree(row) for row in await db.nt_consent_events.find({"clientId": client_id}, {"_id": 0}).sort("at", 1).to_list(500)]
         await log_access(user, "clinical_export", client_id)
-        return JSONResponse({"notes": notes, "intake": intake, "consents": consents}, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"notes": notes, "intake": intake, "consents": consents, "intakeConfirmations": confirmations,
+                             "sessionConsents": session_consents, "consentWithdrawals": withdrawals}, headers={"Cache-Control": "no-store"})
 
     @r.get("/clinical/access")
     async def access_log(request: Request):

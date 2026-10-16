@@ -9,6 +9,7 @@ import { todayISO, fmtTime, fmtStamp } from "@/lib/domain";
 import { shouldShowPosition, trackingPhaseCopy } from "@/lib/tracking/live";
 import { etaCopy } from "@/lib/tracking/providers";
 import { Notice } from "@/components/tide";
+import { TurnaroundBoard } from "@/components/session/TurnaroundBoard";
 
 function GpsTrialPicker() {
   const { state, idx, api, run } = useDemo();
@@ -46,6 +47,7 @@ export default function Dispatch({ role }) {
     <div className="space-y-6" data-testid={`${role}-dispatch`}>
       <SectionHead eyebrow={role === "owner" ? "Operations" : "Coordination"} title="Live Fleet" action={
         <div className="flex rounded-full bg-white p-1 ring-1 ring-sky-100">{[["map", MapIcon], ["list", List]].map(([v, I]) => <button key={v} onClick={() => setView(v)} data-testid={`dispatch-view-${v}`} aria-pressed={view === v} className={`flex h-9 items-center gap-1 rounded-full px-4 text-sm font-medium ${view === v ? "bg-nb-ink text-white" : "text-nb-mute"}`}><I className="h-4 w-4" />{v === "map" ? "Map" : "Board"}</button>)}</div>} />
+      <TurnaroundBoard people={idx.practitioners} compact={role !== "owner"} />
       <div className="no-scrollbar flex gap-2 overflow-x-auto">
         <button onClick={() => setPf("all")} data-testid="dispatch-filter-all" className={pf === "all" ? "nb-chip-on" : "nb-chip-off"}>All practitioners</button>
         {state.practitioners.map((p) => <button key={p.id} onClick={() => setPf(p.id)} data-testid={`dispatch-filter-${p.id}`} className={pf === p.id ? "nb-chip-on" : "nb-chip-off"}><Avatar person={p} size={20} />{p.name.split(" ")[0]}{!p.available && " (off)"}</button>)}

@@ -419,7 +419,7 @@ def build_finance_router(db, user_from, settings_doc):
         # The body stays a list for existing clients; skipped practitioners are reported in a header.
         from fastapi.responses import JSONResponse
         names = ", ".join(n for n in skipped if n)
-        return JSONResponse(created, headers={"X-Statements-Skipped": names.encode("ascii", "ignore").decode()} if names else None)
+        return JSONResponse(created, headers={"X-Statements-Skipped": __import__("urllib.parse").parse.quote(names)} if names else None)
 
     async def _create_statement(pid, vs, start, end, user, pay_rules, created):
         if vs:

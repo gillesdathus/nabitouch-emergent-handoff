@@ -9,6 +9,7 @@
     "@capacitor/app": "^7",
     "@capacitor/app-launcher": "^7",
     "@capacitor/core": "^7",
+    "@capacitor/haptics": "^7",
     "@capacitor/ios": "^7",
     "@capacitor/push-notifications": "^7",
     "@hookform/resolvers": "5.0.1",

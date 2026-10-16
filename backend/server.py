@@ -72,6 +72,8 @@ from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import build_sms_router, due_reminders, ensure_sms, queue_sms, readiness as sms_readiness
+from session_care import assert_session_ready, build_session_care_router, clear_session_care, consent_snapshot, ensure_session_care
+from turnaround import assert_no_active_session, build_turnaround_router, session_end_update, session_start_update
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -202,6 +204,8 @@ async def lifespan(_app):
     await ensure_billing(db)
     await ensure_imports(db)
     await ensure_clinical(db)
+    await ensure_session_care(db)
+    await db.nt_ops_alerts.create_index("dedupeKey", unique=True)
     await ensure_legacy(db)
     await ensure_notifications(db)
     await ensure_messaging(db)
@@ -585,6 +589,8 @@ async def demo_reset(request: Request):
     await drop_detached_client_accounts()
     await clear_billing(db)
     await clear_clinical(db)
+    await clear_session_care(db)
+    await db.nt_ops_alerts.delete_many({})
     await clear_imports(db)
     await clear_legacy(db)
     await clear_notifications(db)
@@ -602,12 +608,16 @@ class TransitionIn(BaseModel):
     to: str
     actor: str = "system"
     note: Optional[str] = None
+    opId: Optional[str] = None
 
 
 async def apply_transition(appt, to, actor, note=None):
     cur = appt["status"]
     if to not in TRANSITIONS.get(cur, []):
         raise HTTPException(409, f"Cannot move from {cur} to {to}")
+    if to == "in_session":
+        await assert_session_ready(db, appt)
+        await assert_no_active_session(coll, appt)
     ts = now_iso()
     events = appt.get("events", []) + [{"status": to, "at": ts, "actor": actor, "note": note}]
     timestamps = {**appt.get("timestamps", {}), to: ts}
@@ -619,6 +629,11 @@ async def apply_transition(appt, to, actor, note=None):
         gap = (datetime.fromisoformat(ts) - datetime.fromisoformat(t["pausedAt"])).total_seconds() * 1000
         upd["timer"] = {"pausedMs": t.get("pausedMs", 0) + gap, "pausedAt": None}
         timestamps["in_session"] = appt["timestamps"]["in_session"]
+    if to == "in_session" and cur == "arrived":
+        upd.update(await session_start_update(appt, ts))
+    session = appt.get("session") or {}
+    if to == "session_ended" or (to == "leaving" and cur == "interrupted" and session.get("startedAt") and not session.get("endedAt")):
+        upd.update(await session_end_update(coll, {**appt, "timer": upd.get("timer", appt.get("timer"))}, ts))
     if to == "en_route":
         upd["trip"] = await start_trip(appt, ts)
     elif appt.get("trip", {}).get("sharing"):
@@ -967,6 +982,8 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
         raise HTTPException(404, "Appointment not found")
     u = await require(request)
     await authorize_transition(u, appt, body.to)
+    if body.opId and body.opId in (appt.get("opIds") or []):
+        return appt
     if body.to in ("assigned", "confirmed") and not appt.get("practitionerId"):
         raise HTTPException(409, "Choose a practitioner before confirming this request")
     if body.to == "assigned" and appt.get("status") == "requested":
@@ -977,6 +994,9 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
         appt = await apply_transition(appt, "soap_pending", "system")
     if body.to == "completed":
         appt = await apply_transition(appt, "processing", "system")
+    if body.opId:
+        await coll("appointments").update_one({"id": appt_id}, {"$push": {"opIds": {"$each": [body.opId[:64]], "$slice": -40}}})
+        appt = {**appt, "opIds": (appt.get("opIds") or []) + [body.opId[:64]]}
     if body.to == "cancelled":
         try:
             await note_cancellation(db, coll, appt)
@@ -995,6 +1015,8 @@ async def save_soap(appt_id: str, request: Request, doc: dict = Body(...)):
     doc.pop("status", None)
     doc = {**doc, "appointmentId": appt_id, "clientId": appt["clientId"] if appt else doc.get("clientId"),
            "practitionerId": (appt or {}).get("practitionerId"), "status": "draft", "updatedAt": now_iso()}
+    if appt:
+        doc["consentRef"] = await consent_snapshot(db, appt)
     doc.setdefault("id", existing["id"] if existing else str(uuid.uuid4()))
     await coll("soap").update_one({"appointmentId": appt_id}, {"$set": seal_tree(doc)}, upsert=True)
     await coll("appointments").update_one({"id": appt_id, "soapStatus": {"$ne": "signed"}},
@@ -2198,6 +2220,8 @@ app.include_router(build_giftcard_router(db, coll, add_audit, user_from, recepti
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_session_care_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_turnaround_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))
 app.include_router(build_sms_router(db, coll, add_audit, user_from))
@@ -2236,6 +2260,7 @@ app.add_middleware(TrackingPrivacy)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
+    expose_headers=["X-Statements-Skipped"],
     allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],

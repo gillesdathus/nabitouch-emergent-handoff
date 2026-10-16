@@ -40,7 +40,66 @@ def scheduling_rules(settings):
         "cleanupMin": int(raw.get("cleanupMin") if raw.get("cleanupMin") is not None else CLEANUP_MIN),
         "travelBufferMin": int(raw.get("travelBufferMin") if raw.get("travelBufferMin") is not None else TRAVEL_BUFFER_MIN),
         "leadMin": int(raw.get("leadMin") if raw.get("leadMin") is not None else LEAD_MIN),
+        "turnaround": turnaround_config(settings),
     }
+
+
+def turnaround_config(settings):
+    """Cleanup buffers by appointment type, service and practitioner. Mobile packing defaults to the scheduling cleanup buffer."""
+    raw = (settings or {}).get("turnaround") or {}
+    sched = (settings or {}).get("scheduling") or {}
+    mobile = raw.get("mobileCleanupMin")
+    if mobile is None:
+        mobile = sched.get("cleanupMin") if sched.get("cleanupMin") is not None else CLEANUP_MIN
+    return {
+        "clinicCleanupMin": int(raw.get("clinicCleanupMin") if raw.get("clinicCleanupMin") is not None else 10),
+        "equipmentCleanupMin": int(raw.get("equipmentCleanupMin") if raw.get("equipmentCleanupMin") is not None else 15),
+        "mobileCleanupMin": int(mobile),
+        "equipmentServices": [str(slug) for slug in (raw.get("equipmentServices") or ["hot-stone"])],
+        "byService": {str(k): int(v) for k, v in (raw.get("byService") or {}).items()},
+        "byPractitioner": {str(k): int(v) for k, v in (raw.get("byPractitioner") or {}).items()},
+        "departureSoonMin": int(raw.get("departureSoonMin") if raw.get("departureSoonMin") is not None else 15),
+    }
+
+
+def cleanup_minutes(config, service_slug, practitioner_id, location_type, override=None):
+    """Appointment override, then practitioner, then service, then appointment type."""
+    if override is not None:
+        return int(override), "appointment"
+    if practitioner_id and practitioner_id in config["byPractitioner"]:
+        return config["byPractitioner"][practitioner_id], "practitioner"
+    if service_slug and service_slug in config["byService"]:
+        return config["byService"][service_slug], "service"
+    base = config["clinicCleanupMin"] if location_type == "clinic" else config["mobileCleanupMin"]
+    if service_slug in config["equipmentServices"]:
+        return max(base, config["equipmentCleanupMin"]), "equipment"
+    return base, "clinic" if location_type == "clinic" else "mobile"
+
+
+def validate_turnaround(raw):
+    raw = dict(raw or {})
+    out = {}
+    for key in ("clinicCleanupMin", "equipmentCleanupMin", "mobileCleanupMin", "departureSoonMin"):
+        if raw.get(key) is None:
+            continue
+        value = int(raw[key])
+        if value < 0 or value > 120:
+            raise ValueError("Cleanup buffers must be between 0 and 120 minutes")
+        out[key] = value
+    for key in ("byService", "byPractitioner"):
+        if key in raw:
+            table = {}
+            for name, value in (raw.get(key) or {}).items():
+                if value in (None, ""):
+                    continue
+                value = int(value)
+                if value < 0 or value > 120:
+                    raise ValueError("Cleanup buffers must be between 0 and 120 minutes")
+                table[str(name)[:60]] = value
+            out[key] = table
+    if "equipmentServices" in raw:
+        out["equipmentServices"] = [str(slug)[:60] for slug in (raw.get("equipmentServices") or [])][:40]
+    return out
 
 
 def adjacent_travel_enforced(settings, production):
@@ -339,10 +398,18 @@ def feasible_slot(*, schedule, person, service, day, start, duration, point, zon
     idle = 0
     warnings = []
     legs = []
+    config = rules.get("turnaround")
+
+    def gap_after(row_slug, row_person, row_location, override, drive):
+        if not config:
+            return required_gap(drive, rules)
+        clean, _source = cleanup_minutes(config, row_slug, row_person, row_location, override)
+        return int(drive) + clean + int(rules["travelBufferMin"]) + int(rules["setupMin"])
+
     if previous:
         origin = point_of(previous.get("address"))
         drive, provider = drives(origin, point)
-        need = required_gap(drive, rules)
+        need = gap_after(previous.get("serviceSlug"), previous.get("practitionerId"), previous.get("locationType"), previous.get("cleanupMin"), drive)
         prev_end = minutes(previous["time"]) + int(previous["duration"])
         if start < prev_end + need:
             return {"ok": False, "reason": "There is not enough travel time before that appointment", "travelMin": drive, "provider": provider}
@@ -354,7 +421,7 @@ def feasible_slot(*, schedule, person, service, day, start, duration, point, zon
     if following:
         dest = point_of(following.get("address"))
         drive, provider = drives(point, dest)
-        need = required_gap(drive, rules)
+        need = gap_after((service or {}).get("slug"), (person or {}).get("id"), location_type, None, drive)
         next_start = minutes(following["time"])
         if start + int(duration) + need > next_start:
             return {"ok": False, "reason": "There is not enough travel time after that appointment", "travelMin": drive, "provider": provider}

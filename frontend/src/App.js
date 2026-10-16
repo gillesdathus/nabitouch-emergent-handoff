@@ -26,6 +26,8 @@ const Me = lazy(() => import("@/pages/client/Me"));
 const ProfileForm = lazy(() => import("@/pages/client/ProfileForm"));
 const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
+const SessionPrep = lazy(() => import("@/pages/client/SessionPrep"));
+const OwnerTurnaround = lazy(() => import("@/pages/owner/Turnaround"));
 const ClientBilling = lazy(() => import("@/pages/client/Billing"));
 const ClientGiftCards = lazy(() => import("@/pages/client/GiftCards"));
 const ClientPlans = lazy(() => import("@/pages/client/Plans"));
@@ -104,6 +106,7 @@ export default function App() {
                   <Route path="/me/rewards" element={<ClientRewards />} />
                   <Route path="/me/profile" element={<ProfileForm />} />
                   <Route path="/me/intake" element={<Intake />} />
+                  <Route path="/me/visit/:id/prepare" element={<SessionPrep />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />
                   <Route path="/me/gifts" element={<ClientGiftCards />} />
@@ -127,6 +130,7 @@ export default function App() {
                   <Route path="/owner" element={<OwnerDash />} />
                   <Route path="/owner/schedule" element={<OwnerSchedule />} />
                   <Route path="/owner/dispatch" element={<Dispatch role="owner" />} />
+                  <Route path="/owner/turnaround" element={<OwnerTurnaround />} />
                   <Route path="/owner/messages" element={<Messages />} />
                   <Route path="/owner/manage" element={<Manage />} />
                   <Route path="/owner/promos" element={<Promos />} />

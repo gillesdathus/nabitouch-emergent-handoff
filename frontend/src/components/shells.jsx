@@ -24,6 +24,7 @@ const ICONS = {
 
 const OWNER_MORE = [
   ["/owner/dispatch", "Live Fleet"],
+  ["/owner/turnaround", "Session turnaround"],
   ["/owner/messages", "Visit messages"],
   ["/owner/campaigns", "Flash campaigns"],
   ["/owner/promos", "Promotions & rewards"],

@@ -15,7 +15,12 @@ import { Notice, Stepper } from "@/components/tide";
 import { SafetyCenter } from "@/components/SafetyCenter";
 import { MemberBadge } from "@/components/MemberBadge";
 import { openNavigation } from "@/lib/nativeShell";
+import { SessionReadiness, useSessionReadiness } from "@/components/session/SessionReadiness";
+import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/components/session/SmartSession";
+import { sendSessionOp, useTurnaround } from "@/lib/turnaround";
+import { toast } from "sonner";
 
+const READINESS_STATUSES = ["assigned", "confirmed", "preparing", "en_route", "arrived", "interrupted", "in_session", "safety_hold"];
 const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
 
 function SessionTimer({ appt }) {
@@ -89,7 +94,7 @@ function NavHandoff({ appt, mapsUrl }) {
 export default function Visit() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { state, idx, api, run, practitionerId } = useDemo();
+  const { state, idx, api, run, practitionerId, training, refresh } = useDemo();
   const [pending, setPending] = useState(false);
   const [ask, setAsk] = useState(null);
   const [late, setLate] = useState(false);
@@ -99,6 +104,12 @@ export default function Visit() {
   const [brief, setBrief] = useState(null);
   useEffect(() => { let live = true; api.mobileBrief(id).then((row) => { if (live) setBrief(row); }).catch(() => {}); return () => { live = false; }; }, [api, id]);
   const appt = state.appointments.find((a) => a.id === id);
+  const { data: readiness, reload: reloadReadiness } = useSessionReadiness(id, { enabled: !training && !!appt && READINESS_STATUSES.includes(appt.status) });
+  const timed = !training && !!appt && (!!appt.session || !!appt.cleanup || appt.status === "in_session");
+  const clock = useTurnaround(id, { active: timed, interval: appt?.status === "in_session" ? 15000 : 30000 });
+  const { reload: reloadClock } = clock;
+  const apptKey = `${appt?.status}|${appt?.cleanup?.completedAt || ""}|${appt?.timer?.pausedAt || ""}`;
+  useEffect(() => { if (timed) reloadClock(); }, [apptKey, timed, reloadClock]);
   const trial = isLiveTrial(idx.settings, appt);
   const pub = useTrackingPublisher(appt, practitionerId, trial);
   if (!appt) return <p>Visit not found. <Link to="/pro" className="text-nb-blue">Back</Link></p>;
@@ -111,12 +122,25 @@ export default function Visit() {
     ? `https://www.google.com/maps/dir/?api=1&destination=${appt.address.arrival.lat},${appt.address.arrival.lng}`
     : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(appt.address.line)}`;
 
+  const gated = !training && primary?.to === "in_session" && !readiness?.ready;
   const doIt = async (a) => {
     if (a.nav) return nav(`/pro/soap/${appt.id}`);
     if (pending) return;
     setPending(true);
-    try { await run(() => api.transition(appt.id, a.to, actor)); setFlash(true); setTimeout(() => setFlash(false), 1100); }
-    finally { setPending(false); }
+    try {
+      if (!training && ["in_session", "session_ended"].includes(a.to)) {
+        const res = await sendSessionOp({ kind: "transition", apptId: appt.id, to: a.to, actor });
+        if (!res.synced) toast.warning("Saved on this phone. Waiting to sync with Nabitouch, not confirmed yet.");
+        await refresh();
+        reloadClock();
+        if (res.synced) { setFlash(true); setTimeout(() => setFlash(false), 1100); }
+      } else {
+        await run(() => api.transition(appt.id, a.to, actor)); setFlash(true); setTimeout(() => setFlash(false), 1100);
+      }
+    } catch (err) {
+      if (a.to === "in_session") reloadReadiness();
+      toast.error(err?.response?.data?.detail || "That step was not saved");
+    } finally { setPending(false); }
   };
   const tap = (a) => (a.confirm ? setAsk(a) : doIt(a));
 
@@ -148,11 +172,16 @@ export default function Visit() {
       </div>}
       {appt.status === "en_route" && <SharingIndicator appt={appt} me={me} trial={trial} />}
       {appt.status === "en_route" && <p className={`rounded-2xl p-2.5 text-xs ${pub.status === "sharing" ? "bg-teal-50 text-teal-800" : "bg-amber-50 text-amber-800"}`} data-testid="tracking-publisher-status">Tracking service: <b>{pub.status}</b>{pub.lastAck ? ` · last fix accepted ${pub.lastAck.toLocaleTimeString()}` : ""}{pub.error ? ` · ${pub.error}` : ""} <span className="opacity-70" data-testid="tracking-source">{trial ? "(phone GPS while this page is open)" : "(the tracking service is not using phone GPS for this visit)"}</span></p>}
-      {["in_session", "session_ended", "soap_pending", "interrupted"].includes(appt.status) && appt.timestamps?.in_session && <SessionTimer appt={appt} />}
+      {!training && READINESS_STATUSES.includes(appt.status) && <SessionReadiness readiness={readiness} canWithdraw={["arrived", "in_session"].includes(appt.status)} onWithdrawn={() => { reloadReadiness(); refresh(); reloadClock(); }} />}
+      {training && ["in_session", "session_ended", "soap_pending", "interrupted"].includes(appt.status) && appt.timestamps?.in_session && <SessionTimer appt={appt} />}
+      {timed && clock.snap?.treatment && <TreatmentTimer appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} clientName={`${c?.preferredName || c?.firstName || ""} ${c?.lastName || ""}`.trim()} serviceName={s?.name} actor={actor} />}
+      {timed && clock.snap?.cleanup && <CleanupPanel appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} />}
+      {timed && clock.snap && (appt.status === "in_session" || clock.snap.cleanup) && <NextBookingCard snap={clock.snap} idx={idx} />}
+      {timed && <SyncStrip apptId={appt.id} error={clock.error} lastSync={clock.lastSync} onRetry={() => { reloadClock(); refresh(); }} />}
 
       <div className="safe-bottom sticky bottom-[72px] z-20 lg:static">
         <AnimatePresence>{flash && <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2"><SuccessMark size={64} /></motion.div>}</AnimatePresence>
-        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg">{pending ? "Saving…" : primary.label}</motion.button>}
+        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg disabled:opacity-60">{pending ? "Saving…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
       </div>
       <div className="space-y-3">
         {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <div className="flex flex-wrap gap-2"><ReadinessBadge readiness={appt.readiness} /></div>}

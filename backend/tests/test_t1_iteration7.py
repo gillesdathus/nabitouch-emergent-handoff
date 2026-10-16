@@ -34,9 +34,11 @@ class TestStatementsAllWithLock:
             assert {"p-jordan", "p-priya"} <= pids, pids
             # liam's lock must not be removed by the request that skipped it
             assert DB.nt_statement_locks.find_one({"id": "p-liam"}) is not None
-            # skipped must be reported somewhere to the caller
-            txt = r.text + " ".join(f"{k}:{v}" for k, v in r.headers.items())
-            assert "Liam" in txt or "p-liam" in txt or "skipped" in txt.lower(), "skipped practitioner not listed in response"
+            # body stays a plain list; skipped practitioners are named in X-Statements-Skipped
+            assert isinstance(data, list), type(data)
+            hdr = r.headers.get("X-Statements-Skipped", "")
+            assert "Liam Fournier" in hdr, hdr
+            assert "Jordan" not in hdr and "Priya" not in hdr, hdr
         finally:
             DB.nt_statement_locks.delete_many({"id": "p-liam"})
             for x in s.get(f"{API}/finance/statements", timeout=20).json():
@@ -44,6 +46,27 @@ class TestStatementsAllWithLock:
                     s.delete(f"{API}/finance/statements/{x['id']}", timeout=20)
             left = [x for x in s.get(f"{API}/finance/statements", timeout=20).json() if x["start"] == START and x["end"] == END]
             assert not left
+
+
+    def test_all_skipped_returns_409_message(self):
+        s = login(OWNER)
+        locks = ["p-liam", "p-jordan", "p-priya", "p-nabitu-kahindo"]
+        DB.nt_statement_locks.delete_many({"id": {"$in": locks}})
+        DB.nt_statement_locks.insert_many([{"id": x, "at": datetime.now(timezone.utc)} for x in locks])
+        try:
+            r = s.post(f"{API}/finance/statements", json={"practitionerId": "all", "start": START, "end": END}, timeout=60)
+            print("status", r.status_code, r.text[:400])
+            assert r.status_code == 409, r.text
+            msg = r.json().get("detail", "")
+            assert msg.startswith("No new statement for "), msg
+            assert "one already covers this period or is being generated" in msg, msg
+            assert "Liam Fournier" in msg and "Maya Chen" in msg, msg
+            assert "X-Statements-Skipped" not in r.headers
+        finally:
+            DB.nt_statement_locks.delete_many({"id": {"$in": locks}})
+            for x in s.get(f"{API}/finance/statements", timeout=20).json():
+                if x["start"] == START and x["end"] == END and x.get("practitionerId") != "p-maya":
+                    s.delete(f"{API}/finance/statements/{x['id']}", timeout=20)
 
 
 # Winback: deleted client fallback

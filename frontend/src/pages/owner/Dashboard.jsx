@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { Bell, CalendarOff, CalendarPlus, Plus, Receipt, Sparkles, Tag, UserPlus } from "lucide-react";
 import { HubLink } from "@/components/tide";
+import { TurnaroundBoard } from "@/components/session/TurnaroundBoard";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
 import { ClientProfile } from "@/components/ops/Profiles";
@@ -66,6 +67,7 @@ export default function Dashboard() {
           <button type="button" className="nb-btn-primary h-11 px-4" data-testid="dashboard-quick" onClick={() => setActions((value) => !value)}><Plus className="h-4 w-4" />Quick action</button>
         </div>
       </header>
+      {!training && <TurnaroundBoard people={idx.practitioners} compact />}
       {alerts && (
         <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100" data-testid="dashboard-alert-list">
           {notifications.length ? notifications.map((item) => item.appointmentId ? <button key={item.id} type="button" className="block w-full rounded-2xl px-3 py-2 text-left text-sm hover:bg-sky-50" onClick={() => { setOpenId(item.appointmentId); setAlerts(false); }}>{item.text}</button> : <Link key={item.id} to={item.to} className="block rounded-2xl px-3 py-2 text-sm hover:bg-sky-50">{item.text}</Link>) : <p className="text-sm text-nb-mute">No operational alerts.</p>}

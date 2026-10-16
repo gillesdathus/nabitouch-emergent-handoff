@@ -5,6 +5,20 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Pill } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
+import { RestrictionList, useSessionReadiness } from "@/components/session/SessionReadiness";
+
+function SoapConsentBanner({ apptId, enabled }) {
+  const { data } = useSessionReadiness(apptId, { poll: 0, enabled });
+  if (!data) return null;
+  const record = data.consent.record;
+  return (
+    <div className="nb-card space-y-2 p-4" data-testid="soap-consent-banner">
+      <p className="text-sm"><b>Session consent.</b> {record ? `E-signed by ${record.typedName} · linked to this note (${record.id})` : data.consent.state === "withdrawn" ? "Withdrawn during this visit. Document what was performed before withdrawal." : "No signed consent on file for this visit."}</p>
+      {data.restrictions && <RestrictionList restrictions={data.restrictions} testid="soap-consent-restrictions" />}
+      {data.withdrawals?.length > 0 && <p className="text-xs text-rose-700" data-testid="soap-consent-withdrawals">{data.withdrawals.map((w) => `Withdrawn ${new Date(w.at).toLocaleTimeString("en-CA", { timeZone: "America/Edmonton" })}: ${w.reason}`).join(" · ")}</p>}
+    </div>
+  );
+}
 import { SOAP_LIBRARY, SOAP_TEMPLATES, BODY_AREAS, fmtStamp } from "@/lib/domain";
 
 const SECTIONS = [["S", "Subjective", "What the client reports"], ["O", "Objective", "What you observe & palpate"], ["A", "Assessment", "Response & progress"], ["P", "Plan", "Home care & follow-up"]];
@@ -26,7 +40,7 @@ function BodyMap({ areas, onToggle, readOnly }) {
 export default function Soap() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { state, idx, api, run, practitionerId } = useDemo();
+  const { state, idx, api, run, practitionerId, training } = useDemo();
   const appt = state.appointments.find((a) => a.id === id);
   const existing = idx.soap[id];
   const [note, setNote] = useState(() => ({ ...empty, ...(existing || {}) }));
@@ -76,6 +90,7 @@ export default function Soap() {
   return (
     <div className="mx-auto max-w-3xl space-y-5" data-testid="soap-editor">
       <Link to={`/pro/visit/${id}`} data-testid="soap-back-link" className="inline-flex items-center gap-1 text-sm text-nb-mute"><ArrowLeft className="h-4 w-4" />Visit</Link>
+      <SoapConsentBanner apptId={id} enabled={!training} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><p className="nb-eyebrow">SOAP notes · {appt.ref}</p><h1 className="text-2xl font-semibold tracking-tight">{idx.clients[appt.clientId]?.firstName} {idx.clients[appt.clientId]?.lastName}</h1></div>
         {signed ? <Pill tone="green" testid="soap-status">Signed {fmtStamp(existing.signedAt)} · {existing.signedBy}</Pill> : <Pill tone="amber" testid="soap-status">Unsigned draft{saved ? ` · autosaved ${fmtStamp(saved)}` : ""}</Pill>}

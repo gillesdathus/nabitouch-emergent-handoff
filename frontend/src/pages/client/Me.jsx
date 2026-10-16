@@ -4,6 +4,7 @@ import { LiveTripCard } from "@/components/LiveTripCard";
 import { ArrivalMoment } from "@/components/ArrivalMoment";
 import { PrepareCard } from "@/components/PrepareCard";
 import { PlanNudge } from "@/components/PlanNudge";
+import { SessionPrepLink } from "@/components/session/SessionPrepLink";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
@@ -201,6 +202,7 @@ export default function Me() {
           </div>
           <div className="nb-card p-5">
             <ClientTracker appt={next} />
+            <SessionPrepLink appt={next} />
             {next.status === "arrived" && <div className="mt-4"><ArrivalMoment appt={next} practitioner={idx.practitioners[next.practitionerId]} service={idx.services[next.serviceSlug]} /></div>}
             {["requested", "confirmed", "assigned", "preparing", "en_route"].includes(next.status) && <div className="mt-4"><PrepareCard appt={next} /></div>}
             {next.status === "en_route" && <div className="mt-4" id="client-live"><LiveTripCard appt={next} practitioner={idx.practitioners[next.practitionerId]} /></div>}
