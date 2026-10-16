@@ -34,6 +34,7 @@ export function StripeCheckout({ appt, invoice, open, onClose }) {
     try {
       const body = appt.payNow === "deposit" && received === 0 ? { amountCents: due } : (received > 0 ? { amountCents: invoice.balance.cents } : {});
       const started = await api.invoiceCheckout(invoice.id, body);
+      if (started.url) window.location.assign(started.url);
       setNote(`Checkout started for ${started.amount?.display || formatCents(due)}. Nothing is paid until a verified Stripe webhook arrives.`);
       setPhase("pending");
     } catch (error) {

@@ -8,6 +8,7 @@ tests/test_addresses.py
 tests/test_t1_iteration4.py
 tests/test_demo_account_isolation.py
 tests/test_checkout_reconciliation.py
+tests/test_stripe_sandbox.py
 tests/test_t1_finance_reconciliation.py
 tests/test_finance_billing_giftcards.py::TestReports
 tests/test_m7_10_safety_plans_native_winback.py::TestNative

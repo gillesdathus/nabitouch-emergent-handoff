@@ -195,7 +195,7 @@ def build_finance_router(db, user_from, settings_doc):
                 continue
             key = v["practitionerName"] or "Unassigned"
             net = sum(int(l.get("netCents") or 0) for l in v["lines"])
-            collected = v["received"]["cents"] - v["refunded"]["cents"]
+            collected = v["received"]["cents"]  # Ledger projection already deducts refunds.
             rule = rule_for(pay_rules, v.get("practitionerId") or "")
             pay = visit_pay(v, rule, pay_rules.get("includeTravel"))
             p = per.setdefault(key, {"visits": 0, "net": 0, "total": 0, "collected": 0, "outstanding": 0, "insPending": 0, "pay": 0, "rule": rule_label(rule)})

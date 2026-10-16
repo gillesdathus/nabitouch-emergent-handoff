@@ -189,6 +189,9 @@ def build_router(coll, add_audit, user_from):
 
     @r.post("/payments/{aid}/refund")
     async def refund(aid: str, request: Request, body: dict = Body(...)):
+        from config import payments_simulated
+        if not payments_simulated():
+            raise HTTPException(409, "Use the invoice ledger refund endpoint for provider payments")
         a = await load(aid)
         body["actor"] = (await guard(request, a, "owner"))["name"]
         p = next((x for x in a.get("payments", []) if x["id"] == body.get("paymentId")), None)

@@ -420,9 +420,14 @@ class TestDevices:
 # ---------------- BOOKING + BILLING E2E
 class TestBookingBilling:
     def test_flow(self, sarah, owner):
-        d, t = rand_slot()
-        q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-maya", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
-                                                       "locationType": "home", "address": ADDR_OK, "addressId": "ad-sarah"}}, timeout=30)
+        # Earlier synthetic tests occupy random slots. Retry schedule conflicts
+        # just as book() does, while keeping every other error a test failure.
+        for _ in range(25):
+            d, t = rand_slot()
+            q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-maya", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
+                                                           "locationType": "home", "address": ADDR_OK, "addressId": "ad-sarah"}}, timeout=30)
+            if not (q.status_code == 409 and any(word in q.text.lower() for word in ("slot", "available", "taken", "booked", "travel", "time")) and "credit" not in q.text.lower()):
+                break
         assert q.status_code == 200, q.text
         print("quote", q.text[:400])
         r = book(sarah)

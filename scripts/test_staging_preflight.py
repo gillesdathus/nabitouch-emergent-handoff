@@ -26,6 +26,13 @@ class StagingGuards(unittest.TestCase):
     def test_valid_initial_guards(self):
         self.assertEqual(preflight.validate(*self.fixture()), [])
 
+    def test_stripe_test_phase_still_refuses_live_keys_and_delivery(self):
+        api, frontend = self.fixture()
+        api.update(PAYMENT_MODE="test", STRIPE_CARD_CHECKOUT_ENABLED="true", STRIPE_SECRET_KEY="sk_test_" + secrets.token_hex(16), STRIPE_WEBHOOK_SECRET="whsec_" + secrets.token_hex(16))
+        self.assertEqual(preflight.validate(api, frontend, stripe_test=True), [])
+        for key, value in (("STRIPE_SECRET_KEY", "sk_live_" + secrets.token_hex(16)), ("EMAIL_PROVIDER", "resend"), ("INVOICE_EMAIL_ENABLED", "true")):
+            self.assertTrue(preflight.validate({**api, key: value}, frontend, stripe_test=True))
+
     def test_examples_cannot_pass_as_real_configuration(self):
         self.assertTrue(preflight.validate(preflight.read_env(ROOT / "deploy/staging/api.env.example"), preflight.read_env(ROOT / "deploy/staging/frontend.env.example")))
 

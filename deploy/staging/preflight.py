@@ -15,7 +15,7 @@ def read_env(path):
     return values
 
 
-def validate(api, frontend):
+def validate(api, frontend, stripe_test=False):
     errors = []
     def check(ok, label):
         if not ok:
@@ -48,9 +48,17 @@ def validate(api, frontend):
     check(not browser_token or (real(browser_token) and browser_token.startswith("pk.") and browser_token != token), "separate public Mapbox token")
     flags = ("DOCUMENT_UPLOADS_ENABLED", "STRIPE_CARD_CHECKOUT_ENABLED", "LEGACY_PATIENT_IMPORT_ENABLED", "GIFTCARDS_ENABLED", "EMAIL_LIFECYCLE_ENABLED", "INVOICE_EMAIL_ENABLED", "STATEMENT_EMAIL_ENABLED", "REVIEW_INVITES_ENABLED", "SMS_ENABLED", "PUSH_ENABLED", "GEO_SAMPLE_CATALOG")
     for flag in flags:
+        if stripe_test and flag == "STRIPE_CARD_CHECKOUT_ENABLED":
+            continue
         check(api.get(flag) == "false", flag + " remains disabled before acceptance authorization")
     check(api.get("EMAIL_PROVIDER") == "disabled" and api.get("PUSH_DRY_RUN") == "true", "delivery disabled/dry-run")
-    check(not api.get("STRIPE_SECRET_KEY") and not api.get("RESEND_API_KEY") and not api.get("FIREBASE_SERVICE_ACCOUNT_FILE"), "external credentials deferred until authorized integration phase")
+    check(not api.get("RESEND_API_KEY") and not api.get("FIREBASE_SERVICE_ACCOUNT_FILE"), "non-Stripe external credentials deferred")
+    if stripe_test:
+        check(api.get("PAYMENT_MODE") == "test" and api.get("STRIPE_CARD_CHECKOUT_ENABLED") == "true", "explicit Stripe test phase")
+        check(api.get("STRIPE_SECRET_KEY", "").startswith(("sk_test_", "rk_test_")) and real(api.get("STRIPE_SECRET_KEY", "")), "Stripe test-only server key")
+        check(api.get("STRIPE_WEBHOOK_SECRET", "").startswith("whsec_") and real(api.get("STRIPE_WEBHOOK_SECRET", "")), "Stripe endpoint signing secret")
+    else:
+        check(not api.get("STRIPE_SECRET_KEY"), "Stripe credentials deferred until test phase")
     check(not api.get("LEGACY_MONGO_URL") and not api.get("LEGACY_DB_NAME"), "legacy/production source absent")
     return errors
 
@@ -59,12 +67,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-env", required=True)
     parser.add_argument("--frontend-env", required=True)
+    parser.add_argument("--stripe-test", action="store_true", help="Validate authorized Stripe sandbox phase; delivery remains disabled")
     args = parser.parse_args()
-    errors = validate(read_env(args.api_env), read_env(args.frontend_env))
+    errors = validate(read_env(args.api_env), read_env(args.frontend_env), stripe_test=args.stripe_test)
     for label in errors:
         print("BLOCKED:", label)
     if not errors:
-        print("PASS: initial staging configuration guards; no deployment or external integration was performed")
+        print("PASS: staging configuration guards; no deployment or provider request was performed")
     return 2 if errors else 0
 
 

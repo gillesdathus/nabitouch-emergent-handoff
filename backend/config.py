@@ -115,6 +115,8 @@ def validate_redis(url):
 
 
 def validate_env():
+    from stripe_gateway import validate_stripe_env
+    validate_stripe_env()
     required = ["MONGO_URL", "DB_NAME", "JWT_SECRET", "OWNER_EMAIL", "OWNER_PASSWORD", "EMAIL_FROM_NAME", "APP_URL"]
     if not is_production():
         required.append("DEMO_PASSWORD")
