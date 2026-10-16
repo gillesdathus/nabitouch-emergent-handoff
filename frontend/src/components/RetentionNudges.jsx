@@ -1,3 +1,4 @@
+import { todayISO } from "@/lib/domain";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Copy, HeartHandshake } from "lucide-react";
@@ -8,7 +9,7 @@ const DAY = 86400000;
 export function RetentionNudges({ state, idx }) {
   const [shown, setShown] = useState(6);
   const rows = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     const by = {};
     for (const a of state.appointments || []) {
       if (!a.clientId || ["cancelled", "no_show"].includes(a.status)) continue;

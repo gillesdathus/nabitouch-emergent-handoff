@@ -22,7 +22,7 @@ LIMIT = 30
 PRACTITIONER_PRESETS = [
     {"id": "on_my_way", "role": "practitioner", "body": "I'm on my way."},
     {"id": "started", "role": "practitioner", "body": "I've started my trip."},
-    {"id": "late", "role": "practitioner", "body": "I'm running {minutes} minutes late.", "minutes": True},
+    {"id": "late", "role": "practitioner", "label": "Running late", "body": "I'm running {minutes} minutes late.", "minutes": True},
     {"id": "arrived", "role": "practitioner", "body": "I've arrived."},
     {"id": "finding", "role": "practitioner", "body": "I'm having trouble finding the address."},
     {"id": "entrance", "role": "practitioner", "body": "Could you please confirm the entrance?"},

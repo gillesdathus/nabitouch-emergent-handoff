@@ -208,11 +208,12 @@ export const CLINIC_POINT = { lat: 53.5461, lng: -113.4938 };
 export const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 export const pad = (n) => String(n).padStart(2, '0');
 // Business day in Edmonton, regardless of the device timezone.
+const edmontonMinutes = (d) => { const [h, mi] = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Edmonton', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d).split(':').map(Number); return h * 60 + mi; };
 export const todayISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Edmonton', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 export const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 export const fmtDate = (iso, opts = { weekday: 'short', month: 'short', day: 'numeric' }) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-CA', opts);
 export const fmtTime = (hhmm) => { if (!hhmm) return ''; const [h, m] = hhmm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`; };
-export const fmtStamp = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' }) : '—');
+export const fmtStamp = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Edmonton' }) : '—');
 export const endTime = (hhmm, dur) => { const [h, m] = hhmm.split(':').map(Number); const t = h * 60 + m + Number(dur); return `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`; };
 export const fullName = (c) => (c ? `${c.preferredName || c.firstName} ${c.lastName}` : 'Guest');
 
@@ -281,7 +282,7 @@ export function slotsFor(date, practitionerId, appointments, duration) {
   const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   for (let m = 9 * 60; m + Number(duration) <= 20 * 60; m += 30) {
     const t = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-    if (date === todayISO() && m < now.getHours() * 60 + now.getMinutes() + 90) continue;
+    if (date === todayISO() && m < edmontonMinutes(now) + 90) continue;
     const clash = practitionerId && busy.some((a) => m < toMin(a.time) + a.duration + 30 && toMin(a.time) < m + Number(duration) + 30);
     out.push({ time: t, available: !clash });
   }

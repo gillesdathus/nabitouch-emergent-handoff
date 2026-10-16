@@ -25,7 +25,7 @@ export default function Today() {
       <div className="rounded-[30px] p-5 text-white nb-tide">
         <div className="flex items-center gap-3">
           <Avatar person={me} size={46} />
-          <div className="flex-1"><p className="text-xs text-white/60">{new Date().toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric" })}</p><p className="font-semibold">Hi {me.name.split(" ")[0]}</p></div>
+          <div className="flex-1"><p className="text-xs text-white/60">{new Date().toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Edmonton" })}</p><p className="font-semibold">Hi {me.name.split(" ")[0]}</p></div>
         </div>
         <h1 className="mt-6 text-4xl font-semibold leading-tight tracking-tight">You have <span className="nb-gradient-text">{list.filter((a) => OPEN.includes(a.status)).length}</span> {list.filter((a) => OPEN.includes(a.status)).length === 1 ? "visit" : "visits"} ahead</h1>
       </div>

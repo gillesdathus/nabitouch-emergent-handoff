@@ -152,7 +152,7 @@ def build_winback_router(db, coll, add_audit, user_from):
         await owner(request)
         rows = await db.nt_winback.find({}, {"_id": 0}).sort("createdAt", -1).to_list(500)
         names = {c["id"]: f"{c.get('firstName', '')} {c.get('lastName', '')}".strip() for c in await coll("clients").find({"id": {"$in": list({r["clientId"] for r in rows})}}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1}).to_list(500)}
-        return [{**r, "clientName": names.get(r["clientId"])} for r in rows]
+        return [{**r, "clientName": names.get(r["clientId"]) or "Deleted client"} for r in rows]
 
     @r.post("/invites/{wid}/void")
     async def void(wid: str, request: Request):

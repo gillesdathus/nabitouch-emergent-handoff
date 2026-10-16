@@ -9,13 +9,15 @@ import { downloadFile } from "@/lib/useInvoices";
 const iso = (d) => d.toISOString().slice(0, 10);
 
 export function presetRange(key) {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
+  // Business calendar is Edmonton; build "today" from it, not from the device or UTC.
+  const [ty, tm, td] = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton" }).format(new Date()).split("-").map(Number);
+  const now = new Date(Date.UTC(ty, tm - 1, td));
+  const y = ty;
+  const m = tm - 1;
   if (key === "last_month") return [iso(new Date(Date.UTC(y, m - 1, 1))), iso(new Date(Date.UTC(y, m, 0)))];
   if (key === "quarter") { const q = Math.floor(m / 3) * 3; return [iso(new Date(Date.UTC(y, q, 1))), iso(now)]; }
   if (key === "ytd") return [`${y}-01-01`, iso(now)];
-  if (key === "half") return now.getDate() <= 15 ? [iso(new Date(Date.UTC(y, m, 1))), iso(new Date(Date.UTC(y, m, 15)))] : [iso(new Date(Date.UTC(y, m, 16))), iso(new Date(Date.UTC(y, m + 1, 0)))];
+  if (key === "half") return now.getUTCDate() <= 15 ? [iso(new Date(Date.UTC(y, m, 1))), iso(new Date(Date.UTC(y, m, 15)))] : [iso(new Date(Date.UTC(y, m, 16))), iso(new Date(Date.UTC(y, m + 1, 0)))];
   return [iso(new Date(Date.UTC(y, m, 1))), iso(now)];
 }
 
