@@ -1,6 +1,12 @@
 # Stripe lifecycle acceptance — 16 October 2026
 
-**PASS for the card scenarios below; BLOCKED for overall Stripe acceptance.**
+**PASS for the tested card scope below.** The owner subsequently selected cards
+and Link where applicable for initial launch. Genuine asynchronous-method success
+and failure are **DEFERRED / outside initial launch scope**, not passed. Do not
+enable ACSS, SEPA, BACS, US bank or another delayed method just to run these tests.
+Signed async handling and automated regressions remain required. The original
+observations below retain their historical BLOCKED labels; those no longer gate
+the initial card scope. Stripe-native redelivery remains a staging acceptance gate.
 This extends the [earlier deposit evidence](STRIPE_SANDBOX_ACCEPTANCE_2026-10-16.md)
 from commit `4a4eb113906a3e05e1c1db4e731cd8bcc1ea2d3f`. The original deposit was
 not repeated. All provider objects were independently retrieved from Stripe's
@@ -149,10 +155,10 @@ The formerly excluded Git-dependent secret-file check runs and passes. Provider
 evidence above is separate from these synthetic regressions. Remote CI status is
 reported on PR #1 after the pushed candidate actually finishes.
 
-**Overall recommendation: BLOCKED / NO GO for complete Stripe acceptance or release.**
-Required next: owner-approved eligible asynchronous sandbox payment method for CAD,
-its real Checkout success and failure transactions, signed async events, and full
-invoice/appointment/ledger/report reconciliation. For native redelivery, provide an
+**Current recommendation: card scenario evidence accepted; release remains gated
+by staging and the separate release requirements below.** Delayed-method provider
+tests are deferred unless payment scope later expands; if it does, require actual
+success/failure transactions and financial reconciliation first. For native redelivery, provide an
 approved publicly reachable HTTPS test webhook endpoint and its own securely
 provisioned endpoint signing secret; do not reuse the CLI secret there. No VPS,
 DNS or HTTPS provisioning is assumed or authorized by this work.

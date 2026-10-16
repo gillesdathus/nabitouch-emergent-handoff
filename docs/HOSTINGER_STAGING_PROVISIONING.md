@@ -68,6 +68,11 @@ The Stripe and Resend callback locations bypass the tester CIDR gate because pro
 
 ## 6. External acceptance handoff
 
+Use the [provider activation handoff](PROVIDER_ACTIVATION_STAGING.md) for the
+Mapbox configuration/storage gate, dedicated Stripe HTTPS endpoint/native resend,
+and later separately authorized Resend/Firebase phases. No provider activation or
+hosting changes follow automatically from passing local checks.
+
 Follow `CODEX_STAGING_CHECKLIST.md`. Initial preflight deliberately rejects external credentials/enabled delivery; after acceptance authorization, separately review each staging configuration change rather than treating that initial guard as a validator for enabled integrations.
 
 - Stripe: staging sandbox identity, supported test key, endpoint-specific webhook secret and reachable HTTPS callback; hosted deposit/full/decline/3DS/expiry/replay/reconciliation. Live payments remain prohibited.

@@ -1,11 +1,12 @@
 """Address search for Edmonton mobile visits.
 
-Mapbox is called only when MAPBOX_TOKEN is set. Results stay in memory for a few
-minutes and are not written to MongoDB. The booking stores the address the client
-chose, which is the visit location, not a geocoding archive.
+Mapbox is called only when MAPBOX_TOKEN is set. Temporary results are not cached.
+Confirmation for stored visits requires explicit permanent-geocoding account
+permission. Booking stores only the chosen visit location, not a result archive.
 """
 import os
 import time
+import math
 from urllib.parse import urlencode
 
 import httpx
@@ -63,6 +64,11 @@ def _token():
     return os.environ.get("MAPBOX_TOKEN") or ""
 
 
+def permanent_geocoding():
+    """Operator confirms account eligibility before storing a visit geocode."""
+    return os.environ.get("MAPBOX_PERMANENT_GEOCODING", "false").lower() == "true"
+
+
 def sample_catalog():
     """Isolated tests may opt into the Edmonton samples. The running app does not."""
     return os.environ.get("GEO_SAMPLE_CATALOG") == "true" and os.environ.get("APP_ENV", "development").strip().lower() != "production"
@@ -97,45 +103,66 @@ def _feature(feature):
     coords = (feature.get("geometry") or {}).get("coordinates") or [None, None]
     label = props.get("full_address") or props.get("name") or ""
     place = ((props.get("context") or {}).get("place") or {}).get("name") or ""
-    if coords[0] is None or not label:
+    if len(coords) < 2 or not label:
         return None
-    return {"id": props.get("mapbox_id") or label, "line": label, "area": place, "lng": float(coords[0]), "lat": float(coords[1]), "provider": "mapbox"}
+    try:
+        lng, lat = float(coords[0]), float(coords[1])
+    except (ValueError, TypeError):
+        return None
+    if not math.isfinite(lat) or not math.isfinite(lng) or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    context = props.get("context") or {}
+    return {"id": props.get("mapbox_id") or label, "line": label, "area": place,
+            "lng": lng, "lat": lat, "provider": "mapbox",
+            "postal": (context.get("postcode") or {}).get("name") or "",
+            "matchConfidence": (props.get("match_code") or {}).get("confidence") or ""}
 
 
 class Geocoder:
     def __init__(self):
         self.cache = {}
         self.bucket = {}
+        self.blocked_until = 0
 
     def reset(self):
         self.cache.clear()
         self.bucket.clear()
+        self.blocked_until = 0
 
     def _cached(self, key):
+        if _token() and not permanent_geocoding():
+            return None
         hit = self.cache.get(key)
         if hit and hit[0] > time.time():
             return hit[1]
         return None
 
     def _store(self, key, value):
+        if _token() and not permanent_geocoding():
+            return
         self.cache[key] = (time.time() + CACHE_SECONDS, value)
         if len(self.cache) > 500:
             self.cache.clear()
             self.cache[key] = (time.time() + CACHE_SECONDS, value)
 
     async def fetch(self, url, params):
+        if time.time() < self.blocked_until:
+            raise RateLimit("Address search is busy. Wait a moment and try again.")
         try:
             async with httpx.AsyncClient(timeout=6) as client:
                 response = await client.get(url, params=params)
         except httpx.HTTPError as exc:
-            raise ProviderError("Address search is unavailable right now. Try again shortly.") from exc
-        if response.status_code in (401, 403, 429):
+            raise ProviderError("Address search is unavailable right now. Try again shortly.") from None
+        if response.status_code == 429:
+            self.blocked_until = time.time() + 60
+            raise RateLimit("Address search is busy. Wait a moment and try again.")
+        if response.status_code in (401, 403):
             raise ProviderError("Address search is unavailable right now. Try again shortly.")
         try:
             response.raise_for_status()
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise ProviderError("Address search is unavailable right now. Try again shortly.") from exc
+            raise ProviderError("Address search is unavailable right now. Try again shortly.") from None
 
     async def suggest(self, query, client_key):
         text = " ".join(str(query or "").split())
@@ -157,6 +184,7 @@ class Geocoder:
         payload = await self.fetch(FORWARD, {
             "q": text, "access_token": _token(), "country": "ca", "types": "address", "limit": 5,
             "proximity": f"{EDMONTON[0]},{EDMONTON[1]}", "bbox": BBOX, "autocomplete": "true",
+            "permanent": str(permanent_geocoding()).lower(),
         })
         hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
         self._store(("suggest", _norm(text)), hits)
@@ -173,11 +201,13 @@ class Geocoder:
             return hit
         text = " ".join(str(line or "").split())
         if _token() and (place_id or text):
+            if not permanent_geocoding():
+                raise ProviderError("Address confirmation requires Mapbox storage configuration. Contact Nabitouch.")
             cached = self._cached(("resolve", place_id or _norm(text)))
             if cached:
                 return cached
-            params = {"access_token": _token(), "country": "ca", "types": "address", "limit": 1, "proximity": f"{EDMONTON[0]},{EDMONTON[1]}"}
-            if place_id and not text:
+            params = {"access_token": _token(), "country": "ca", "types": "address", "limit": 1, "proximity": f"{EDMONTON[0]},{EDMONTON[1]}", "permanent": "true", "autocomplete": "false"}
+            if place_id and not place_id.startswith("local-"):
                 params["q"] = place_id
             else:
                 params["q"] = text
@@ -202,7 +232,9 @@ class Geocoder:
     async def reverse(self, lat, lng):
         if not _token():
             raise ProviderError(MAPBOX_REQUIRED)
-        payload = await self.fetch(REVERSE, {"longitude": lng, "latitude": lat, "access_token": _token(), "types": "address", "limit": 1})
+        if not permanent_geocoding():
+            raise ProviderError("Address confirmation requires Mapbox storage configuration. Contact Nabitouch.")
+        payload = await self.fetch(REVERSE, {"longitude": lng, "latitude": lat, "access_token": _token(), "types": "address", "limit": 1, "permanent": "true"})
         hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
         if not hits:
             raise GeocodeError("We couldn't place that location on a street address.")

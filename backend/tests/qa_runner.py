@@ -39,6 +39,7 @@ def configure():
         "COOKIE_SAMESITE": "lax", "CORS_ORIGINS": "http://localhost:3000",
         "APP_URL": "https://qa.nabitouch.example", "REACT_APP_BACKEND_URL": "http://127.0.0.1:8000",
         "MAPBOX_TOKEN": "pk.synthetic-qa-not-a-real-token", "MAPBOX_FIXTURE_MODE": "",
+        "MAPBOX_PERMANENT_GEOCODING": "true",  # Synthetic transport only; no paid provider call.
         "FIELD_ENCRYPTION_KEY": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(), "FIELD_ENCRYPTION_KEY_PREVIOUS": "",
         "REDIS_URL": "redis://redis:6379/0", "REACT_APP_MAPBOX_PUBLIC_TOKEN": "",
         "GOOGLE_REVIEW_URL": "https://g.page/r/CWre3DsJWCgxEAE/review",

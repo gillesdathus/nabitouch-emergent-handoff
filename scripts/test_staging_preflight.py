@@ -26,6 +26,15 @@ class StagingGuards(unittest.TestCase):
     def test_valid_initial_guards(self):
         self.assertEqual(preflight.validate(*self.fixture()), [])
 
+    def test_mapbox_phase_requires_distinct_browser_token_and_storage_permission(self):
+        api, frontend = self.fixture()
+        self.assertTrue(preflight.validate(api, frontend, mapbox_test=True))
+        api["MAPBOX_PERMANENT_GEOCODING"] = "true"
+        frontend["REACT_APP_MAPBOX_PUBLIC_TOKEN"] = "pk." + secrets.token_hex(24)
+        self.assertEqual(preflight.validate(api, frontend, mapbox_test=True), [])
+        frontend["REACT_APP_MAPBOX_PUBLIC_TOKEN"] = api["MAPBOX_TOKEN"]
+        self.assertTrue(preflight.validate(api, frontend, mapbox_test=True))
+
     def test_stripe_test_phase_still_refuses_live_keys_and_delivery(self):
         api, frontend = self.fixture()
         api.update(PAYMENT_MODE="test", STRIPE_CARD_CHECKOUT_ENABLED="true", STRIPE_SECRET_KEY="sk_test_" + secrets.token_hex(16), STRIPE_WEBHOOK_SECRET="whsec_" + secrets.token_hex(16))

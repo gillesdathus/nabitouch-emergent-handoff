@@ -2,7 +2,11 @@
 
 Latest: [card lifecycle and return UX acceptance](STRIPE_LIFECYCLE_ACCEPTANCE_2026-10-16.md)
 passes full payment, 3DS, decline, expiry, refunds and deposit-to-balance collection.
-Delayed success/failure remain BLOCKED. Overall Stripe acceptance is incomplete.
+Initial launch scope is cards and Link where applicable. Genuine delayed-method
+success/failure tests are DEFERRED, outside this scope, and are not claimed passed.
+Do not enable delayed methods solely for optional acceptance. Keep async webhook
+handling/regressions intact. Stripe-native redelivery remains a staging gate;
+local Link availability is not separate browser Link acceptance evidence.
 
 Historical status: **one real deposit/backend settlement accepted** on 16 October 2026;
 full lifecycle acceptance remains incomplete. The owner-provided Nabitouch test

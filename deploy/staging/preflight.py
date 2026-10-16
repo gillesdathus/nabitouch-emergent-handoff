@@ -15,7 +15,7 @@ def read_env(path):
     return values
 
 
-def validate(api, frontend, stripe_test=False):
+def validate(api, frontend, stripe_test=False, mapbox_test=False):
     errors = []
     def check(ok, label):
         if not ok:
@@ -46,6 +46,9 @@ def validate(api, frontend, stripe_test=False):
     browser_token = frontend.get("REACT_APP_MAPBOX_PUBLIC_TOKEN", "")
     check(real(token) and token.startswith(("pk.", "sk.")), "Mapbox server token")
     check(not browser_token or (real(browser_token) and browser_token.startswith("pk.") and browser_token != token), "separate public Mapbox token")
+    if mapbox_test:
+        check(api.get("MAPBOX_PERMANENT_GEOCODING") == "true", "Mapbox stored-geocode account permission confirmed")
+        check(bool(browser_token), "Mapbox browser token supplied for browser acceptance")
     flags = ("DOCUMENT_UPLOADS_ENABLED", "STRIPE_CARD_CHECKOUT_ENABLED", "LEGACY_PATIENT_IMPORT_ENABLED", "GIFTCARDS_ENABLED", "EMAIL_LIFECYCLE_ENABLED", "INVOICE_EMAIL_ENABLED", "STATEMENT_EMAIL_ENABLED", "REVIEW_INVITES_ENABLED", "SMS_ENABLED", "PUSH_ENABLED", "GEO_SAMPLE_CATALOG")
     for flag in flags:
         if stripe_test and flag == "STRIPE_CARD_CHECKOUT_ENABLED":
@@ -68,8 +71,9 @@ def main():
     parser.add_argument("--api-env", required=True)
     parser.add_argument("--frontend-env", required=True)
     parser.add_argument("--stripe-test", action="store_true", help="Validate authorized Stripe sandbox phase; delivery remains disabled")
+    parser.add_argument("--mapbox-test", action="store_true", help="Validate prepared Mapbox phase; does not call providers or deploy")
     args = parser.parse_args()
-    errors = validate(read_env(args.api_env), read_env(args.frontend_env), stripe_test=args.stripe_test)
+    errors = validate(read_env(args.api_env), read_env(args.frontend_env), stripe_test=args.stripe_test, mapbox_test=args.mapbox_test)
     for label in errors:
         print("BLOCKED:", label)
     if not errors:

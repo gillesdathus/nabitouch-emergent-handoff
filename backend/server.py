@@ -2241,6 +2241,8 @@ class TrackingPrivacy:
 
 
 logging.getLogger().addFilter(RedactLogFilter())
+for _provider_logger in ("httpx", "httpcore", "geo", "tracking"):
+    logging.getLogger(_provider_logger).addFilter(RedactLogFilter())
 logging.getLogger("uvicorn.access").addFilter(AccessPathRedact())
 app.include_router(auth_router)
 app.include_router(build_router(coll, add_audit, user_from))

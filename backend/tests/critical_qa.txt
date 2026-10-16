@@ -4,6 +4,7 @@ tests/test_reviews_feedback.py
 tests/test_payment_policy.py
 tests/test_mapbox_fixture.py
 tests/test_geocode_isolation.py
+tests/test_mapbox_readiness.py
 tests/test_addresses.py
 tests/test_t1_iteration4.py
 tests/test_demo_account_isolation.py

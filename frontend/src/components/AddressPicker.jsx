@@ -20,10 +20,11 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
       setMatches([]);
       return undefined;
     }
+    let stopped = false;
     const handle = setTimeout(() => {
-      api.geoSuggest(q.trim()).then((body) => { setMatches(body.suggestions || []); setError(""); }).catch((err) => { setMatches([]); setError(apiError(err)); });
+      api.geoSuggest(q.trim()).then((body) => { if (!stopped) { setMatches(body.suggestions || []); setError(""); } }).catch((err) => { if (!stopped) { setMatches([]); setError(apiError(err)); } });
     }, 250);
-    return () => clearTimeout(handle);
+    return () => { stopped = true; clearTimeout(handle); };
   }, [q, open]);
 
   const apply = async (body) => {

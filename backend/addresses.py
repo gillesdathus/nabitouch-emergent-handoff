@@ -62,11 +62,15 @@ def _km(a, b):
 
 def classify(hit, requested_line, requested_postal, arrival=None):
     civic = parse_civic(hit.get("line") or "")
+    civic["postal"] = postal_code(hit.get("postal")) or civic["postal"]
     supplied = postal_code(requested_postal)
     civic_postal = civic.get("postal") or ""
     precise = bool(civic.get("number")) and hit.get("provider") in ("local", "mapbox")
     confidence = "address" if precise else "approximate"
-    if civic_postal and supplied and civic_postal != supplied:
+    if requested_postal and (not POSTAL.fullmatch(str(requested_postal).strip()) or not supplied.startswith("T")):
+        confidence = "review"
+        postal_status = "invalid"
+    elif civic_postal and supplied and civic_postal != supplied:
         confidence = "review"
         postal_status = "conflict"
     elif requested_postal and not supplied:
@@ -85,6 +89,8 @@ def classify(hit, requested_line, requested_postal, arrival=None):
     if requested.get("type") and civic.get("type") and requested["type"].lower()[:2] != civic["type"].lower()[:2]:
         confidence = "review"
     if not civic.get("number"):
+        confidence = "review"
+    if hit.get("matchConfidence") in ("low", "medium"):
         confidence = "review"
     if hit.get("provider") == "device":
         confidence = "approximate"

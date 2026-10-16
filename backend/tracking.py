@@ -173,6 +173,7 @@ class MapboxDirections:
 
     def __init__(self):
         self._cache = {}
+        self._blocked_until = 0
 
     def _estimate(self, position, dest, provider="estimated"):
         eta = ETA.eta(position, dest)
@@ -181,11 +182,14 @@ class MapboxDirections:
         return eta, None
 
     async def _fetch(self, profile, position, dest, token):
+        if time.time() < self._blocked_until:
+            raise RuntimeError("directions temporarily unavailable")
         async with httpx.AsyncClient(timeout=6) as client:
             response = await client.get(
                 self.URL.format(profile=profile, a=f"{position['lng']},{position['lat']}", b=f"{dest['lng']},{dest['lat']}"),
                 params={"access_token": token, "geometries": "geojson", "overview": "full"})
         if response.status_code in (401, 403, 429):
+            self._blocked_until = time.time() + 60
             raise RuntimeError("directions unavailable")
         response.raise_for_status()
         routes = response.json().get("routes") or []
@@ -196,7 +200,7 @@ class MapboxDirections:
     async def eta(self, aid, position, dest):
         token = os.environ.get("MAPBOX_TOKEN")
         cached = await cache_get(aid) or self._cache.get(aid)
-        if cached and time.time() - cached["ts"] < 30 and haversine_km(cached["from"], position) < 0.25:
+        if cached and cached.get("dest") == dest and time.time() - cached["ts"] < 30 and haversine_km(cached["from"], position) < 0.25:
             elapsed = (time.time() - cached["ts"]) / 60
             eta = dict(cached["eta"])
             eta["etaMin"] = max(0, math.ceil(cached["durMin"] - elapsed)) if eta["remainingKm"] > 0.05 else 0
@@ -217,7 +221,7 @@ class MapboxDirections:
         km, dur = round(route_doc["distance"] / 1000, 2), route_doc["duration"] / 60
         eta = {"etaMin": max(0, math.ceil(dur)) if km > 0.05 else 0, "remainingKm": km, "provider": provider, "confirmed": False}
         route = [{"lat": lat, "lng": lng} for lng, lat in route_doc["geometry"]["coordinates"]]
-        saved = {"ts": time.time(), "from": position, "durMin": dur, "eta": eta, "route": route}
+        saved = {"ts": time.time(), "from": position, "dest": dict(dest), "durMin": dur, "eta": eta, "route": route}
         self._cache[aid] = saved
         await cache_set(aid, saved)
         return eta, route

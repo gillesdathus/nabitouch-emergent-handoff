@@ -54,7 +54,13 @@ The repository check prints statuses/counts only. Its history patterns are inten
 
 ## External acceptance
 
-Stripe: keep live mode off. Use a dedicated sandbox and the documented test key configuration supported by this existing integration. Confirm a hosted deposit/full payment, decline/3DS, expiry, paid/unpaid completion, delayed success/failure, webhook replay, invoice/receipt, refund and ledger reconciliation. An inserted synthetic checkout proves handler behavior, not actual Stripe integration. See `STRIPE_WEBHOOK.md` and Stripe's [fulfillment guidance](https://docs.stripe.com/payments/checkout/fulfill-orders).
+Stripe: keep live mode off. Initial launch supports cards and Link where applicable;
+the genuine card/deposit/final-balance/3DS/decline/expiry/refund evidence is retained
+in `STRIPE_LIFECYCLE_ACCEPTANCE_2026-10-16.md`. Delayed-method provider success/failure
+is deferred outside initial scope, not passed; do not activate methods just for it.
+Retain automated async handler regressions. Native redelivery remains a staging
+gate. An inserted synthetic checkout proves handler behavior, not actual Stripe
+integration. See `STRIPE_WEBHOOK.md` and Stripe's [fulfillment guidance](https://docs.stripe.com/payments/checkout/fulfill-orders).
 
 Resend: check the verified sending domain, sender, DNS and webhook secret without exposing values. Use only a separately authorized test recipient for delivery. Confirm acceptance, inbox receipt and a verified delivery/bounce event; mock acceptance is insufficient. Keep lifecycle and billing mail disabled until individually approved.
 
