@@ -205,6 +205,11 @@ async def lifespan(_app):
     await ensure_imports(db)
     await ensure_clinical(db)
     await ensure_session_care(db)
+    try:
+        await coll("appointments").create_index("practitionerId", name="one_active_session", unique=True,
+                                                partialFilterExpression={"status": "in_session"})
+    except Exception:
+        logging.getLogger(__name__).warning("one_active_session index not created: existing overlapping sessions")
     await db.nt_ops_alerts.create_index("dedupeKey", unique=True)
     await ensure_legacy(db)
     await ensure_notifications(db)
@@ -611,7 +616,7 @@ class TransitionIn(BaseModel):
     opId: Optional[str] = None
 
 
-async def apply_transition(appt, to, actor, note=None):
+async def apply_transition(appt, to, actor, note=None, op_id=None):
     cur = appt["status"]
     if to not in TRANSITIONS.get(cur, []):
         raise HTTPException(409, f"Cannot move from {cur} to {to}")
@@ -638,7 +643,19 @@ async def apply_transition(appt, to, actor, note=None):
         upd["trip"] = await start_trip(appt, ts)
     elif appt.get("trip", {}).get("sharing"):
         upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": ts}  # stop client-visible tracking
-    await coll("appointments").update_one({"id": appt["id"]}, {"$set": upd})
+    guard = {"id": appt["id"], "status": cur}
+    change = {"$set": upd}
+    if op_id:
+        guard["opIds"] = {"$ne": op_id}
+        change["$push"] = {"opIds": {"$each": [op_id], "$slice": -40}}
+    try:
+        done = await coll("appointments").update_one(guard, change)
+    except DuplicateKeyError as exc:
+        raise HTTPException(409, "Another session is already in progress for this practitioner. End it before starting another.") from exc
+    if not done.matched_count:
+        raise HTTPException(409, "This visit was just updated on another device. Refresh and try again.")
+    if op_id:
+        upd["opIds"] = (appt.get("opIds") or [])[-39:] + [op_id]
     if to in ("cancelled", "no_show"):
         await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
     await add_audit(actor, f"{appt['ref']} → {to.replace('_', ' ')}", appt["id"])
@@ -989,14 +1006,18 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
     if body.to == "assigned" and appt.get("status") == "requested":
         await prepare_assignment(appt, appt["practitionerId"])
     body.actor = u["name"]
-    appt = await apply_transition(appt, body.to, body.actor, body.note)
+    op_id = body.opId[:64] if body.opId else None
+    try:
+        appt = await apply_transition(appt, body.to, body.actor, body.note, op_id)
+    except HTTPException:
+        latest = await coll("appointments").find_one({"id": appt_id}, {"_id": 0})
+        if op_id and latest and op_id in (latest.get("opIds") or []):
+            return latest
+        raise
     if body.to == "session_ended":
         appt = await apply_transition(appt, "soap_pending", "system")
     if body.to == "completed":
         appt = await apply_transition(appt, "processing", "system")
-    if body.opId:
-        await coll("appointments").update_one({"id": appt_id}, {"$push": {"opIds": {"$each": [body.opId[:64]], "$slice": -40}}})
-        appt = {**appt, "opIds": (appt.get("opIds") or []) + [body.opId[:64]]}
     if body.to == "cancelled":
         try:
             await note_cancellation(db, coll, appt)

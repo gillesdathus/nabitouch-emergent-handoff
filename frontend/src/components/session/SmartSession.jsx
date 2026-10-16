@@ -139,7 +139,7 @@ export function CleanupPanel({ appt, snap, serverNow, reload }) {
       <div className="flex items-center gap-3">
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-50 text-cyan-700"><Sparkles className="h-5 w-5" /></span>
         <div className="flex-1"><p className="nb-eyebrow">Cleanup & preparation</p><p className="text-sm font-semibold">{c.completedAt ? "Ready for next appointment" : "Cleanup in progress"}</p></div>
-        <span className={`nb-num text-3xl font-semibold tabular-nums ${!c.completedAt && remaining < 0 ? "text-rose-600" : ""}`} data-testid="cleanup-remaining">{c.completedAt ? `${c.actualMin}m` : fmtSpan(remaining)}</span>
+        <span className={`nb-num text-3xl font-semibold tabular-nums ${!c.completedAt && remaining < 0 ? "text-rose-600" : ""}`} data-testid="cleanup-remaining">{c.completedAt ? fmtSpan(c.actualMin * 60000) : fmtSpan(remaining)}</span>
       </div>
       {!c.completedAt && <div className="h-2 overflow-hidden rounded-full bg-cyan-50"><div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-teal-400" style={{ width: `${pct * 100}%`, transition: "width 1s linear" }} /></div>}
       <p className="text-xs text-nb-mute" data-testid="cleanup-buffer">{c.bufferMin} min buffer ({c.source}) · started {fmtClockTime(c.startedAt)}{!c.completedAt && remaining < 0 ? " · overrun. Cleanup is not completed automatically." : ""}{c.completedAt ? ` · completed ${fmtClockTime(c.completedAt)}${c.overrunMin > 0 ? ` · ${c.overrunMin} min over` : ""}` : ""}</p>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, Check } from "lucide-react";
@@ -28,6 +28,7 @@ export default function Intake() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({ allergies: "", medications: "", conditions: [], conditionsOther: "", surgeries: "", physician: "", pregnancy: "", weeks: "", emergencyName: "", emergencyPhone: "", emergencyRelation: "", areas: [], avoid: "", pressure: "medium", answers: {}, consent: false });
   const [error, setError] = useState("");
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [step]);
   const set = (patch) => setForm((current) => ({ ...current, ...patch }));
   if (!me) {
     return <div className="mx-auto max-w-xl px-5 py-16 text-center"><p>Sign in to save a health intake on your account.</p><Link to="/login?next=/me/intake" className="nb-btn-primary mt-4">Sign in</Link></div>;
@@ -39,7 +40,7 @@ export default function Intake() {
     History: !!form.pregnancy,
     Emergency: form.emergencyName.trim().length >= 2 && form.emergencyPhone.replace(/\D/g, "").length >= 10,
     Focus: form.areas.length > 0,
-    Today: questions.filter((q) => q.kind === "yesno").every((q) => form.answers[q.id]),
+    Today: !!readiness && questions.filter((q) => q.kind === "yesno").every((q) => form.answers[q.id]),
     Confirm: form.consent,
   }[name];
   const submit = async () => {

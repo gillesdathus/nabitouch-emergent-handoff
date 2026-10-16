@@ -14,15 +14,19 @@ const num = (value) => (value === "" || value == null ? null : Number(value));
 function ConfigCard() {
   const { state } = useDemo();
   const [cfg, setCfg] = useState(null);
+  const [saved, setSaved] = useState(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.turnaroundConfig().then(setCfg).catch(() => {}); }, []);
+  useEffect(() => { api.turnaroundConfig().then((row) => { setCfg(row); setSaved(row); }).catch(() => {}); }, []);
   if (!cfg) return <div className="nb-card h-40 animate-pulse" />;
   const table = (key, id, value) => setCfg({ ...cfg, [key]: { ...cfg[key], [id]: value } });
   const save = async () => {
     setBusy(true);
     try {
       const clean = (t) => Object.fromEntries(Object.entries(t).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, Number(v)]));
-      setCfg(await api.saveTurnaroundConfig({ ...Object.fromEntries(BASE.map(([k]) => [k, num(cfg[k])])), byService: clean(cfg.byService), byPractitioner: clean(cfg.byPractitioner), equipmentServices: cfg.equipmentServices }));
+      const changed = BASE.filter(([k]) => String(cfg[k] ?? "") !== String(saved[k] ?? "")).map(([k]) => [k, num(cfg[k])]);
+      const row = await api.saveTurnaroundConfig({ ...Object.fromEntries(changed), byService: clean(cfg.byService), byPractitioner: clean(cfg.byPractitioner), equipmentServices: cfg.equipmentServices });
+      setCfg(row);
+      setSaved(row);
       toast.success("Cleanup buffers saved. Existing bookings are not changed.");
     } catch (err) { toast.error(err?.response?.data?.detail || "Not saved"); } finally { setBusy(false); }
   };

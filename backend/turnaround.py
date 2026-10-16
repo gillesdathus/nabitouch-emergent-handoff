@@ -407,7 +407,15 @@ def build_turnaround_router(db, coll, add_audit, user_from, reception_perms):
                 if snap.get("next") and snap["next"]["state"] == "running_late" and state in ("ready_next", "cleanup_in_progress"):
                     entry["state"] = "running_late"
             out.append(entry)
-        alerts = await db.nt_ops_alerts.find({"status": "open"}, {"_id": 0, "dedupeKey": 0}).sort("at", -1).to_list(50)
+        day_start = datetime.combine(at.astimezone(TZ).date(), datetime.min.time(), TZ).astimezone(timezone.utc).isoformat()
+        stale = await db.nt_ops_alerts.find({"status": "open"}, {"_id": 0, "id": 1, "at": 1, "kind": 1, "nextAppointmentId": 1}).to_list(500)
+        next_ids = [row["nextAppointmentId"] for row in stale if row.get("nextAppointmentId")]
+        nexts = {row["id"]: row.get("status") for row in await coll("appointments").find({"id": {"$in": next_ids}}, {"_id": 0, "id": 1, "status": 1}).to_list(500)}
+        expired = [row["id"] for row in stale if row["at"] < day_start or (row.get("nextAppointmentId") and nexts.get(row["nextAppointmentId"]) not in NEXT_STATUSES)]
+        if expired:
+            await db.nt_ops_alerts.update_many({"id": {"$in": expired}}, {"$set": {"status": "resolved", "ackBy": "system", "ackAt": at.isoformat(),
+                                                                               "resolution": "Next visit started, finished or the day ended"}})
+        alerts = await db.nt_ops_alerts.find({"status": "open", "at": {"$gte": day_start}}, {"_id": 0, "dedupeKey": 0}).sort("at", -1).to_list(50)
         return {"serverNow": at.isoformat(), "practitioners": out, "alerts": alerts}
 
     @r.post("/ops/turnaround/alerts/{alert_id}/ack")
@@ -456,7 +464,8 @@ def build_turnaround_router(db, coll, add_audit, user_from, reception_perms):
                 "cleanups": len(cleaned), "avgCleanupMin": avg([c.get("actualMin") for c in cleaned]), "avgCleanupBufferMin": avg([c.get("bufferMin") for c in cleaned]),
                 "cleanupOverruns": sum(1 for c in cleaned if (c.get("overrunMin") or 0) > 0),
                 "avgTurnaroundMin": avg([c.get("actualMin") for c in cleaned]),
-                "onTimeStarts": sum(1 for d in starts if d <= 5), "lateStarts": sum(1 for d in starts if d > 5), "avgStartDelayMin": avg(starts),
+                "onTimeStarts": sum(1 for d in starts if -15 <= d <= 5), "lateStarts": sum(1 for d in starts if d > 5),
+                "earlyStarts": sum(1 for d in starts if d < -15), "avgStartDelayMin": avg([d for d in starts if d >= -15]),
                 "travelDelays": len(delays), "avgTravelDelayMin": avg(delays),
             }
 

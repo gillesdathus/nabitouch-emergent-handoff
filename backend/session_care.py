@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
+from pymongo.errors import DuplicateKeyError
 
 from fieldcrypto import open_tree, seal_tree
 
@@ -107,6 +108,27 @@ async def ensure_session_care(db):
     for name in ("nt_intake_confirmations", "nt_session_consents", "nt_consent_events"):
         await db[name].create_index("id", unique=True)
         await db[name].create_index([("appointmentId", 1), ("at", -1)])
+    await ensure_intake_versions(db)
+
+
+async def ensure_intake_versions(db):
+    try:
+        await db.nt_intake.create_index([("clientId", 1), ("version", 1)], unique=True, name="intake_version_unique")
+    except Exception:
+        pass
+
+
+async def append_intake(db, client_id, fields):
+    for _attempt in range(3):
+        rows = await db.nt_intake.find({"clientId": client_id}, {"_id": 0, "version": 1}).sort("version", -1).to_list(1)
+        version = (rows[0]["version"] if rows else 0) + 1
+        row = {"id": "in-" + uuid.uuid4().hex[:12], "clientId": client_id, "version": version, "at": now_iso(), **fields}
+        try:
+            await db.nt_intake.insert_one(seal_tree(dict(row)))
+            return row
+        except DuplicateKeyError:
+            continue
+    raise HTTPException(409, "Another health update was saved at the same moment. Reload and try again.")
 
 
 async def clear_session_care(db):
@@ -254,10 +276,8 @@ def build_session_care_router(db, coll, add_audit, user_from, apply_transition):
         if body.get("appointmentId"):
             appt = await appointment_for(user, _clip(body["appointmentId"], 60), ("client",))
         answers = _answers(appt.get("serviceSlug"), body.get("answers")) if appt else {}
-        version = await db.nt_intake.count_documents({"clientId": user["subject"]}) + 1
-        row = {"id": "in-" + uuid.uuid4().hex[:12], "clientId": user["subject"], "version": version, "at": now_iso(),
-               "baseline": True, "source": "full-history", "conditions": conditions, **fields}
-        await db.nt_intake.insert_one(seal_tree(dict(row)))
+        row = await append_intake(db, user["subject"], {"baseline": True, "source": "full-history", "conditions": conditions, **fields})
+        version = row["version"]
         if appt:
             await db.nt_intake_confirmations.insert_one(seal_tree({
                 "id": "inc-" + uuid.uuid4().hex[:12], "appointmentId": appt["id"], "clientId": user["subject"], "at": now_iso(),
@@ -295,10 +315,8 @@ def build_session_care_router(db, coll, add_audit, user_from, apply_transition):
                     changed_fields.append("conditions")
             if not changed_fields:
                 raise HTTPException(400, "Edit the details that changed, or confirm nothing changed")
-            version = latest["version"] + 1
-            row = {"id": "in-" + uuid.uuid4().hex[:12], "clientId": user["subject"], "version": version, "at": now_iso(),
-                   "baseline": True, "source": "visit-update", "appointmentId": appt_id, **merged}
-            await db.nt_intake.insert_one(seal_tree(dict(row)))
+            row = await append_intake(db, user["subject"], {"baseline": True, "source": "visit-update", "appointmentId": appt_id, **merged})
+            version = row["version"]
         confirmation = {
             "id": "inc-" + uuid.uuid4().hex[:12], "appointmentId": appt_id, "clientId": user["subject"], "at": now_iso(),
             "intakeVersion": version, "changed": changed, "changedFields": changed_fields, "answers": answers, "firstVisit": False,

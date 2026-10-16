@@ -61,6 +61,20 @@ export function usePendingOps(apptId) {
   return rows;
 }
 
+// Flushes queued session actions on reconnect or foreground for any visit status, then refreshes app state.
+export function useSessionOpSync(onSynced) {
+  useEffect(() => {
+    const flush = () => { if (navigator.onLine) flushSessionOps().then((sent) => { if (sent) onSynced?.(); }); };
+    const visible = () => { if (!document.hidden) flush(); };
+    flush();
+    const timer = setInterval(flush, 20000);
+    window.addEventListener('online', flush);
+    window.addEventListener('nabitouch:resume', flush);
+    document.addEventListener('visibilitychange', visible);
+    return () => { clearInterval(timer); window.removeEventListener('online', flush); window.removeEventListener('nabitouch:resume', flush); document.removeEventListener('visibilitychange', visible); };
+  }, [onSynced]);
+}
+
 export function useOnline() {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   useEffect(() => {

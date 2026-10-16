@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Confirm } from "@/components/ui-kit";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, Check, CheckCircle2, ClipboardCheck, FileSignature, ShieldCheck } from "lucide-react";
@@ -85,7 +86,9 @@ function ConsentStep({ data, apptId, onDone, defaultName }) {
 
 function Done({ data, apptId, onChange }) {
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
   const withdraw = async () => {
+    setAsking(false);
     setBusy(true);
     try { onChange(await api.withdrawSessionConsent(apptId, "")); toast.success("Consent withdrawn. Your therapist will not start or continue treatment."); }
     catch (err) { toast.error(err?.response?.data?.detail || "Not withdrawn"); } finally { setBusy(false); }
@@ -96,7 +99,8 @@ function Done({ data, apptId, onChange }) {
       <p className="text-lg font-semibold">You're all set</p>
       <p className="text-sm text-nb-mute">Signed by {data.consent.record?.typedName} at {new Date(data.consent.record?.at).toLocaleString("en-CA", { timeZone: "America/Edmonton" })}</p>
       <div className="flex justify-center"><RestrictionList restrictions={data.restrictions} /></div>
-      <button type="button" disabled={busy} onClick={withdraw} className="text-sm font-semibold text-rose-700" data-testid="prep-withdraw">Withdraw my consent</button>
+      <button type="button" disabled={busy} onClick={() => setAsking(true)} className="text-sm font-semibold text-rose-700" data-testid="prep-withdraw">Withdraw my consent</button>
+      <Confirm open={asking} onOpenChange={setAsking} title="Withdraw consent for this visit?" body="Your therapist will not start, or will stop, treatment. You can sign again later if you change your mind." confirmLabel="Withdraw consent" onConfirm={withdraw} testid="prep-withdraw-confirm" />
     </div>
   );
 }
@@ -111,6 +115,11 @@ export default function SessionPrep() {
   if (!data || !appt) return <div className="mx-auto max-w-xl px-5 py-10"><div className="nb-card h-60 animate-pulse" data-testid="prep-loading" /></div>;
   const needsBaseline = ["missing", "baseline_needed"].includes(data.intake.state);
   const step = data.ready ? 2 : data.intake.state === "confirmed" ? 1 : 0;
+  return <PrepBody {...{ id, nav, idx, appt, data, setData, me, needsBaseline, step }} />;
+}
+
+function PrepBody({ id, nav, idx, appt, data, setData, me, needsBaseline, step }) {
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [step]);
   return (
     <div className="mx-auto max-w-xl px-5 pb-32 pt-4" data-testid="session-prep">
       <div className="mb-5 flex items-center gap-3">

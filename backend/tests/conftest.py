@@ -26,3 +26,7 @@ def legacy_session_consent(request):
     requests.sessions.Session.request = _request
     yield
     requests.sessions.Session.request = _original
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_consent: exercise the real intake/consent gate (no auto-consent shim)")

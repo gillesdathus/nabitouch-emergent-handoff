@@ -17,7 +17,7 @@ import { MemberBadge } from "@/components/MemberBadge";
 import { openNavigation } from "@/lib/nativeShell";
 import { SessionReadiness, useSessionReadiness } from "@/components/session/SessionReadiness";
 import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/components/session/SmartSession";
-import { sendSessionOp, useTurnaround } from "@/lib/turnaround";
+import { sendSessionOp, usePendingOps, useSessionOpSync, useTurnaround } from "@/lib/turnaround";
 import { toast } from "sonner";
 
 const READINESS_STATUSES = ["assigned", "confirmed", "preparing", "en_route", "arrived", "interrupted", "in_session", "safety_hold"];
@@ -108,6 +108,8 @@ export default function Visit() {
   const timed = !training && !!appt && (!!appt.session || !!appt.cleanup || appt.status === "in_session");
   const clock = useTurnaround(id, { active: timed, interval: appt?.status === "in_session" ? 15000 : 30000 });
   const { reload: reloadClock } = clock;
+  const queued = usePendingOps(id);
+  useSessionOpSync(refresh);
   const apptKey = `${appt?.status}|${appt?.cleanup?.completedAt || ""}|${appt?.timer?.pausedAt || ""}`;
   useEffect(() => { if (timed) reloadClock(); }, [apptKey, timed, reloadClock]);
   const trial = isLiveTrial(idx.settings, appt);
@@ -122,7 +124,7 @@ export default function Visit() {
     ? `https://www.google.com/maps/dir/?api=1&destination=${appt.address.arrival.lat},${appt.address.arrival.lng}`
     : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(appt.address.line)}`;
 
-  const gated = !training && primary?.to === "in_session" && !readiness?.ready;
+  const gated = !training && ((primary?.to === "in_session" && !readiness?.ready) || queued.length > 0);
   const doIt = async (a) => {
     if (a.nav) return nav(`/pro/soap/${appt.id}`);
     if (pending) return;
@@ -177,11 +179,11 @@ export default function Visit() {
       {timed && clock.snap?.treatment && <TreatmentTimer appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} clientName={`${c?.preferredName || c?.firstName || ""} ${c?.lastName || ""}`.trim()} serviceName={s?.name} actor={actor} />}
       {timed && clock.snap?.cleanup && <CleanupPanel appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} />}
       {timed && clock.snap && (appt.status === "in_session" || clock.snap.cleanup) && <NextBookingCard snap={clock.snap} idx={idx} />}
-      {timed && <SyncStrip apptId={appt.id} error={clock.error} lastSync={clock.lastSync} onRetry={() => { reloadClock(); refresh(); }} />}
+      {(timed || queued.length > 0) && <SyncStrip apptId={appt.id} error={clock.error} lastSync={clock.lastSync} onRetry={() => { reloadClock(); refresh(); }} />}
 
       <div className="safe-bottom sticky bottom-[72px] z-20 lg:static">
         <AnimatePresence>{flash && <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2"><SuccessMark size={64} /></motion.div>}</AnimatePresence>
-        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg disabled:opacity-60">{pending ? "Saving…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
+        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg disabled:opacity-60">{pending ? "Saving…" : queued.length ? "Waiting to sync…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
       </div>
       <div className="space-y-3">
         {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <div className="flex flex-wrap gap-2"><ReadinessBadge readiness={appt.readiness} /></div>}

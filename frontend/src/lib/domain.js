@@ -77,6 +77,7 @@ export const ACTIONS = [
   { to: 'arrived', label: "I've Arrived", from: ['en_route'] },
   { to: 'in_session', label: 'Start Session', from: ['arrived'] },
   { to: 'in_session', label: 'Resume Session', from: ['interrupted'] },
+  { to: 'leaving', label: 'End Visit & Leave', from: ['interrupted'], confirm: 'End this visit without further treatment? Treatment time so far is recorded and cleanup starts.' },
   { to: 'session_ended', label: 'End Treatment', from: ['in_session'], confirm: 'End treatment now? The treatment time is recorded and the cleanup countdown starts.' },
   { to: 'soap', label: 'Complete SOAP Notes', from: ['soap_pending'], nav: true },
   { to: 'leaving', label: 'Leaving Client Location', from: ['soap_pending', 'soap_completed'], confirm: 'Confirm you are leaving the client location.' },
