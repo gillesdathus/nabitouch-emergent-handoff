@@ -669,6 +669,24 @@ def client_key(request: Request):
     return "unknown"
 
 
+async def remember_confirmed_address(client_id, stored):
+    """After the server re-verified an address for a booking, mark the matching saved address as confirmed. Never adds new addresses."""
+    if not client_id or not stored or stored.get("clientConfirmed") is not True or stored.get("confidence") != "address":
+        return
+    person = await coll("clients").find_one({"id": client_id}, {"_id": 0, "addresses": 1}) or {}
+    street = lambda line: " ".join(str(line or "").split(",")[0].lower().split())
+    changed = False
+    rows = []
+    for a in person.get("addresses") or []:
+        if street(a.get("line")) and street(a.get("line")) == street(stored["line"]):
+            a = {**a, "line": stored["line"], "lat": stored["lat"], "lng": stored["lng"], "zoneId": stored["zoneId"], "mapboxId": stored.get("mapboxId") or "",
+                 "civic": stored.get("civic"), "confidence": "address", "clientConfirmed": True, "confirmedAt": now_iso()}
+            changed = True
+        rows.append(a)
+    if changed:
+        await coll("clients").update_one({"id": client_id}, {"$set": {"addresses": rows}})
+
+
 async def locate_visit(address, zones, settings):
     """Resolve a mobile address on the server. Client lat/lng and travel fees are not the source of the quote."""
     line = " ".join(str(address.get("line") or "").split())
@@ -1536,6 +1554,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             return {"appointment": existing, "clientId": client_id}
         raise HTTPException(409, "Booking could not be saved")
     appt.pop("_id", None)
+    await remember_confirmed_address(client_id, appt.get("address"))
     if ctx.get("winbackCode"):
         try:
             await reserve_invite(db, ctx["winbackCode"], client_id, appt["id"])

@@ -12,6 +12,8 @@ import hashlib
 import hmac
 import time
 import httpx
+
+from emailtpl import TEMPLATE_VERSION, wrap
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 from fastapi import HTTPException
@@ -128,6 +130,7 @@ def resend_webhook_authentic(body: bytes, headers, secret: str, now=None) -> boo
 async def send_email(*, to: str, subject: str, html: str, idempotency_key: str | None = None) -> str | None:
     from config import email_provider
     _assert_safe_email(subject, html)
+    html = wrap(html, subject)
     provider = email_provider()
     redirect = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
     if redirect and provider in ("resend", "emergent") and to.lower() != redirect.lower():
@@ -175,7 +178,7 @@ async def _send_resend(*, to: str, subject: str, html: str, idempotency_key: str
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     if not key or not sender:
         raise HTTPException(503, "Email is not configured")
-    payload = {"from": sender, "to": [to], "subject": subject, "html": html}
+    payload = {"from": sender, "to": [to], "subject": subject, "html": html, "tags": [{"name": "template", "value": TEMPLATE_VERSION.replace(".", "-")}]}
     reply = (os.environ.get("EMAIL_REPLY_TO") or "").strip()
     if reply:
         payload["reply_to"] = reply

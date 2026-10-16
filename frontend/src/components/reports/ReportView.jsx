@@ -1,3 +1,4 @@
+import { DateField } from "@/components/DateField";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, Loader2 } from "lucide-react";
@@ -27,9 +28,9 @@ export function RangePicker({ range, setRange, presets = PRESETS }) {
       <div className="flex flex-wrap gap-1 rounded-full bg-white p-1 ring-1 ring-sky-100">
         {presets.map(([k, l]) => { const [s, e] = presetRange(k); const on = chosen === k && range[0] === s && range[1] === e; return <button key={k} type="button" onClick={() => { setChosen(k); setRange([s, e]); }} data-testid={`report-preset-${k}`} className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${on ? "bg-nb-navy text-white" : "text-nb-mute hover:text-nb-ink"}`}>{l}</button>; })}
       </div>
-      <input type="date" value={range[0]} onChange={(e) => setRange([e.target.value, range[1]])} className="nb-input h-9 w-auto text-xs" data-testid="report-start" />
+      <DateField value={range[0]} max={range[1]} onChange={(v) => setRange([v, range[1]])} testid="report-start" />
       <span className="text-xs text-nb-mute">to</span>
-      <input type="date" value={range[1]} onChange={(e) => setRange([range[0], e.target.value])} className="nb-input h-9 w-auto text-xs" data-testid="report-end" />
+      <DateField value={range[1]} min={range[0]} onChange={(v) => setRange([range[0], v])} testid="report-end" />
     </div>
   );
 }
