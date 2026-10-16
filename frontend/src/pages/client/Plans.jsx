@@ -5,7 +5,7 @@ import { ArrowLeft, CalendarCheck, Layers, Loader2, Repeat, Sparkles } from "luc
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 import { EmptyState, Notice, PageHeader, Reveal } from "@/components/tide";
-import { fmtDate } from "@/lib/domain";
+const fmtDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 
 const key = () => `plan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -18,7 +18,7 @@ function CreditCardTile({ g, i }) {
         <p className="text-xs font-semibold uppercase tracking-widest text-white/70">{g.duration} min</p>
         <p className="mt-1 text-lg font-semibold">{g.serviceName}</p>
         <p className="mt-6 text-4xl font-semibold tabular-nums" data-testid={`plan-available-${g.serviceSlug}-${g.duration}`}>{g.available}<span className="text-base font-normal text-white/70"> credit{g.available === 1 ? "" : "s"} left</span></p>
-        <div className="mt-3 flex gap-1">{Array.from({ length: Math.min(total, 12) }).map((_, n) => <span key={n} className={`h-1.5 flex-1 rounded-full ${n < g.consumed ? "bg-white/25" : n < g.consumed + g.reserved ? "bg-amber-200" : "bg-white"}`} />)}</div>
+        <div className="mt-3 flex gap-1">{Array.from({ length: Math.min(total, 24) }).map((_, n) => <span key={n} className={`h-1.5 flex-1 rounded-full ${n < g.consumed ? "bg-white/25" : n < g.consumed + g.reserved ? "bg-amber-200" : "bg-white"}`} />)}</div>
         <p className="mt-3 text-xs text-white/80">{g.reserved ? `${g.reserved} held for a booked visit · ` : ""}{g.nextExpiry ? `Next expiry ${fmtDate(g.nextExpiry.slice(0, 10))}` : "No unused credits"}</p>
       </div>
     </Reveal>

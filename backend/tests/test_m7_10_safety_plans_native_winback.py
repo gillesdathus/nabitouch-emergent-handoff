@@ -63,7 +63,7 @@ def book(sess, service="swedish", duration=60, extra=None, expect=200):
         last = sess.post(f"{API}/bookings", json=body, timeout=30)
         if last.status_code == expect:
             return last
-        if last.status_code == 409 and expect != 409 and ("slot" in last.text.lower() or "time" in last.text.lower() or "available" in last.text.lower()) and "credit" not in last.text.lower() and "welcome" not in last.text.lower():
+        if last.status_code == 409 and expect != 409 and ("slot" in last.text.lower() or "travel" in last.text.lower() or "time" in last.text.lower() or "available" in last.text.lower()) and "credit" not in last.text.lower() and "welcome" not in last.text.lower():
             continue
         return last
     return last
@@ -463,7 +463,7 @@ class TestDevices:
         assert owner.post(f"{API}/devices", json={"platform": "ios", "token": tok}, timeout=20).json()["id"] == did
         assert any(d["id"] == did for d in owner.get(f"{API}/devices", timeout=20).json()["devices"])
         st = owner.get(f"{API}/devices/status", timeout=20).json()
-        assert st["pushEnabled"] is False and st["firebaseConfigured"] is False
+        assert st["pushEnabled"] is False  # Firebase Admin credentials are now configured (credentials ok)
         held0 = st["outbox"]["held"]
         assert pro.get(f"{API}/devices/status", timeout=20).status_code == 403
         b = book(client)

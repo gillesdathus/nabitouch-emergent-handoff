@@ -52,7 +52,7 @@ from recovery import (
     apply_campaign_price, award_campaign, build_recovery_router, consume_recovery_hold, release_campaign, reserve_campaign, validate_fee,
 )
 from pricing import (
-    BLOCKING_STATUSES, client_matches_person, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
+    BLOCKING_STATUSES, client_matches_person, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
@@ -212,6 +212,8 @@ async def lifespan(_app):
     await ensure_winback(db)
     await ensure_sms(db)
     await db.nt_cron_runs.create_index("id", unique=True)
+    await db.nt_statement_locks.create_index("id", unique=True)
+    await db.nt_statement_locks.create_index("at", expireAfterSeconds=120)
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     if not is_production():
@@ -669,16 +671,17 @@ def client_key(request: Request):
     return "unknown"
 
 
-async def remember_confirmed_address(client_id, stored):
+async def remember_confirmed_address(client_id, stored, saved_id=None):
     """After the server re-verified an address for a booking, mark the matching saved address as confirmed. Never adds new addresses."""
     if not client_id or not stored or stored.get("clientConfirmed") is not True or stored.get("confidence") != "address":
         return
     person = await coll("clients").find_one({"id": client_id}, {"_id": 0, "addresses": 1}) or {}
-    street = lambda line: " ".join(str(line or "").split(",")[0].lower().split())
     changed = False
     rows = []
     for a in person.get("addresses") or []:
-        if street(a.get("line")) and street(a.get("line")) == street(stored["line"]):
+        # Match the saved address the client picked, or one within ~60 m of the verified point. Street text differs between geocoder and input.
+        near = a.get("lat") is not None and a.get("lng") is not None and haversine_km({"lat": a["lat"], "lng": a["lng"]}, {"lat": stored["lat"], "lng": stored["lng"]}) <= 0.06
+        if not changed and ((saved_id and a.get("id") == saved_id) or (not saved_id and near)):
             a = {**a, "line": stored["line"], "lat": stored["lat"], "lng": stored["lng"], "zoneId": stored["zoneId"], "mapboxId": stored.get("mapboxId") or "",
                  "civic": stored.get("civic"), "confidence": "address", "clientConfirmed": True, "confirmedAt": now_iso()}
             changed = True
@@ -1554,7 +1557,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             return {"appointment": existing, "clientId": client_id}
         raise HTTPException(409, "Booking could not be saved")
     appt.pop("_id", None)
-    await remember_confirmed_address(client_id, appt.get("address"))
+    await remember_confirmed_address(client_id, appt.get("address"), (fields.get("address") or {}).get("id"))
     if ctx.get("winbackCode"):
         try:
             await reserve_invite(db, ctx["winbackCode"], client_id, appt["id"])

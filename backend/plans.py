@@ -20,7 +20,7 @@ def now_iso():
 
 def money(cents):
     cents = int(cents or 0)
-    return {"cents": cents, "display": f"{'-' if cents < 0 else ''}${abs(cents) // 100}.{abs(cents) % 100:02d}"}
+    return {"cents": cents, "display": f"{'-' if cents < 0 else ''}${abs(cents) // 100:,}.{abs(cents) % 100:02d}"}
 
 
 async def ensure_plans(db):

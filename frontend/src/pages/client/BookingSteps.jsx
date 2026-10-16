@@ -31,7 +31,7 @@ export function StepWhere() {
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (
             <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
-              <button key={a.id} onClick={() => patchDraft({ address: { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" }, addressQuery: a.line })} data-testid={`saved-address-${a.id}`} className={draft.address?.line === a.line ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
+              <button key={a.id} onClick={() => patchDraft({ address: { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" }, addressQuery: a.line })} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
             </div>
           )}
           <AddressPicker testid="step-where-address" query={draft.addressQuery} onQuery={(v) => patchDraft({ addressQuery: v })} value={draft.address} onChange={(a) => patchDraft({ address: a })} />

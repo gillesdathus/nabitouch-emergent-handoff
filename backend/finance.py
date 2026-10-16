@@ -1,4 +1,5 @@
 """Financial reports from the invoice ledger, gift-card ledger and claims. JSON, CSV and branded PDF."""
+from pymongo.errors import DuplicateKeyError
 import csv
 import io
 import uuid
@@ -399,10 +400,26 @@ def build_finance_router(db, user_from, settings_doc):
         created = []
         skipped = []
         for pid, vs in grouped.items():
-            overlap = await db.nt_pay_statements.find_one({"practitionerId": pid, "start": {"$lte": end}, "end": {"$gte": start}}, {"_id": 0, "id": 1})
-            if overlap:
+            # A per-practitioner lock makes the overlap check and insert atomic, so a period can never be paid twice.
+            try:
+                await db.nt_statement_locks.insert_one({"id": pid, "at": datetime.now(timezone.utc)})
+            except DuplicateKeyError:
                 skipped.append(vs[0].get("practitionerName"))
                 continue
+            try:
+                overlap = await db.nt_pay_statements.find_one({"practitionerId": pid, "status": {"$ne": "voided"}, "start": {"$lte": end}, "end": {"$gte": start}}, {"_id": 0, "id": 1})
+                if overlap:
+                    skipped.append(vs[0].get("practitionerName"))
+                    continue
+                await _create_statement(pid, vs, start, end, user, pay_rules, created)
+            finally:
+                await db.nt_statement_locks.delete_one({"id": pid})
+        if not created:
+            raise HTTPException(409 if skipped else 404, f"A statement already covers this period for {', '.join(n for n in skipped if n)}. Delete the draft first." if skipped else "No invoiced visits for that period")
+        return created
+
+    async def _create_statement(pid, vs, start, end, user, pay_rules, created):
+        if vs:
             rule = rule_for(pay_rules, pid)
             rows, pay, net = [], 0, 0
             for v in sorted(vs, key=lambda x: _day(x["serviceDate"])):
@@ -423,9 +440,6 @@ def build_finance_router(db, user_from, settings_doc):
                    "headers": ["Date", "Invoice", "Service", "Length", "Base", "Pay"], "rows": rows, "payCents": pay}
             await db.nt_pay_statements.insert_one(dict(doc))
             created.append(statement_view(doc, False))
-        if not created:
-            raise HTTPException(409 if skipped else 404, f"A statement already covers this period for {', '.join(n for n in skipped if n)}. Delete the draft first." if skipped else "No invoiced visits for that period")
-        return created
 
     @r.get("/statements")
     async def list_statements(request: Request):

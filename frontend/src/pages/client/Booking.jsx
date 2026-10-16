@@ -189,8 +189,8 @@ export default function Booking() {
             <p className="text-sm font-semibold">Your booking</p>
             {service ? <><p className="mt-3 text-sm">{service.name} · {draft.duration} min</p>{draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}<div className="mt-4"><Breakdown q={step === 5 && serverQuote ? serverQuote : q} settlement={step === 5 ? settlement : null} compact /></div></> : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>
-          {!useCredit && !winbackCode && <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>}
-          {!useCredit && !winbackCode && <PromoBanner compact eligible={welcomeOfferListed(state.promotions.find((p) => p.id === "promo-welcome"))} testid="booking-promo-banner" />}
+          {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>}
+          {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <PromoBanner compact eligible={welcomeOfferListed(state.promotions.find((p) => p.id === "promo-welcome"))} testid="booking-promo-banner" />}
         </div>
       </aside>
     </div>

@@ -72,8 +72,11 @@ export default function Safety() {
   const { user } = useDemo();
   const [filter, setFilter] = useState("open");
   const [data, setData] = useState(undefined);
-  const load = useCallback(() => api.safetyEvents(filter === "all" ? "" : filter).then(setData).catch((e) => setData({ error: apiError(e), events: [] })), [filter]);
+  const [allowed, setAllowed] = useState(null);
+  useEffect(() => { api.safetyMe().then((r) => setAllowed(r.manager)).catch(() => setAllowed(false)); }, []);
+  const load = useCallback(() => allowed !== true ? Promise.resolve() : api.safetyEvents(filter === "all" ? "" : filter).then(setData).catch((e) => setData({ error: apiError(e), events: [] })), [filter, allowed]);
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
+  if (allowed === false) return <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page"><PageHeader eyebrow="Practitioner safety" title="Safety alerts" /><Notice testid="safety-not-manager">Safety alerts are shared with the owner and the staff the owner names as safety managers. Ask the owner to add you if you should receive them.</Notice></div>;
   return (
     <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page">
       <PageHeader eyebrow="Practitioner safety" title="Safety alerts" sub={data?.open ? `${data.open} open alert${data.open > 1 ? "s" : ""}` : "In-app alerts from practitioners in the field."} />
