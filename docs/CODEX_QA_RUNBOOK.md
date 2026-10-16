@@ -2,6 +2,8 @@
 
 Read `CODEX_QA_2026-10-15.md` for actual evidence and outstanding blockers. These instructions authorize no deployment, production data access, real notification, live charge or app publication.
 
+Current clean-install/security work is documented in `CI_DEPENDENCY_SECURITY_REVIEW.md`; Hostinger VPS staging preparation is in `HOSTINGER_STAGING_PROVISIONING.md`. Historical counts in the earlier QA report remain dated evidence.
+
 ## Repeatable backend QA
 
 Requires Docker Compose. From repository root:
@@ -23,7 +25,7 @@ The QA network is internal, Mongo/Redis publish no ports and mount no production
 
 Run serially (`-n 0` is enforced by the runner) because older suites share backend state. Do not replace fresh databases with a cleanup against an existing operational database. Logs/JUnit go to ignored `test_reports/`; handle them as synthetic test artifacts. Keys are deliberately not persisted, so encrypted fixture records retained after the process exits are not a key-recovery drill.
 
-For CI, use a clean checkout and those same Compose commands on a Docker-enabled runner. Archive `test_reports/qa-results-*.xml`, not `.env` files or credentials. Preserve the test exit code. The QA Dockerfile includes Git so the tracked-secret validator runs. The Compose configuration was validated locally, but its new image has not been built from scratch and no remote CI job has run; dependency resolution remains to be proven there. Local verification reused Cursor's installed read-only Python virtualenv.
+For CI, use a clean checkout and those same Compose commands on a Docker-enabled runner. Archive `test_reports/qa-results-*.xml`, not `.env` files or credentials. Preserve the test exit code. The QA Dockerfile installs the hash-locked `requirements-dev.txt` and includes Git so the tracked-secret validator runs. The clean image has now been built locally and the selected suite passed 185 tests with five skips and no Git exclusion. This is local evidence; inspect the GitHub Actions run for actual remote status.
 
 After exporting artifacts, `docker compose -f deploy/qa/compose.yml down` removes only this QA project's containers/network. Do not add unrelated service names or production volume paths. Synthetic databases live in the disposable QA Mongo container; no production cleanup is required.
 
@@ -39,7 +41,7 @@ $env:REACT_APP_BACKEND_URL = 'https://example.com'
 yarn build
 ```
 
-The HTTPS example origin is solely for compilation. The generated bundle must not be deployed as a release candidate. A real build requires the approved API origin and restricted public Mapbox token. Local test evidence used `npm.cmd install --ignore-scripts --legacy-peer-deps --package-lock=false`, `npm.cmd test` and `npm.cmd run build`; this did not verify a clean frozen Yarn install.
+The HTTPS example origin is solely for compilation. The generated bundle must not be deployed as a release candidate. A real build requires the approved API origin and restricted public Mapbox token. The original evidence used npm without a lockfile; the subsequent CI preparation repaired `yarn.lock`, verified a frozen Yarn 1.22.22 install and reran Vitest/build. CI uses `--ignore-scripts --non-interactive` and the committed lockfile.
 
 On Windows, a process-scoped script invocation runs the host repository checks without changing persistent execution policy:
 

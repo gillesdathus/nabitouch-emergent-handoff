@@ -1,0 +1,101 @@
+name: Nabitouch clean CI
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: clean-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  configuration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Repository secret exclusions and redacted history inventory
+        run: python3 scripts/check_repository.py
+      - name: Staging preflight guards
+        run: python3 scripts/test_staging_preflight.py
+      - name: Validate QA and staging examples without starting staging
+        run: |
+          docker compose -f deploy/qa/compose.yml config --quiet
+          docker compose --env-file deploy/staging/compose.env.example -f deploy/staging/compose.yml config --no-env-resolution --quiet
+          git diff --check
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build clean hashed Python environment with Git
+        run: docker compose -f deploy/qa/compose.yml build qa
+      - name: Start disposable Mongo replica and Redis
+        run: docker compose -f deploy/qa/compose.yml up -d --wait mongo redis
+      - name: Critical backend tests including Git-dependent check
+        run: docker compose -f deploy/qa/compose.yml run --rm qa
+      - name: Mapbox outage regressions
+        run: docker compose -f deploy/qa/compose.yml run --rm qa python tests/qa_runner.py --eta-failure tests/test_smart_intake_turnaround.py
+      - name: Audit clean installed Python dependency set
+        run: docker compose -f deploy/qa/compose.yml run --rm qa python -m pip_audit --format json --output /app/test_reports/backend-clean-audit.json
+      - name: Upload synthetic JUnit and dependency audit only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-test-evidence
+          path: |
+            test_reports/qa-results-*.xml
+            test_reports/backend-clean-audit.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Remove disposable CI services
+        if: always()
+        run: docker compose -f deploy/qa/compose.yml down -v
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Install declared Yarn version
+        run: npm install --global yarn@1.22.22 --ignore-scripts
+      - name: Frozen dependency installation
+        run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
+      - name: Vitest
+        run: yarn test
+      - name: Build with safe example origin
+        env:
+          REACT_APP_BACKEND_URL: https://example.com
+        run: yarn build
+      - name: Dependency vulnerability review
+        shell: bash
+        run: |
+          mkdir -p ../test_reports
+          set +e
+          yarn audit --json > ../test_reports/frontend-audit.jsonl
+          audit_status=$?
+          set -e
+          if [ "$audit_status" -gt 31 ]; then exit "$audit_status"; fi
+          node ../scripts/check_frontend_audit.cjs ../test_reports/frontend-audit.jsonl
+      - name: Upload dependency audit only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-dependency-audit
+          path: test_reports/frontend-audit.jsonl
+          retention-days: 7
+          if-no-files-found: warn

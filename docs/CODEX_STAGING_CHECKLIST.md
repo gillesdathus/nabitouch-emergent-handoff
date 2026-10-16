@@ -2,12 +2,14 @@
 
 Status: PREPARATION ONLY. No staging/production deployment, real delivery, live payment, mobile publication or production database write is authorized by this checklist. Deployment and each external delivery/device phase require subsequent authorization. Preserve Emergent's approved Tide/lagoon UI and existing business rules.
 
+Hosting is now confirmed as Hostinger VPS with Docker Compose. Follow `HOSTINGER_STAGING_PROVISIONING.md`; host identity, domain, secrets and deployment authorization are still outstanding. Clean-install/dependency findings are in `CI_DEPENDENCY_SECURITY_REVIEW.md`.
+
 ## Entry requirements
 
 - [ ] Review the draft QA pull request and record its exact commit/image digest. Do not merge or deploy as part of preparation.
 - [ ] Supply an approved staging HTTPS frontend origin and API origin, hosting destination, and an explicit later deployment authorization. Identify who owns test execution and evidence review.
 - [ ] Allocate separate staging MongoDB/Redis and least-privilege credentials. Use synthetic users, addresses, appointments and clinical answers only; never clone production patient records. Record backup and rollback ownership.
-- [ ] Build the QA image from a clean checkout and run the critical manifest, including the Git-dependent check. Verify frozen-lockfile frontend installation and a build using the intended staging API origin. Prior verification reused installed backend dependencies; a clean CI image has not been proven.
+- [ ] Verify the actual GitHub Actions result for the reviewed candidate, including the Git-dependent check and frozen-lockfile frontend installation. Clean local verification now passes 185 backend tests and 60 frontend tests; an actual build with the intended staging API origin remains an acceptance requirement.
 - [ ] Configure production-like safeguards: `APP_ENV=production`, `DEMO_MODE=false`, secure cookies, explicit CORS, owner MFA, authenticated encrypted Redis and a separate field encryption key held outside Git. Provision synthetic test accounts through supported administration flows. Do not reuse demo/production passwords.
 - [ ] Keep uploads, imports, gift cards, live payments, lifecycle/invoice/statement/review mail, SMS and push off unless a particular approved acceptance test needs a staging-only capability. Keep public booking gated.
 - [ ] Ensure the QA runner, mock adapters, test secrets, local `.env` files, historical snapshots, `test_reports/`, database archives and dependency caches are excluded from the deployed runtime. Staging integration tests must exercise real providers; the isolated QA runner deliberately forces mocks.
