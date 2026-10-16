@@ -147,8 +147,8 @@ export default function Booking() {
 
   const Body = [StepWhere, StepService, StepWhen, StepYou, StepPay][step];
   return (
-    <div className="mx-auto grid max-w-6xl gap-8 px-5 py-8 lg:grid-cols-[1fr_340px]">
-      <div>
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="min-w-0">
         <div className="mb-8" data-testid="booking-progress">
           <div className="mb-3 flex items-center justify-between text-xs font-medium text-nb-mute"><span>Step {step + 1} of 6 · <b className="text-nb-ink">{STEPS[step]}</b></span><span>{shown.welcomeOffer && <span className="text-nb-teal">First-booking welcome offer — confirmed when you submit</span>}</span></div>
           <Stepper steps={STEPS} current={step} testid="booking-stepper" onStep={(index) => { if (!(index > step && !ok.slice(0, index).every(Boolean))) go(index); }} />

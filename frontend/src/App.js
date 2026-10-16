@@ -28,6 +28,9 @@ const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
 const SessionPrep = lazy(() => import("@/pages/client/SessionPrep"));
 const OwnerTurnaround = lazy(() => import("@/pages/owner/Turnaround"));
+const ClientReviews = lazy(() => import("@/pages/client/Reviews"));
+const OwnerFeedback = lazy(() => import("@/pages/owner/Feedback"));
+const ProClientRatings = lazy(() => import("@/pages/practitioner/ClientRatings"));
 const ClientBilling = lazy(() => import("@/pages/client/Billing"));
 const ClientGiftCards = lazy(() => import("@/pages/client/GiftCards"));
 const ClientPlans = lazy(() => import("@/pages/client/Plans"));
@@ -107,6 +110,7 @@ export default function App() {
                   <Route path="/me/profile" element={<ProfileForm />} />
                   <Route path="/me/intake" element={<Intake />} />
                   <Route path="/me/visit/:id/prepare" element={<SessionPrep />} />
+                  <Route path="/me/reviews" element={<ClientReviews />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />
                   <Route path="/me/gifts" element={<ClientGiftCards />} />
@@ -122,6 +126,7 @@ export default function App() {
                   <Route path="/pro/soap/:id" element={<ProSoap />} />
                   <Route path="/pro/plans" element={<ProPlans />} />
                   <Route path="/pro/earnings" element={<ProEarnings />} />
+                  <Route path="/pro/ratings" element={<ProClientRatings />} />
                   <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
                   <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                   <Route path="/pro/recovery" element={<ProRecovery />} />
@@ -131,6 +136,7 @@ export default function App() {
                   <Route path="/owner/schedule" element={<OwnerSchedule />} />
                   <Route path="/owner/dispatch" element={<Dispatch role="owner" />} />
                   <Route path="/owner/turnaround" element={<OwnerTurnaround />} />
+                  <Route path="/owner/feedback" element={<OwnerFeedback />} />
                   <Route path="/owner/messages" element={<Messages />} />
                   <Route path="/owner/manage" element={<Manage />} />
                   <Route path="/owner/promos" element={<Promos />} />

@@ -19,6 +19,7 @@ import { SessionReadiness, useSessionReadiness } from "@/components/session/Sess
 import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/components/session/SmartSession";
 import { sendSessionOp, usePendingOps, useSessionOpSync, useTurnaround } from "@/lib/turnaround";
 import { toast } from "sonner";
+import { ClientRatingCard } from "@/pages/practitioner/ClientRatings";
 
 const READINESS_STATUSES = ["assigned", "confirmed", "preparing", "en_route", "arrived", "interrupted", "in_session", "safety_hold"];
 const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
@@ -110,6 +111,11 @@ export default function Visit() {
   const { reload: reloadClock } = clock;
   const queued = usePendingOps(id);
   useSessionOpSync(refresh);
+  useEffect(() => {
+    const refused = (event) => { toast.error(`A queued action was refused by Nabitouch: ${event.detail}`); refresh(); reloadReadiness(); };
+    window.addEventListener("nabitouch:ops-rejected", refused);
+    return () => window.removeEventListener("nabitouch:ops-rejected", refused);
+  }, [refresh, reloadReadiness]);
   const apptKey = `${appt?.status}|${appt?.cleanup?.completedAt || ""}|${appt?.timer?.pausedAt || ""}`;
   useEffect(() => { if (timed) reloadClock(); }, [apptKey, timed, reloadClock]);
   const trial = isLiveTrial(idx.settings, appt);
@@ -176,6 +182,7 @@ export default function Visit() {
       {appt.status === "en_route" && <p className={`rounded-2xl p-2.5 text-xs ${pub.status === "sharing" ? "bg-teal-50 text-teal-800" : "bg-amber-50 text-amber-800"}`} data-testid="tracking-publisher-status">Tracking service: <b>{pub.status}</b>{pub.lastAck ? ` · last fix accepted ${pub.lastAck.toLocaleTimeString()}` : ""}{pub.error ? ` · ${pub.error}` : ""} <span className="opacity-70" data-testid="tracking-source">{trial ? "(phone GPS while this page is open)" : "(the tracking service is not using phone GPS for this visit)"}</span></p>}
       {!training && READINESS_STATUSES.includes(appt.status) && <SessionReadiness readiness={readiness} canWithdraw={["arrived", "in_session"].includes(appt.status)} onWithdrawn={() => { reloadReadiness(); refresh(); reloadClock(); }} />}
       {training && ["in_session", "session_ended", "soap_pending", "interrupted"].includes(appt.status) && appt.timestamps?.in_session && <SessionTimer appt={appt} />}
+      {!training && ["completed", "processing", "closed"].includes(appt.status) && <ClientRatingCard appt={appt} />}
       {timed && clock.snap?.treatment && <TreatmentTimer appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} clientName={`${c?.preferredName || c?.firstName || ""} ${c?.lastName || ""}`.trim()} serviceName={s?.name} actor={actor} />}
       {timed && clock.snap?.cleanup && <CleanupPanel appt={appt} snap={clock.snap} serverNow={clock.serverNow} reload={() => { reloadClock(); refresh(); }} />}
       {timed && clock.snap && (appt.status === "in_session" || clock.snap.cleanup) && <NextBookingCard snap={clock.snap} idx={idx} />}
@@ -183,7 +190,7 @@ export default function Visit() {
 
       <div className="safe-bottom sticky bottom-[72px] z-20 lg:static">
         <AnimatePresence>{flash && <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2"><SuccessMark size={64} /></motion.div>}</AnimatePresence>
-        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-primary h-16 w-full text-lg disabled:opacity-60">{pending ? "Saving…" : queued.length ? "Waiting to sync…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
+        {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className={`h-16 w-full text-lg ${gated ? "nb-btn rounded-full bg-slate-100 text-slate-500 ring-1 ring-slate-200" : "nb-btn-primary"}`}>{pending ? "Saving…" : queued.length ? "Waiting to sync…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
       </div>
       <div className="space-y-3">
         {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <div className="flex flex-wrap gap-2"><ReadinessBadge readiness={appt.readiness} /></div>}

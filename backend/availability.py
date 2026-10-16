@@ -79,6 +79,7 @@ def cleanup_minutes(config, service_slug, practitioner_id, location_type, overri
 def validate_turnaround(raw):
     raw = dict(raw or {})
     out = {}
+    out["_inherit"] = [key for key in ("clinicCleanupMin", "equipmentCleanupMin", "mobileCleanupMin", "departureSoonMin") if key in raw and raw[key] is None]
     for key in ("clinicCleanupMin", "equipmentCleanupMin", "mobileCleanupMin", "departureSoonMin"):
         if raw.get(key) is None:
             continue

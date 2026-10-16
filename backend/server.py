@@ -73,6 +73,7 @@ from email_templates import invoice_email, payment_link_email, receipt_email, st
 from config import giftcards_enabled, invoice_email_enabled
 from sms import build_sms_router, due_reminders, ensure_sms, queue_sms, readiness as sms_readiness
 from session_care import assert_session_ready, build_session_care_router, clear_session_care, consent_snapshot, ensure_session_care
+from reviews import build_reviews_router, clear_reviews, ensure_reviews, prepare_review_invite
 from turnaround import assert_no_active_session, build_turnaround_router, session_end_update, session_start_update
 
 ROOT_DIR = Path(__file__).parent
@@ -205,6 +206,7 @@ async def lifespan(_app):
     await ensure_imports(db)
     await ensure_clinical(db)
     await ensure_session_care(db)
+    await ensure_reviews(db)
     try:
         await coll("appointments").create_index("practitionerId", name="one_active_session", unique=True,
                                                 partialFilterExpression={"status": "in_session"})
@@ -595,6 +597,7 @@ async def demo_reset(request: Request):
     await clear_billing(db)
     await clear_clinical(db)
     await clear_session_care(db)
+    await clear_reviews(db)
     await db.nt_ops_alerts.delete_many({})
     await clear_imports(db)
     await clear_legacy(db)
@@ -669,6 +672,11 @@ async def apply_transition(appt, to, actor, note=None, op_id=None):
         await _maybe_lifecycle_mail(saved, "assignment")
     if to in ("completed", "processing", "closed"):
         await settle_appointment_points(db, coll, saved)
+    if to == "completed":
+        try:
+            await prepare_review_invite(db, coll, saved)
+        except Exception:
+            logging.getLogger(__name__).exception("Review invitation not prepared")
     if to in ("completed", "no_show"):
         await consume_credit(db, appt["id"], actor)
     if to == "cancelled":
@@ -2242,6 +2250,7 @@ app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_session_care_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_reviews_router(db, coll, add_audit, user_from))
 app.include_router(build_turnaround_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))

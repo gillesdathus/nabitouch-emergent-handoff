@@ -96,7 +96,7 @@ export function Stepper({ steps, current, testid = "stepper", onStep }) {
         const done = index < current;
         const on = index === current;
         return (
-          <button key={label} type="button" disabled={!onStep} onClick={() => onStep && onStep(index)} data-testid={`${testid}-${index}`} className="relative flex flex-1 flex-col items-center">
+          <button key={label} type="button" disabled={!onStep} onClick={() => onStep && onStep(index)} data-testid={`${testid}-${index}`} className="relative flex min-w-0 flex-1 flex-col items-center">
             {index > 0 && (
               <span className="absolute right-1/2 top-[13px] h-[3px] w-full rounded-full bg-sky-100">
                 <motion.span initial={false} animate={{ width: index <= current ? "100%" : "0%" }} transition={{ duration: 0.35 }} className="block h-full rounded-full bg-gradient-to-r from-nb-blue to-nb-turq" />
@@ -105,7 +105,7 @@ export function Stepper({ steps, current, testid = "stepper", onStep }) {
             <motion.span initial={false} animate={{ scale: on ? 1.12 : 1 }} className={cx("relative z-10 grid h-7 w-7 place-items-center rounded-full text-[11px] font-bold", done ? "bg-nb-turq text-white" : on ? "bg-nb-blue text-white ring-4 ring-nb-blue/20" : "bg-white text-nb-mute ring-1 ring-sky-200")}>
               {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : index + 1}
             </motion.span>
-            <span className={cx("mt-1.5 px-1 text-center text-[10.5px] font-medium leading-tight", on ? "text-nb-ink" : "text-nb-mute")}>{label}</span>
+            <span className={cx("mt-1.5 max-w-full truncate px-0.5 text-center text-[10px] font-medium leading-tight sm:text-[10.5px]", on ? "text-nb-ink" : "text-nb-mute")}>{label}</span>
           </button>
         );
       })}

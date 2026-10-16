@@ -712,14 +712,13 @@ def build_legacy_router(db, coll, add_audit, user_from):
         if not any(str(health.get(key) or "").strip() for key in ("allergies", "medications", "concerns", "contraindications")):
             raise HTTPException(400, "Health intake is incomplete")
         health = draft.get("health") or {}
-        intake_version = await db.nt_intake.count_documents({"clientId": user["subject"]}) + 1
-        intake = {
-            "id": "in-" + uuid.uuid4().hex[:12], "clientId": user["subject"], "version": intake_version,
+        from session_care import append_intake
+        intake = await append_intake(db, user["subject"], {
             "allergies": _clip(health.get("allergies"), 2000), "medications": _clip(health.get("medications"), 2000),
             "concerns": _clip(health.get("concerns"), 2000), "preferences": _clip(health.get("preferences"), 2000),
-            "contraindications": _clip(health.get("contraindications"), 2000), "at": now_iso(),
-        }
-        await db.nt_intake.insert_one(seal_tree(dict(intake)))
+            "contraindications": _clip(health.get("contraindications"), 2000), "source": "onboarding",
+        }, carry=True)
+        intake_version = intake["version"]
         for kind in ("treatment", "informed"):
             await db.nt_consents.insert_one({
                 "id": "con-" + uuid.uuid4().hex[:12], "clientId": user["subject"], "kind": kind,

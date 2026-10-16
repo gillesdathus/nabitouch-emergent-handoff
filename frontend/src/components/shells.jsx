@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
@@ -25,6 +25,7 @@ const ICONS = {
 const OWNER_MORE = [
   ["/owner/dispatch", "Live Fleet"],
   ["/owner/turnaround", "Session turnaround"],
+  ["/owner/feedback", "Client feedback"],
   ["/owner/messages", "Visit messages"],
   ["/owner/campaigns", "Flash campaigns"],
   ["/owner/promos", "Promotions & rewards"],
@@ -57,6 +58,7 @@ const STAFF = {
     more: [
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
       { to: "/pro/earnings", label: "Earnings", icon: ReceiptText },
+      { to: "/pro/ratings", label: "Client ratings", icon: Star },
       { to: "/pro/recovery", label: "Recovery", icon: RotateCcw },
     ],
   },

@@ -370,6 +370,9 @@ def build_turnaround_router(db, coll, add_audit, user_from, reception_perms):
             raise HTTPException(400, str(exc) or "Cleanup buffers must be whole minutes") from exc
         settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
         merged = {**(settings.get("turnaround") or {}), **cleaned}
+        for key in cleaned.pop("_inherit", []):
+            merged.pop(key, None)
+        merged.pop("_inherit", None)
         await coll("settings").update_one({"id": "app"}, {"$set": {"turnaround": merged}}, upsert=True)
         await add_audit(user.get("name"), "Cleanup and turnaround buffers updated")
         return turnaround_config({**settings, "turnaround": merged})

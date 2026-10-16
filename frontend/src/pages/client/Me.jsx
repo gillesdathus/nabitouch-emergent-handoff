@@ -5,6 +5,7 @@ import { ArrivalMoment } from "@/components/ArrivalMoment";
 import { PrepareCard } from "@/components/PrepareCard";
 import { PlanNudge } from "@/components/PlanNudge";
 import { SessionPrepLink } from "@/components/session/SessionPrepLink";
+import { FeedbackPrompt } from "@/components/reviews/Reviews";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
 import { Link, useNavigate } from "react-router-dom";
@@ -172,6 +173,11 @@ export default function Me() {
       <Link to="/me/intake" data-testid="me-intake-card" className="nb-card mt-4 flex items-center gap-3 p-4 transition-transform hover:-translate-y-0.5">
         <span className="grid h-11 w-11 place-items-center rounded-2xl text-nb-teal tint-mint"><ClipboardList className="h-5 w-5" /></span>
         <div className="flex-1"><p className="text-sm font-semibold">Health intake</p><p className="text-xs text-nb-mute">Saved on your account as a new version. It is not stored only on this phone.</p></div>
+      </Link>
+      <FeedbackPrompt idx={idx} />
+      <Link to="/me/reviews" data-testid="me-reviews-card" className="nb-card mt-4 flex items-center gap-3 p-4 transition-transform hover:-translate-y-0.5">
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-amber-50 text-amber-500"><Star className="h-5 w-5" /></span>
+        <div className="flex-1"><p className="text-sm font-semibold">My reviews & feedback</p><p className="text-xs text-nb-mute">Private feedback on completed visits, and an optional Google review.</p></div>
       </Link>
 
       {bdayOk && (

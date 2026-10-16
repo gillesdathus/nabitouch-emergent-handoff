@@ -9,7 +9,7 @@ import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, mone
 import { formatCents } from "@/lib/billing";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
-const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
+const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
 const H = ({ t, s }) => <div className="mb-6"><h2 className="text-2xl font-semibold tracking-tight text-nb-ink sm:text-3xl">{t}</h2>{s && <p className="mt-1 text-sm text-nb-mute">{s}</p>}</div>;
 const toggle = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
@@ -52,7 +52,7 @@ export function StepService() {
       <div className="grid gap-3 sm:grid-cols-2">
         {state.services.filter((x) => bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile)).map((x) => (
           <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} onClick={() => patchDraft({ serviceSlug: x.slug, duration: x.prices[String(draft.duration)] ? draft.duration : Number(Object.keys(x.prices)[0]) })}>
-            <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 rounded-xl object-cover" loading="lazy" /><div className="min-w-0"><p className="text-sm font-semibold">{x.name}</p><p className="truncate text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="ml-auto h-5 w-5 text-nb-blue" />}</div>
+            <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" loading="lazy" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{x.name}</p><p className="line-clamp-2 text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="h-5 w-5 shrink-0 text-nb-blue" />}</div>
           </Tile>))}
       </div>
       {s && (

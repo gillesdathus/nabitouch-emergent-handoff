@@ -118,7 +118,12 @@ async def ensure_intake_versions(db):
         pass
 
 
-async def append_intake(db, client_id, fields):
+async def append_intake(db, client_id, fields, carry=False):
+    if carry:
+        latest = await latest_intake(db, client_id)
+        if latest and latest.get("baseline"):
+            kept = {key: latest.get(key) for key in (*TEXT_FIELDS, "conditions", "baseline")}
+            fields = {**kept, **{key: value for key, value in fields.items() if value not in (None, "", [])}}
     for _attempt in range(3):
         rows = await db.nt_intake.find({"clientId": client_id}, {"_id": 0, "version": 1}).sort("version", -1).to_list(1)
         version = (rows[0]["version"] if rows else 0) + 1

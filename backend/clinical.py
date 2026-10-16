@@ -142,9 +142,8 @@ def build_clinical_router(db, coll, add_audit, user_from):
         fields = {key: _clip(body.get(key)) for key in INTAKE_FIELDS}
         if not any(fields.values()):
             raise HTTPException(400, "Add the health details you want on file")
-        version = await db.nt_intake.count_documents({"clientId": user["subject"]}) + 1
-        row = {"id": "in-" + uuid.uuid4().hex[:12], "clientId": user["subject"], "version": version, "at": datetime.now(TZ).isoformat(), **fields}
-        await db.nt_intake.insert_one(seal_tree(dict(row)))
+        from session_care import append_intake
+        row = await append_intake(db, user["subject"], {**fields, "source": "quick-update"}, carry=True)
         await log_access(user, "intake_submit", user["subject"])
         return {k: v for k, v in row.items() if k != "_id"}
 
