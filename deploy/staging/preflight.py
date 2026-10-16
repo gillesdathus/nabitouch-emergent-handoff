@@ -1,6 +1,7 @@
 """Read-only staging configuration validation. Never prints values or connects to services."""
 import argparse
 import base64
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from email.utils import parseaddr
@@ -57,6 +58,8 @@ def validate(api, frontend, stripe_test=False, mapbox_test=False, resend_test=Fa
         check(api.get(flag) == "false", flag + " remains disabled before acceptance authorization")
     check(api.get("PUSH_DRY_RUN") == "true" and not api.get("FIREBASE_SERVICE_ACCOUNT_FILE"), "Firebase delivery deferred/dry-run")
     if resend_test:
+        check(api.get("EMAIL_PROVIDER_ISOLATION_CONFIRMED") == "true", "documented provider-level Resend isolation")
+        check(bool(re.fullmatch(r"[0-9a-f]{64}", api.get("EMAIL_APPROVED_PREVIEW_SHA256", ""))), "owner-approved exact HTML preview fingerprint")
         check(not stripe_test and api.get("PAYMENT_MODE") == "disabled", "Resend phase isolated from Stripe checkout")
         check(api.get("EMAIL_PROVIDER") == "resend" and api.get("EMAIL_ACCEPTANCE_MODE") == "true", "explicit controlled Resend phase")
         check(api.get("NOTIFICATION_WORKER_ENABLED") == "false", "automatic email worker remains disabled")

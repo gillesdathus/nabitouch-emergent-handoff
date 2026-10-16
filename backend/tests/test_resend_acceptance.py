@@ -13,6 +13,52 @@ from notifications import (apply_delivery_receipt, enqueue_booking_confirmation,
 from test_notifications import _db, _run, _Audit, _appt
 
 
+def test_exact_preview_is_single_responsive_shell_without_login_or_timezone():
+    from email_templates import email_test_message
+    from emailtpl import wrap, MARKER
+    from emailer import _assert_safe_email
+    subject, html = email_test_message()
+    assert subject == "Nabitouch — Email Delivery Test"
+    assert html.count(MARKER) == 1 and html.count('<!doctype html>') == 1
+    assert html.count("Breathe. Feel. Heal. Anywhere.") == 1
+    assert 'width="560"' not in html and 'max-width:600px' in html
+    assert 'href=' not in html and 'Times are shown' not in html
+    assert 'background:#0B1B3F' in html
+    assert wrap(html, subject) == html
+    _assert_safe_email(subject, html)
+    text = plain_email(html)
+    assert "Hi there," in text and "No action is needed." in text
+    assert "Nabitouch will never ask for your password or full payment card details by email." in text
+
+
+def test_acceptance_preview_and_isolation_block_before_any_provider_call(monkeypatch):
+    import hashlib
+    import httpx
+    from email_templates import email_test_message
+    monkeypatch.setenv("EMAIL_ACCEPTANCE_MODE", "true")
+    monkeypatch.setenv("EMAIL_PROVIDER", "resend")
+    monkeypatch.setenv("EMAIL_ALLOWED_RECIPIENTS", "approved@example.invalid")
+    monkeypatch.setenv("EMAIL_APPROVED_SENDERS", "bookings@nabitouch.com")
+    monkeypatch.setenv("EMAIL_FROM", "Nabitouch <bookings@nabitouch.com>")
+    monkeypatch.setenv("NOTIFICATION_WORKER_ENABLED", "false")
+    monkeypatch.setenv("EMAIL_TEST_RECIPIENT", "")
+    monkeypatch.setenv("EMAIL_PROVIDER_ISOLATION_CONFIRMED", "false")
+    monkeypatch.setenv("EMAIL_APPROVED_PREVIEW_SHA256", "")
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: pytest.fail("No external send is permitted"))
+    subject, html = email_test_message()
+    with pytest.raises(HTTPException, match="isolation"):
+        _run(send_email(to="approved@example.invalid", subject=subject, html=html))
+    monkeypatch.setenv("EMAIL_PROVIDER_ISOLATION_CONFIRMED", "true")
+    with pytest.raises(HTTPException, match="preview"):
+        _run(send_email(to="approved@example.invalid", subject=subject, html=html))
+    monkeypatch.setenv("EMAIL_APPROVED_PREVIEW_SHA256", hashlib.sha256(html.encode()).hexdigest())
+    from emailer import acceptance_message_guard
+    acceptance_message_guard(subject, html)
+    for changed_subject, changed_html in [(subject + "!", html), (subject, html + " ")]:
+        with pytest.raises(HTTPException, match="preview"):
+            _run(send_email(to="approved@example.invalid", subject=changed_subject, html=changed_html))
+
+
 def test_acceptance_blocks_unapproved_original_and_redirect_recipient(monkeypatch):
     monkeypatch.setenv("EMAIL_ACCEPTANCE_MODE", "true")
     monkeypatch.setenv("EMAIL_PROVIDER", "resend")

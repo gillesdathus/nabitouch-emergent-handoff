@@ -6,14 +6,22 @@ TEMPLATE_VERSION = "tide-2026-06"
 MARKER = "<!-- nabitouch-shell -->"
 
 
-def wrap(inner_html, subject):
+def wrap(inner_html, subject, *, delivery_test=False):
     if MARKER in inner_html:
         return inner_html
-    brand = escape(os.environ.get("EMAIL_FROM_NAME") or "Nabitouch")
+    brand = "Nabitouch" if delivery_test else escape(os.environ.get("EMAIL_FROM_NAME") or "Nabitouch")
     support = escape((os.environ.get("SUPPORT_EMAIL") or "").strip())
     app = escape((os.environ.get("APP_URL") or "").rstrip("/"))
     contact = f'Questions? Email <a href="mailto:{support}" style="color:#0E7C86">{support}</a>' if support else "Questions? Message us in the app"
     open_app = f' · <a href="{app}/me" style="color:#0E7C86">Open your account</a>' if app else ""
+    footer = (
+        '<p style="margin:0;font-weight:600;color:#0B1B3F">Nabitouch</p>'
+        '<p style="margin:4px 0 0;color:#0E7C86">Breathe. Feel. Heal. Anywhere.</p>'
+        if delivery_test else
+        f'<p style="margin:0 0 6px">{contact}{open_app}</p>'
+        '<p style="margin:0 0 6px">Times are shown in Edmonton time (Mountain Time).</p>'
+        f'<p style="margin:0">{brand} never asks for your password or card details by email. Treatment notes are never sent by email.</p>'
+    )
     return (
         f'{MARKER}<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<meta name="color-scheme" content="light"><title>{escape(subject)}</title></head>'
@@ -25,10 +33,8 @@ def wrap(inner_html, subject):
         f'<p style="margin:0;font-family:Georgia,\'Times New Roman\',serif;font-size:24px;letter-spacing:.5px;color:#FFFFFF">{brand}</p>'
         '<p style="margin:6px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#A7F3EC">Mobile massage &amp; wellness</p>'
         '</td></tr>'
-        f'<tr><td style="padding:8px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0F2A3D">{inner_html}</td></tr>'
+        f'<tr><td style="padding:{"28px" if delivery_test else "8px 4px"};font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0F2A3D">{inner_html}</td></tr>'
         '<tr><td style="padding:20px 28px 28px;border-top:1px solid #E3EEF4;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#5B7385">'
-        f'<p style="margin:0 0 6px">{contact}{open_app}</p>'
-        '<p style="margin:0 0 6px">Times are shown in Edmonton time (Mountain Time).</p>'
-        f'<p style="margin:0">{brand} never asks for your password or card details by email. Treatment notes are never sent by email.</p>'
+        f'{footer}'
         '</td></tr></table></td></tr></table></body></html>'
     )

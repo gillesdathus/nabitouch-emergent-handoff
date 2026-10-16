@@ -171,6 +171,21 @@ def acceptance_guard(to):
         raise HTTPException(409, "Automatic notification worker must remain disabled during acceptance")
 
 
+def acceptance_message_guard(subject, html):
+    """Pin the approved fixed test message. Configuration attests approval, not provider evidence."""
+    if os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() != "true":
+        return
+    if os.environ.get("EMAIL_PROVIDER_ISOLATION_CONFIRMED", "false").lower() != "true":
+        raise HTTPException(409, "Provider-level staging isolation must be verified before email acceptance")
+    approved = os.environ.get("EMAIL_APPROVED_PREVIEW_SHA256", "")
+    digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    from email_templates import email_test_message
+    expected_subject, expected_html = email_test_message()
+    if (subject != expected_subject or html != expected_html or
+            not re.fullmatch(r"[0-9a-f]{64}", approved) or not hmac.compare_digest(approved, digest)):
+        raise HTTPException(409, "Exact email preview requires owner approval")
+
+
 async def send_email(*, to: str, subject: str, html: str, idempotency_key: str | None = None) -> str | None:
     from config import email_provider
     _assert_safe_email(subject, html)
@@ -184,6 +199,8 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
         subject = f"[Test] {subject}"
         to = redirect
         acceptance_guard(to)
+    if provider in ("resend", "emergent"):
+        acceptance_message_guard(subject, html)
     if provider == "mock":
         message_id = f"mock-{len(OUTBOX) + 1}"
         OUTBOX.append({"id": message_id, "to": to, "subject": subject})
@@ -222,6 +239,7 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
 
 async def _send_resend(*, to: str, subject: str, html: str, idempotency_key: str | None):
     acceptance_guard(to)
+    acceptance_message_guard(subject, html)
     key = (os.environ.get("RESEND_API_KEY") or "").strip()
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     if not key or not sender:

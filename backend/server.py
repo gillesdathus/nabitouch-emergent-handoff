@@ -340,11 +340,12 @@ async def email_status(request: Request):
 async def email_test(request: Request):
     """One fixed message to EMAIL_TEST_RECIPIENT only. No caller-supplied recipient, subject or body."""
     user = await require(request, "owner")
-    from emailer import acceptance_guard
+    from emailer import acceptance_guard, acceptance_message_guard
     target = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
     if not target:
         raise HTTPException(409, "Set EMAIL_TEST_RECIPIENT first")
     acceptance_guard(target)
+    acceptance_message_guard(*email_test_message())
     key = request.headers.get("Idempotency-Key") or ""
     if not key and os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() == "true":
         raise HTTPException(409, "A stable test-message Idempotency-Key is required")

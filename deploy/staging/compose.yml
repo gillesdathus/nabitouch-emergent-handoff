@@ -1,6 +1,10 @@
 name: nabitouch-staging
 services:
   api:
+    cpus: 0.50
+    mem_limit: 768m
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
     image: ${STAGING_API_IMAGE:?set reviewed staging image}
     env_file: ["${STAGING_API_ENV:?set staging-only env path}"]
     volumes:
@@ -11,6 +15,10 @@ services:
     networks: [edge, data]
     restart: unless-stopped
   web:
+    cpus: 0.15
+    mem_limit: 128m
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
     image: ${STAGING_WEB_IMAGE:?set reviewed staging image}
     ports: ["127.0.0.1:${STAGING_HTTP_PORT:-18081}:8080"]
     depends_on:
@@ -18,8 +26,12 @@ services:
     networks: [edge]
     restart: unless-stopped
   mongo:
+    cpus: 0.40
+    mem_limit: 768m
+    pids_limit: 256
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
     image: mongo:7
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo.key"]
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo.key", "--wiredTigerCacheSizeGB", "0.25"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: staging_root
       MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
@@ -37,6 +49,10 @@ services:
     networks: [data]
     restart: unless-stopped
   redis:
+    cpus: 0.15
+    mem_limit: 192m
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
     image: redis:7-alpine
     command: ["redis-server", "/etc/redis/redis.conf"]
     secrets: [redis_acl, redis_password]
