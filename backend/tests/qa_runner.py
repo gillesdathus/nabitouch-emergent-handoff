@@ -33,6 +33,8 @@ def configure():
         "DEMO_PASSWORD": secrets.token_urlsafe(24),
         "EMAIL_FROM_NAME": "Nabitouch QA", "EMAIL_PROVIDER": "mock",
         "EMAIL_LIFECYCLE_ENABLED": "false", "PUSH_ENABLED": "false",
+        "EMAIL_REMINDERS_ENABLED": "false", "EMAIL_ACCEPTANCE_MODE": "false",
+        "EMAIL_ALLOWED_RECIPIENTS": "", "EMAIL_APPROVED_SENDERS": "", "NOTIFICATION_WORKER_ENABLED": "true",
         "PUSH_DRY_RUN": "true", "PAYMENT_MODE": "simulated",
         "STRIPE_CARD_CHECKOUT_ENABLED": "false", "DOCUMENT_UPLOADS_ENABLED": "false",
         "LEGACY_PATIENT_IMPORT_ENABLED": "false", "COOKIE_SECURE": "false",

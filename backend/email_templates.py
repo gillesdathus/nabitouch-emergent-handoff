@@ -59,3 +59,18 @@ def statement_email(brand, name, period, pay, link):
 
 def booking_change_email(brand, client, title, rows, link):
     return (f"{title} — {brand}", layout(brand, client, f"{title}.", rows, ("View your visit", link)))
+
+
+def email_test_message():
+    return ("Nabitouch email test", layout("Nabitouch", "there",
+        "This is a controlled Nabitouch transactional email test. No action is needed.",
+        [], None, "This message contains no appointment or health information."))
+
+
+def billing_update_email(brand, name, view, link):
+    return ("Nabitouch billing update", layout(brand, name, "A billing update is ready in your Nabitouch account.", [], ("View billing", link)))
+
+
+def review_invitation_email(brand, name, link):
+    return ("How was your Nabitouch visit?", layout(brand, name,
+        "Thank you for visiting Nabitouch. We would value your private feedback.", [], ("Share feedback", link)))

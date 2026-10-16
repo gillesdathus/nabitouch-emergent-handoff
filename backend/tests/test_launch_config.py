@@ -244,32 +244,8 @@ def test_resend_webhook_signature_and_receipt():
     headers["svix-signature"] = "v1,not-the-digest"
     assert not resend_webhook_authentic(body, headers, secret, now=1710000000)
 
-    class Result:
-        modified_count = 1
-
-    class Coll:
-        def __init__(self):
-            self.updates = []
-
-        async def update_one(self, query, update):
-            self.updates.append((query, update))
-            return Result()
-
-    class DB:
-        nt_notifications = Coll()
-
-    import asyncio
-    db = DB()
-
-    async def _run():
-        return await apply_delivery_receipt(db, {"type": "email.delivered", "data": {"email_id": "email_test_1"}})
-
-    assert asyncio.run(_run()) is True
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    query, update = db.nt_notifications.updates[0]
-    assert query["providerId"] == "email_test_1"
-    assert query["deliveredAt"] is None
-    assert update["$set"]["deliveryStatus"] == "delivered"
+    # Durable receipt/replay/race behavior is covered against isolated Mongo in
+    # test_resend_acceptance.py; a one-method collection fake cannot verify it.
 
 
 def _wait(url, proc):

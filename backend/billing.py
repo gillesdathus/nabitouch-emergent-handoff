@@ -416,12 +416,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         except DuplicateKeyError:
             return
         person = await coll("clients").find_one({"id": recipient}, {"_id": 0, "email": 1})
-        if person and person.get("email"):
-            try:
-                from emailer import send_email
-                await send_email(to=person["email"], subject=notice["emailSubject"], html="<p>A billing update is ready in your Nabitouch account.</p>")
-            except Exception:
-                pass
+        if invoice_email_enabled() and person and person.get("email"):
+            await enqueue_billing(db, invoice, "billing_update", dedupe)
         try:
             from tracking_store import client as redis_client
             await redis_client().publish(f"nt:bill:ch:{recipient}", json.dumps({"id": notice["id"], "kind": notice["kind"]}))

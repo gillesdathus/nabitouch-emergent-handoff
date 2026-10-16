@@ -3,6 +3,7 @@ import argparse
 import base64
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from email.utils import parseaddr
 
 
 def read_env(path):
@@ -15,7 +16,7 @@ def read_env(path):
     return values
 
 
-def validate(api, frontend, stripe_test=False, mapbox_test=False):
+def validate(api, frontend, stripe_test=False, mapbox_test=False, resend_test=False):
     errors = []
     def check(ok, label):
         if not ok:
@@ -49,13 +50,25 @@ def validate(api, frontend, stripe_test=False, mapbox_test=False):
     if mapbox_test:
         check(api.get("MAPBOX_PERMANENT_GEOCODING") == "true", "Mapbox stored-geocode account permission confirmed")
         check(bool(browser_token), "Mapbox browser token supplied for browser acceptance")
-    flags = ("DOCUMENT_UPLOADS_ENABLED", "STRIPE_CARD_CHECKOUT_ENABLED", "LEGACY_PATIENT_IMPORT_ENABLED", "GIFTCARDS_ENABLED", "EMAIL_LIFECYCLE_ENABLED", "INVOICE_EMAIL_ENABLED", "STATEMENT_EMAIL_ENABLED", "REVIEW_INVITES_ENABLED", "SMS_ENABLED", "PUSH_ENABLED", "GEO_SAMPLE_CATALOG")
+    flags = ("DOCUMENT_UPLOADS_ENABLED", "STRIPE_CARD_CHECKOUT_ENABLED", "LEGACY_PATIENT_IMPORT_ENABLED", "GIFTCARDS_ENABLED", "EMAIL_LIFECYCLE_ENABLED", "EMAIL_REMINDERS_ENABLED", "INVOICE_EMAIL_ENABLED", "STATEMENT_EMAIL_ENABLED", "REVIEW_INVITES_ENABLED", "SMS_ENABLED", "PUSH_ENABLED", "GEO_SAMPLE_CATALOG")
     for flag in flags:
         if stripe_test and flag == "STRIPE_CARD_CHECKOUT_ENABLED":
             continue
         check(api.get(flag) == "false", flag + " remains disabled before acceptance authorization")
-    check(api.get("EMAIL_PROVIDER") == "disabled" and api.get("PUSH_DRY_RUN") == "true", "delivery disabled/dry-run")
-    check(not api.get("RESEND_API_KEY") and not api.get("FIREBASE_SERVICE_ACCOUNT_FILE"), "non-Stripe external credentials deferred")
+    check(api.get("PUSH_DRY_RUN") == "true" and not api.get("FIREBASE_SERVICE_ACCOUNT_FILE"), "Firebase delivery deferred/dry-run")
+    if resend_test:
+        check(not stripe_test and api.get("PAYMENT_MODE") == "disabled", "Resend phase isolated from Stripe checkout")
+        check(api.get("EMAIL_PROVIDER") == "resend" and api.get("EMAIL_ACCEPTANCE_MODE") == "true", "explicit controlled Resend phase")
+        check(api.get("NOTIFICATION_WORKER_ENABLED") == "false", "automatic email worker remains disabled")
+        check(api.get("RESEND_API_KEY", "").startswith("re_") and real(api.get("RESEND_API_KEY", "")), "Resend server key supplied")
+        check(api.get("RESEND_WEBHOOK_SECRET", "").startswith("whsec_") and real(api.get("RESEND_WEBHOOK_SECRET", "")), "Resend endpoint secret supplied")
+        allowed = {x.strip().lower() for x in api.get("EMAIL_ALLOWED_RECIPIENTS", "").split(",") if x.strip()}
+        approved = {x.strip().lower() for x in api.get("EMAIL_APPROVED_SENDERS", "").split(",") if x.strip()}
+        target = api.get("EMAIL_TEST_RECIPIENT", "").strip().lower()
+        check(bool(target) and "@" in target and allowed == {target}, "one explicitly approved recipient")
+        check(parseaddr(api.get("EMAIL_FROM", ""))[1].lower() in approved and bool(approved), "approved sender identity")
+    else:
+        check(api.get("EMAIL_PROVIDER") == "disabled" and not api.get("RESEND_API_KEY"), "Resend delivery deferred")
     if stripe_test:
         check(api.get("PAYMENT_MODE") == "test" and api.get("STRIPE_CARD_CHECKOUT_ENABLED") == "true", "explicit Stripe test phase")
         check(api.get("STRIPE_SECRET_KEY", "").startswith(("sk_test_", "rk_test_")) and real(api.get("STRIPE_SECRET_KEY", "")), "Stripe test-only server key")
@@ -72,8 +85,9 @@ def main():
     parser.add_argument("--frontend-env", required=True)
     parser.add_argument("--stripe-test", action="store_true", help="Validate authorized Stripe sandbox phase; delivery remains disabled")
     parser.add_argument("--mapbox-test", action="store_true", help="Validate prepared Mapbox phase; does not call providers or deploy")
+    parser.add_argument("--resend-test", action="store_true", help="Validate one-message Resend preparation; does not authorize sending")
     args = parser.parse_args()
-    errors = validate(read_env(args.api_env), read_env(args.frontend_env), stripe_test=args.stripe_test, mapbox_test=args.mapbox_test)
+    errors = validate(read_env(args.api_env), read_env(args.frontend_env), stripe_test=args.stripe_test, mapbox_test=args.mapbox_test, resend_test=args.resend_test)
     for label in errors:
         print("BLOCKED:", label)
     if not errors:

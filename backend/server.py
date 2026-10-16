@@ -60,6 +60,7 @@ from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
     enqueue_booking_confirmation, enqueue_operational, ensure_notifications, notification_summary, process_available,
+    enqueue_email_test, freeze_delivery, enqueue_due_email_reminders, reconcile_pending_email_receipts,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
@@ -69,7 +70,7 @@ from devices import build_devices_router, ensure_devices, notify as push_notify
 from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
 from finance import build_finance_router
 from readiness import build_readiness_router
-from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
+from email_templates import invoice_email, payment_link_email, receipt_email, statement_email, email_test_message, review_invitation_email, billing_update_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import build_sms_router, due_reminders, ensure_sms, queue_sms, readiness as sms_readiness
 from session_care import assert_session_ready, build_session_care_router, clear_session_care, consent_snapshot, ensure_session_care
@@ -173,8 +174,16 @@ async def _training_cleanup():
 async def _notification_worker():
     """Poll the Mongo outbox. The row is already durable before this runs."""
     worker_id = "mail-" + uuid.uuid4().hex[:8]
+    last_reminders = 0
     while True:
         try:
+            if os.environ.get("NOTIFICATION_WORKER_ENABLED", "true").lower() == "false":
+                await asyncio.sleep(1)
+                continue
+            if asyncio.get_running_loop().time() - last_reminders > 60:
+                await reconcile_pending_email_receipts(db)
+                await enqueue_due_email_reminders(db, coll)
+                last_reminders = asyncio.get_running_loop().time()
             worked = await process_available(db, _deliver_booking, worker_id, _audit_mail)
         except Exception:
             logging.getLogger(__name__).error("Notification worker iteration failed")
@@ -308,7 +317,7 @@ async def resend_receipt(request: Request):
         raise HTTPException(400, "Invalid event")
     if not isinstance(event, dict):
         raise HTTPException(400, "Invalid event")
-    updated = await apply_delivery_receipt(db, event)
+    updated = await apply_delivery_receipt(db, event, request.headers.get("svix-id"))
     return {"accepted": True, "updated": updated}
 
 
@@ -331,16 +340,20 @@ async def email_status(request: Request):
 async def email_test(request: Request):
     """One fixed message to EMAIL_TEST_RECIPIENT only. No caller-supplied recipient, subject or body."""
     user = await require(request, "owner")
-    from emailer import send_email
+    from emailer import acceptance_guard
     target = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
     if not target:
         raise HTTPException(409, "Set EMAIL_TEST_RECIPIENT first")
-    html = ('<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#0B1B3F">'
-            '<p style="font-size:18px;font-weight:bold">Nabitouch email test</p><p>This test confirms your app can send email. No action is needed.</p>'
-            '<p style="font-size:12px;color:#667">Sent by Nabitouch from the owner settings. We never ask for your password or card details by email.</p></td></tr></table>')
-    message_id = await send_email(to=target, subject="Nabitouch email test", html=html, idempotency_key=f"email-test-{uuid.uuid4().hex}")
-    await add_audit(user["name"], "Email test sent")
-    return {"sent": bool(message_id), "id": message_id, "provider": _email_status()["provider"]}
+    acceptance_guard(target)
+    key = request.headers.get("Idempotency-Key") or ""
+    if not key and os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() == "true":
+        raise HTTPException(409, "A stable test-message Idempotency-Key is required")
+    if len(key) > 200:
+        raise HTTPException(400, "Invalid test-message key")
+    note, _created = await enqueue_email_test(db, target, key or uuid.uuid4().hex)
+    await process_available(db, _deliver_booking, "owner-email-test", _audit_mail, notification_id=note["id"])
+    saved = await db.nt_notifications.find_one({"id": note["id"]}, NO_ID)
+    return {"sent": saved.get("status") == "sent", "id": saved.get("providerId"), "notificationId": note["id"], "status": saved.get("status"), "provider": _email_status()["provider"]}
 
 
 @api.get("/notifications/channels")
@@ -1670,6 +1683,18 @@ async def _maybe_lifecycle_mail(appt, kind):
         await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
 
 
+async def _send_note(note, *, to, subject, html, idempotency_key=None):
+    await freeze_delivery(db, note, {"to": to, "subject": subject, "html": html,
+        "from": os.environ.get("EMAIL_FROM"), "reply": os.environ.get("EMAIL_REPLY_TO"),
+        "redirect": os.environ.get("EMAIL_TEST_RECIPIENT"), "app": os.environ.get("APP_URL")})
+    try:
+        return await send_email(to=to, subject=subject, html=html, idempotency_key=note["id"])
+    except HTTPException as exc:
+        if exc.status_code in (408, 429, 500, 503):
+            raise TransientDelivery("provider_unavailable") from None
+        raise PermanentDelivery("provider_rejected") from None
+
+
 async def _deliver_billing(note):
     """Invoice, receipt, and payment-link mail. Amounts come from the invoice ledger view."""
     from billing import public_invoice
@@ -1683,10 +1708,10 @@ async def _deliver_billing(note):
     ledger = await db.nt_ledger.find({"invoiceId": invoice["id"]}, NO_ID).sort("at", 1).to_list(500)
     view = public_invoice(invoice, ledger)
     link = f"{os.environ['APP_URL'].rstrip('/')}/me/billing"
-    build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email}[note["kind"]]
+    build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email, "billing_update": billing_update_email}[note["kind"]]
     subject, html = build(os.environ["EMAIL_FROM_NAME"], client.get("preferredName") or client.get("firstName") or "there", view, link)
     try:
-        return await send_email(to=to, subject=subject, html=html, idempotency_key=note.get("id"))
+        return await _send_note(note, to=to, subject=subject, html=html)
     except HTTPException as exc:
         if exc.status_code in (408, 429, 500, 503):
             raise TransientDelivery("provider_unavailable") from exc
@@ -1695,7 +1720,10 @@ async def _deliver_billing(note):
 
 async def _deliver_booking(note):
     """Build a booking email from the appointment and client rows. Clinical fields stay out of the message."""
-    if note.get("kind") in ("invoice", "receipt", "payment_link"):
+    if note.get("kind") == "email_test":
+        subject, html = email_test_message()
+        return await _send_note(note, to=note["testRecipient"], subject=subject, html=html)
+    if note.get("kind") in ("invoice", "receipt", "payment_link", "billing_update"):
         return await _deliver_billing(note)
     if note.get("kind") == "statement":
         row = await db.nt_pay_statements.find_one({"id": note.get("statementId")}, NO_ID)
@@ -1705,7 +1733,7 @@ async def _deliver_booking(note):
         subject, html = statement_email(os.environ["EMAIL_FROM_NAME"], account.get("name") or "there", f"{row['start']} to {row['end']}", row["kpis"][0][1],
                                         f"{os.environ['APP_URL'].rstrip('/')}/pro/earnings")
         try:
-            return await send_email(to=account["email"], subject=subject, html=html, idempotency_key=note.get("id"))
+            return await _send_note(note, to=account["email"], subject=subject, html=html)
         except HTTPException as exc:
             raise (TransientDelivery("provider_unavailable") if exc.status_code in (408, 429, 500, 503) else PermanentDelivery("provider_rejected")) from exc
     appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
@@ -1723,11 +1751,16 @@ async def _deliver_booking(note):
     brand = escape(os.environ["EMAIL_FROM_NAME"])
     link = f"{os.environ['APP_URL'].rstrip('/')}/me"
     kind = note.get("kind") or "booking_confirmation"
+    if kind == "review_invite":
+        subject, html = review_invitation_email(os.environ["EMAIL_FROM_NAME"], client.get("firstName") or "there", f"{os.environ['APP_URL'].rstrip('/')}/me/reviews?appt={appt['id']}")
+        return await _send_note(note, to=to, subject=subject, html=html)
     if kind != "booking_confirmation":
         titles = {
             "cancellation": "Your visit was cancelled",
             "reschedule": "Your visit was rescheduled",
             "assignment": "A therapist is assigned to your visit",
+            "reminder_24h": "Your visit is tomorrow",
+            "reminder_2h": "Your visit starts soon",
         }
         title = titles.get(kind, "Your visit was updated")
         html = (f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
@@ -1738,7 +1771,7 @@ async def _deliver_booking(note):
                 f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#1565F0;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">View your visit</a></p>'
                 f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
         try:
-            return await send_email(
+            return await _send_note(note,
                 to=to, subject=f"{title} — {os.environ['EMAIL_FROM_NAME']}", html=html, idempotency_key=note.get("id"),
             )
         except HTTPException as exc:
@@ -1765,7 +1798,7 @@ async def _deliver_booking(note):
             f'<p style="font-size:13px;color:#6B8296">Need to change something? Sign in to your account to view or manage this booking.</p>'
             f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
     try:
-        return await send_email(
+        return await _send_note(note,
             to=to, subject=f"Your {os.environ['EMAIL_FROM_NAME']} massage is booked — {short}", html=html,
             idempotency_key=note.get("id"),
         )

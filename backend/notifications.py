@@ -3,12 +3,15 @@
 MongoDB is the source of truth. Redis is not used. A row is queued when it is
 inserted, sent when the provider accepts it, and never marked delivered from
 that acceptance alone. If the process dies after the provider accepts and
-before this row is updated, a later retry can send a second copy. Resend accepts
-an Idempotency-Key for that window. The mock and Emergent providers do not.
+before this row is updated, Resend's stable Idempotency-Key protects retries.
+Changed payloads and retries beyond 23 hours require operator review rather than
+outliving the provider's 24-hour key retention. Mock/Emergent do not guarantee this.
 A verified Resend webhook is the only writer of deliveredAt.
 """
 import os
 import uuid
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 from pymongo import ReturnDocument
@@ -79,6 +82,9 @@ async def ensure_notifications(db):
     await db.nt_notifications.create_index("id", unique=True)
     await db.nt_notifications.create_index("dedupeKey", unique=True)
     await db.nt_notifications.create_index([("status", 1), ("nextAttemptAt", 1)])
+    await db.nt_notifications.create_index("providerId", sparse=True)
+    await db.nt_email_events.create_index("id", unique=True)
+    await db.nt_email_events.create_index("expiresAt", expireAfterSeconds=0)
 
 
 async def clear_notifications(db):
@@ -99,6 +105,7 @@ def _public(row):
         "providerId": row.get("providerId"),
         "providerAcceptedAt": row.get("providerAcceptedAt"),
         "deliveredAt": row.get("deliveredAt"),
+        "deliveryStatus": row.get("deliveryStatus"),
         "updatedAt": row.get("updatedAt"),
     }
 
@@ -108,6 +115,8 @@ async def notification_summary(db):
     for status in (PENDING, PROCESSING, SENT, RETRYABLE, PERMANENT, CANCELLED):
         counts[status] = await db.nt_notifications.count_documents({"status": status})
     rows = await db.nt_notifications.find({"status": {"$in": list(ATTENTION)}}, {"_id": 0}).sort("updatedAt", -1).to_list(40)
+    failures = await db.nt_notifications.find({"deliveryStatus": {"$in": ["bounced", "complained", "failed", "suppressed"]}}, {"_id": 0}).sort("updatedAt", -1).to_list(40)
+    rows = list({row["id"]: row for row in [*rows, *failures]}.values())[:40]
     return {"counts": counts, "attention": [_public(row) for row in rows],
             "meanings": {
                 "queued": "The booking row exists and a worker has not finished it.",
@@ -149,8 +158,8 @@ async def enqueue_booking_confirmation(db, appt, client_id):
     return doc, True
 
 
-OPERATIONAL_KINDS = {"cancellation", "reschedule", "assignment"}
-BILLING_KINDS = {"invoice", "receipt", "payment_link"}
+OPERATIONAL_KINDS = {"cancellation", "reschedule", "assignment", "reminder_24h", "reminder_2h", "review_invite"}
+BILLING_KINDS = {"invoice", "receipt", "payment_link", "billing_update"}
 
 
 async def enqueue_billing(db, invoice, kind, key):
@@ -205,6 +214,54 @@ async def enqueue_operational(db, appt, client_id, kind):
     return doc, True
 
 
+async def enqueue_email_test(db, recipient, key):
+    now = _iso()
+    doc = {"id": "ntf-" + uuid.uuid4().hex[:16], "kind": "email_test", "dedupeKey": "email_test:" + hashlib.sha256(key.encode()).hexdigest(),
+           "testRecipient": recipient, "status": PENDING, "attempts": 0, "maxAttempts": max_attempts(),
+           "nextAttemptAt": now, "createdAt": now, "updatedAt": now, "deliveredAt": None}
+    try:
+        await db.nt_notifications.insert_one(dict(doc))
+    except DuplicateKeyError:
+        row = await db.nt_notifications.find_one({"dedupeKey": doc["dedupeKey"]}, {"_id": 0})
+        if row.get("testRecipient") != recipient:
+            raise PermanentDelivery("test_recipient_changed")
+        return row, False
+    return doc, True
+
+
+async def freeze_delivery(db, note, envelope):
+    """Do not retry changed content or outlive Resend's 24-hour key retention."""
+    stamp = note.get("firstAttemptAt") or note.get("claimedAt") or _iso()
+    if _now() - datetime.fromisoformat(stamp) >= timedelta(hours=23):
+        raise PermanentDelivery("idempotency_window_requires_review")
+    digest = hashlib.sha256(json.dumps(envelope, sort_keys=True).encode()).hexdigest()
+    await db.nt_notifications.update_one({"id": note["id"], "deliveryFingerprint": {"$exists": False}}, {"$set": {"deliveryFingerprint": digest}})
+    row = await db.nt_notifications.find_one({"id": note["id"]}, {"deliveryFingerprint": 1})
+    if not row or row.get("deliveryFingerprint") != digest:
+        raise PermanentDelivery("message_changed_requires_review")
+
+
+async def enqueue_due_email_reminders(db, coll, now=None):
+    if os.environ.get("EMAIL_REMINDERS_ENABLED", "false").lower() != "true":
+        return 0
+    from zoneinfo import ZoneInfo
+    zone = ZoneInfo("America/Edmonton")
+    moment = now or datetime.now(zone)
+    days = [(moment + timedelta(days=d)).date().isoformat() for d in (0, 1, 2)]
+    rows = await coll("appointments").find({"date": {"$in": days}, "status": {"$in": ["confirmed", "assigned", "preparing"]}}, {"_id": 0}).to_list(2000)
+    queued = 0
+    for row in rows:
+        try:
+            ahead = datetime.fromisoformat(f"{row['date']}T{row['time']}").replace(tzinfo=zone) - moment
+        except (KeyError, ValueError):
+            continue
+        kind = "reminder_24h" if timedelta(hours=22) < ahead <= timedelta(hours=24) else "reminder_2h" if timedelta(hours=1) < ahead <= timedelta(hours=2) else None
+        if kind and row.get("clientId"):
+            _, created = await enqueue_operational(db, row, row["clientId"], kind)
+            queued += int(created)
+    return queued
+
+
 def _due(now_s):
     return {"$or": [
         {"status": {"$in": [PENDING, RETRYABLE]}, "nextAttemptAt": {"$lte": now_s}},
@@ -212,12 +269,12 @@ def _due(now_s):
     ]}
 
 
-async def claim_one(db, worker_id, *, now=None, lease_for=None):
+async def claim_one(db, worker_id, *, now=None, lease_for=None, notification_id=None):
     moment = now or _now()
     now_s = _iso(moment)
     lease = _iso(moment + timedelta(seconds=lease_for if lease_for is not None else lease_seconds()))
     claimed = await db.nt_notifications.find_one_and_update(
-        _due(now_s),
+        {**_due(now_s), **({"id": notification_id} if notification_id else {})},
         {"$set": {"status": PROCESSING, "leaseOwner": worker_id, "leaseUntil": lease, "claimedAt": now_s, "updatedAt": now_s},
          "$inc": {"attempts": 1}},
         sort=[("nextAttemptAt", 1), ("createdAt", 1)],
@@ -226,6 +283,11 @@ async def claim_one(db, worker_id, *, now=None, lease_for=None):
     if not claimed:
         return None
     claimed.pop("_id", None)
+    if not claimed.get("firstAttemptAt"):
+        # Pre-upgrade uncertain retries cannot acquire a fresh provider window.
+        first = claimed.get("createdAt", now_s) if claimed["attempts"] > 1 else now_s
+        await db.nt_notifications.update_one({"id": claimed["id"], "firstAttemptAt": {"$exists": False}}, {"$set": {"firstAttemptAt": first}})
+        claimed["firstAttemptAt"] = first
     return claimed
 
 
@@ -238,9 +300,9 @@ async def _owned_update(db, claimed, worker_id, fields):
     return result.modified_count == 1
 
 
-async def process_available(db, deliver, worker_id, audit, *, lease_for=None, retry_base=None):
+async def process_available(db, deliver, worker_id, audit, *, lease_for=None, retry_base=None, notification_id=None):
     """Claim one due row and finish it. Returns True when a row was claimed."""
-    claimed = await claim_one(db, worker_id, lease_for=lease_for)
+    claimed = await claim_one(db, worker_id, lease_for=lease_for, notification_id=notification_id)
     if not claimed:
         return False
     try:
@@ -261,9 +323,12 @@ async def process_available(db, deliver, worker_id, audit, *, lease_for=None, re
     if provider_id:
         saved = await _owned_update(db, claimed, worker_id, {
             "status": SENT, "providerId": str(provider_id), "providerAcceptedAt": _iso(),
-            "deliveredAt": None, "lastError": None,
+            "lastError": None,
         })
         if saved:
+            await reconcile_email_receipts(db, str(provider_id))
+            if claimed.get("kind") == "review_invite":
+                await db.nt_review_invites.update_one({"appointmentId": claimed.get("appointmentId")}, {"$set": {"status": "sent", "providerId": str(provider_id), "sentAt": _iso()}})
             await audit(claimed, "sent")
     else:
         if await _owned_update(db, claimed, worker_id, {"status": PERMANENT, "lastError": "provider_disabled", "deliveredAt": None}):
@@ -284,22 +349,56 @@ async def _retry_or_exhaust(db, claimed, worker_id, code, audit, retry_base):
     })
 
 
-async def apply_delivery_receipt(db, event):
+async def apply_delivery_receipt(db, event, event_id=None):
     """Record a verified provider receipt. Acceptance alone never calls this."""
     kind = str((event or {}).get("type") or "")
     data = (event or {}).get("data") or {}
-    provider_id = str(data.get("email_id") or "")
-    if not provider_id or kind not in ("email.delivered", "email.bounced", "email.complained"):
+    if not isinstance(data, dict):
         return False
-    if kind == "email.delivered":
-        result = await db.nt_notifications.update_one(
-            {"providerId": provider_id, "deliveredAt": None},
-            {"$set": {"deliveredAt": _iso(), "deliveryStatus": "delivered", "updatedAt": _iso()}},
-        )
-        return result.modified_count == 1
-    status = "bounced" if kind == "email.bounced" else "complained"
-    result = await db.nt_notifications.update_one(
-        {"providerId": provider_id},
-        {"$set": {"deliveryStatus": status, "lastError": kind, "updatedAt": _iso()}},
-    )
-    return result.modified_count == 1
+    provider_id = str(data.get("email_id") or "")
+    if not provider_id or kind not in ("email.delivered", "email.bounced", "email.complained", "email.delivery_delayed", "email.failed", "email.suppressed"):
+        return False
+    identity = event_id or hashlib.sha256(f"{provider_id}:{kind}:{event.get('created_at', '')}".encode()).hexdigest()
+    await db.nt_email_events.update_one({"id": identity},
+        {"$setOnInsert": {"providerId": provider_id, "kind": kind, "status": "awaiting_notification", "at": _iso(), "expiresAt": _now() + timedelta(days=90)}, "$inc": {"deliveries": 1}}, upsert=True)
+    saved = await db.nt_email_events.find_one({"id": identity}, {"providerId": 1, "kind": 1})
+    if saved["providerId"] != provider_id or saved["kind"] != kind:
+        from fastapi import HTTPException
+        raise HTTPException(409, "Conflicting email event identity")
+    return await reconcile_email_receipts(db, provider_id)
+
+
+async def reconcile_email_receipts(db, provider_id):
+    """Durable early-event reconciliation; failure cannot be undone by late delivery."""
+    terminal = ["bounced", "complained", "failed", "suppressed"]
+    updated = False
+    if not await db.nt_notifications.find_one({"providerId": provider_id}, {"id": 1}):
+        return False
+    rows = await db.nt_email_events.find({"providerId": provider_id, "status": "awaiting_notification"}, {"_id": 0}).sort("at", 1).to_list(1000)
+    for row in rows:
+        status = row["kind"].split(".", 1)[1]
+        query = {"providerId": provider_id, "deliveryStatus": {"$ne": status}}
+        fields = {"deliveryStatus": status, "updatedAt": _iso()}
+        if status == "delivered":
+            query.update(deliveredAt=None, deliveryStatus={"$nin": terminal})
+            fields["deliveredAt"] = _iso()
+        elif status == "delivery_delayed":
+            query["deliveryStatus"] = {"$nin": [*terminal, "delivered", "delivery_delayed"]}
+        else:
+            fields["lastError"] = row["kind"]
+        result = await db.nt_notifications.update_one(query, {"$set": fields})
+        updated = bool(result.modified_count) or updated
+        await db.nt_email_events.update_one({"id": row["id"]}, {"$set": {"status": "processed"}})
+    return updated
+
+
+async def reconcile_pending_email_receipts(db):
+    """Repair a receipt after a worker/database failure without another send."""
+    rows = await db.nt_email_events.aggregate([
+        {"$match": {"status": "awaiting_notification"}},
+        {"$lookup": {"from": "nt_notifications", "localField": "providerId", "foreignField": "providerId", "as": "notification"}},
+        {"$match": {"notification.0": {"$exists": True}}},
+        {"$limit": 100}, {"$project": {"providerId": 1}},
+    ]).to_list(100)
+    for provider_id in {row["providerId"] for row in rows}:
+        await reconcile_email_receipts(db, provider_id)

@@ -52,14 +52,9 @@ async def prepare_review_invite(db, coll, appt):
     except DuplicateKeyError:
         return None
     if invites_enabled() and row["to"]:
-        from emailer import send_email
-        html = (f"<p>Hi {client.get('firstName') or 'there'},</p><p>Thank you for visiting Nabitouch. "
-                f"We would value your private feedback on your visit.</p><p><a href=\"{row['link']}\">Share feedback</a></p>")
-        try:
-            provider_id = await send_email(to=row["to"], subject=row["subject"], html=html, idempotency_key=f"review-invite-{appt['id']}")
-            await db.nt_review_invites.update_one({"id": row["id"]}, {"$set": {"status": "sent", "providerId": provider_id, "sentAt": now_iso()}})
-        except Exception:
-            await db.nt_review_invites.update_one({"id": row["id"]}, {"$set": {"status": "failed"}})
+        from notifications import enqueue_operational
+        await enqueue_operational(db, appt, appt.get("clientId"), "review_invite")
+        await db.nt_review_invites.update_one({"id": row["id"]}, {"$set": {"status": "queued"}})
     return row
 
 

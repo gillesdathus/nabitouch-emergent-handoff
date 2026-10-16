@@ -62,6 +62,11 @@ IDs and timestamps. Preserve retry errors and reconcile before any sign-off.
 
 ## Resend and Firebase — later, separately authorized
 
+See [Resend verification and exact-send prerequisites](RESEND_ACCEPTANCE_2026-10-16.md)
+and the [Firebase Android physical-device plan](FIREBASE_ANDROID_ACCEPTANCE.md).
+Resend domain/DNS metadata is verified; no send/inbox/genuine-event acceptance
+has occurred. The existing callback must be identified as isolated before testing.
+
 Resend needs an approved verified sender domain, protected API/signing credentials,
 and one explicitly authorized test inbox. Prepare test-recipient redirection and
 signed delivery/bounce checks. Keep EMAIL_PROVIDER=disabled and delivery switches

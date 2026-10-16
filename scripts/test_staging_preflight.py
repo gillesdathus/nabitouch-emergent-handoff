@@ -26,6 +26,15 @@ class StagingGuards(unittest.TestCase):
     def test_valid_initial_guards(self):
         self.assertEqual(preflight.validate(*self.fixture()), [])
 
+    def test_resend_phase_requires_exact_inbox_sender_and_no_automatic_worker(self):
+        api, frontend = self.fixture()
+        api.update(EMAIL_PROVIDER="resend", EMAIL_ACCEPTANCE_MODE="true", NOTIFICATION_WORKER_ENABLED="false",
+            RESEND_API_KEY="re_" + secrets.token_hex(24), RESEND_WEBHOOK_SECRET="whsec_"+secrets.token_hex(24),
+            EMAIL_TEST_RECIPIENT="approved@nabitouch.com", EMAIL_ALLOWED_RECIPIENTS="approved@nabitouch.com", EMAIL_APPROVED_SENDERS="bookings@nabitouch.com")
+        self.assertEqual(preflight.validate(api, frontend, resend_test=True), [])
+        for key, value in (("EMAIL_ALLOWED_RECIPIENTS", ""), ("EMAIL_APPROVED_SENDERS", ""), ("NOTIFICATION_WORKER_ENABLED", "true"), ("EMAIL_REMINDERS_ENABLED", "true")):
+            self.assertTrue(preflight.validate({**api, key: value}, frontend, resend_test=True))
+
     def test_mapbox_phase_requires_distinct_browser_token_and_storage_permission(self):
         api, frontend = self.fixture()
         self.assertTrue(preflight.validate(api, frontend, mapbox_test=True))

@@ -16,6 +16,7 @@ tests/test_m7_10_safety_plans_native_winback.py::TestNative
 tests/test_launch_config.py
 tests/test_replica_transactions.py
 tests/test_notifications.py
+tests/test_resend_acceptance.py
 tests/test_release_security.py
 tests/test_mobile_address.py
 tests/test_secret_validation.py
