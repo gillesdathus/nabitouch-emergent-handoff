@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -23,6 +23,8 @@ jobs:
       - name: Staging preflight guards
         run: python3 scripts/test_staging_preflight.py
       - name: Validate QA and staging examples without starting staging
+        env:
+          STAGING_API_ENV: ${{ github.workspace }}/deploy/staging/api.env.example
         run: |
           docker compose -f deploy/qa/compose.yml config --quiet
           docker compose --env-file deploy/staging/compose.env.example -f deploy/staging/compose.yml config --no-env-resolution --quiet
@@ -31,7 +33,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -44,10 +46,15 @@ jobs:
       - name: Mapbox outage regressions
         run: docker compose -f deploy/qa/compose.yml run --rm qa python tests/qa_runner.py --eta-failure tests/test_smart_intake_turnaround.py
       - name: Audit clean installed Python dependency set
-        run: docker compose -f deploy/qa/compose.yml run --rm qa python -m pip_audit --format json --output /app/test_reports/backend-clean-audit.json
+        # Audit metadata needs internet; keep it off the internal Mongo/Redis test network.
+        run: docker run --rm --mount "type=bind,source=$GITHUB_WORKSPACE,target=/app" nabitouch-codex-qa-qa python -m pip_audit --format json --output /app/test_reports/backend-clean-audit.json
+      - name: Build runtime image without test dependencies and smoke-test imports
+        run: |
+          docker build -f deploy/Dockerfile.api -t nabitouch-api-ci .
+          docker run --rm --entrypoint python nabitouch-api-ci -c "import auth,billing,catalog,devices,fieldcrypto,history_import,media,notifications,plans,reviews,tracking,turnaround"
       - name: Upload synthetic JUnit and dependency audit only
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: backend-test-evidence
           path: |
@@ -65,10 +72,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24.19.0'
       - name: Install declared Yarn version
@@ -93,7 +100,7 @@ jobs:
           node ../scripts/check_frontend_audit.cjs ../test_reports/frontend-audit.jsonl
       - name: Upload dependency audit only
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: frontend-dependency-audit
           path: test_reports/frontend-audit.jsonl
