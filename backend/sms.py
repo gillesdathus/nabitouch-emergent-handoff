@@ -221,8 +221,11 @@ def build_sms_router(db, coll, add_audit, user_from):
     async def status(request: Request):
         form = await verified_form(request)
         sid, state = form.get("MessageSid"), form.get("MessageStatus")
-        if sid and state in ("queued", "sent", "delivered", "undelivered", "failed", "read"):
-            await db.nt_sms_outbox.update_one({"sid": sid}, {"$set": {"status": state, "providerStatusAt": datetime.now(timezone.utc).isoformat(), "errorCode": form.get("ErrorCode")}})
+        rank = {"queued": 1, "sending": 1, "sent": 2, "delivered": 3, "undelivered": 3, "failed": 3, "read": 4}
+        if sid and state in rank:
+            # Twilio callbacks can arrive out of order; never move a text back to an earlier state.
+            lower = [k for k, v in rank.items() if v < rank[state]]
+            await db.nt_sms_outbox.update_one({"sid": sid, "status": {"$in": lower}}, {"$set": {"status": state, "providerStatusAt": datetime.now(timezone.utc).isoformat(), "errorCode": form.get("ErrorCode")}})
         return Response(status_code=204)
 
     @r.post("/inbound")
