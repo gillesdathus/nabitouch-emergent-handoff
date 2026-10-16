@@ -94,7 +94,7 @@ export default function Booking() {
     !!paymentChoice(draft, idx.settings),
     true,
   ];
-  const go = (n) => { patchDraft({ step: n }); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const go = (n) => { patchDraft({ step: n }); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" })); };
 
   const confirm = async () => {
     if (submitting) return;

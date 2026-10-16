@@ -6,11 +6,13 @@ import { api } from "@/lib/api";
 import { fmtDate, fmtTime } from "@/lib/domain";
 import { useDemo } from "@/store/DemoStore";
 
+const YMD = { year: "numeric", month: "short", day: "numeric" };
+
 function Eligible({ appt, idx, open, onOpen, onSaved }) {
   return (
     <div className="nb-card p-5" data-testid={`review-eligible-${appt.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><p className="text-sm font-semibold">{idx.services[appt.serviceSlug]?.name || "Visit"}</p><p className="text-xs text-nb-mute">{fmtDate(appt.date)} · {fmtTime(appt.time)} · {idx.practitioners[appt.practitionerId]?.name || ""}</p></div>
+        <div><p className="text-sm font-semibold">{idx.services[appt.serviceSlug]?.name || "Visit"}</p><p className="text-xs text-nb-mute">{fmtDate(appt.date, YMD)} · {fmtTime(appt.time)} · {idx.practitioners[appt.practitionerId]?.name || ""}</p></div>
         {!open && <button type="button" onClick={onOpen} className="nb-btn-primary h-10 px-4 text-sm" data-testid={`review-open-${appt.id}`}>Rate this visit</button>}
       </div>
       {open && <div className="mt-4"><RatingForm save={(body) => api.submitReview({ ...body, appointmentId: appt.id })} onSaved={onSaved} testid={`review-form-${appt.id}`} /></div>}
@@ -23,12 +25,12 @@ function Mine({ row, idx, onSaved }) {
   return (
     <div className="nb-card p-5" data-testid={`review-row-${row.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><p className="text-sm font-semibold">{idx.services[row.serviceSlug]?.name || "Visit"} · {fmtDate(row.apptDate)}</p><p className="text-[11px] text-nb-mute">Sent {new Date(row.at).toLocaleDateString("en-CA")}{row.editedAt ? ` · edited ${new Date(row.editedAt).toLocaleDateString("en-CA")}` : ""}</p></div>
+        <div><p className="text-sm font-semibold">{idx.services[row.serviceSlug]?.name || "Visit"} · {fmtDate(row.apptDate, YMD)}</p><p className="text-[11px] text-nb-mute">Sent {fmtDate(row.at.slice(0, 10), YMD)}{row.editedAt ? ` · edited ${fmtDate(row.editedAt.slice(0, 10), YMD)}` : ""}</p></div>
         <StarDisplay value={row.rating} testid={`review-stars-${row.id}`} />
       </div>
       {editing ? <div className="mt-4"><RatingForm initial={row} submitLabel="Save my one edit" save={(body) => api.editReview(row.id, body)} onSaved={() => { setEditing(false); onSaved(); }} testid={`review-edit-form-${row.id}`} /></div>
         : <>{row.comment && <p className="mt-3 text-sm text-nb-ink/80" data-testid={`review-comment-${row.id}`}>“{row.comment}”</p>}
-          {row.editable && <button type="button" onClick={() => setEditing(true)} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-nb-blue" data-testid={`review-edit-${row.id}`}><Pencil className="h-3.5 w-3.5" />Edit once (until {new Date(row.editableUntil).toLocaleDateString("en-CA")})</button>}</>}
+          {row.editable && <button type="button" onClick={() => setEditing(true)} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-nb-blue" data-testid={`review-edit-${row.id}`}><Pencil className="h-3.5 w-3.5" />Edit once (until {fmtDate(row.editableUntil.slice(0, 10), YMD)})</button>}</>}
     </div>
   );
 }
@@ -58,6 +60,7 @@ export default function Reviews() {
             <p className="nb-label">Visits waiting for your feedback</p>
             {data.eligible.length ? data.eligible.map((appt) => <Eligible key={appt.id} appt={appt} idx={idx} open={open === appt.id} onOpen={() => setOpen(appt.id)} onSaved={() => { setOpen(null); load(); }} />)
               : <p className="text-sm text-nb-mute" data-testid="reviews-eligible-empty">No completed visits are waiting for feedback.</p>}
+            {data.eligibleTotal > data.eligible.length && <p className="text-xs text-nb-mute" data-testid="reviews-eligible-more">Showing your {data.eligible.length} most recent visits of {data.eligibleTotal}.</p>}
           </section>
           <section className="space-y-3" data-testid="reviews-mine">
             <p className="nb-label">Your feedback</p>

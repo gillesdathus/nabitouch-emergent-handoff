@@ -71,6 +71,16 @@ def _public(row):
     return row
 
 
+async def _body(request):
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Send a JSON object") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Send a JSON object")
+    return body
+
+
 def _clean(body):
     rating = body.get("rating")
     if not isinstance(rating, int) or isinstance(rating, bool) or not 1 <= rating <= 5:
@@ -103,13 +113,14 @@ def build_reviews_router(db, coll, add_audit, user_from):
                                                 {"_id": 0, "id": 1, "ref": 1, "date": 1, "time": 1, "serviceSlug": 1, "practitionerId": 1, "duration": 1}).to_list(500)
         appts.sort(key=lambda a: f"{a.get('date')}{a.get('time')}", reverse=True)
         url = google_review_url()
-        return {"reviews": [_public(row) for row in rows], "eligible": [a for a in appts if a["id"] not in reviewed],
+        eligible = [a for a in appts if a["id"] not in reviewed]
+        return {"reviews": [_public(row) for row in rows], "eligible": eligible[:20], "eligibleTotal": len(eligible),
                 "googleReviewUrl": url, "googleConfigured": bool(url)}
 
     @r.post("/reviews")
     async def create(request: Request):
         user = await client_user(request)
-        body = await request.json()
+        body = await _body(request)
         rating, comment = _clean(body)
         appt = await coll("appointments").find_one({"id": str(body.get("appointmentId") or "")}, {"_id": 0})
         if not appt or appt.get("clientId") != user["subject"]:
@@ -130,7 +141,7 @@ def build_reviews_router(db, coll, add_audit, user_from):
     @r.put("/reviews/{review_id}")
     async def edit(review_id: str, request: Request):
         user = await client_user(request)
-        rating, comment = _clean(await request.json())
+        rating, comment = _clean(await _body(request))
         row = await db.nt_reviews.find_one({"id": review_id, "clientId": user["subject"]}, {"_id": 0})
         if not row:
             raise HTTPException(404, "Feedback not found")
@@ -190,7 +201,7 @@ def build_reviews_router(db, coll, add_audit, user_from):
     @r.post("/practitioner/client-ratings")
     async def rate_client(request: Request):
         user = await practitioner_user(request)
-        body = await request.json()
+        body = await _body(request)
         rating, comment = _clean(body)
         appt = await coll("appointments").find_one({"id": str(body.get("appointmentId") or "")}, {"_id": 0})
         if not appt or appt.get("practitionerId") != user["subject"]:
@@ -211,7 +222,7 @@ def build_reviews_router(db, coll, add_audit, user_from):
     @r.put("/practitioner/client-ratings/{rating_id}")
     async def edit_client_rating(rating_id: str, request: Request):
         user = await practitioner_user(request)
-        rating, comment = _clean(await request.json())
+        rating, comment = _clean(await _body(request))
         row = await db.nt_client_ratings.find_one({"id": rating_id, "practitionerId": user["subject"]}, {"_id": 0})
         if not row:
             raise HTTPException(404, "Rating not found")
@@ -233,7 +244,8 @@ def build_reviews_router(db, coll, add_audit, user_from):
             raise HTTPException(403, "Only the owner can read practitioner ratings of clients")
         query = {"rating": rating} if 1 <= rating <= 5 else {}
         rows = await db.nt_client_ratings.find(query, {"_id": 0}).sort("at", 1 if sort == "oldest" else -1).to_list(1000)
-        clients = {c["id"]: c for c in await coll("clients").find({}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1}).to_list(5000)}
+        clients = {c["id"]: c for c in await coll("clients").find({"id": {"$in": list({row["clientId"] for row in rows})}},
+                                                                   {"_id": 0, "id": 1, "firstName": 1, "lastName": 1}).to_list(1000)}
         people = {p["id"]: p.get("name") for p in await coll("practitioners").find({}, {"_id": 0, "id": 1, "name": 1}).to_list(200)}
         services = {s["slug"]: s.get("name") for s in await coll("services").find({}, {"_id": 0, "slug": 1, "name": 1}).to_list(200)}
         return {"ratings": [{**row, "clientName": " ".join(filter(None, [clients.get(row["clientId"], {}).get("firstName"), clients.get(row["clientId"], {}).get("lastName")])) or row["clientId"],

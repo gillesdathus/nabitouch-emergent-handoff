@@ -5,18 +5,19 @@ import { PageHeader, Segmented } from "@/components/tide";
 import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/domain";
 
+const YMD = { year: "numeric", month: "short", day: "numeric" };
 const FILTERS = [{ value: "0", label: "All" }, ...[5, 4, 3, 2, 1].map((n) => ({ value: String(n), label: `${n}★` }))];
 
 function Row({ row, testid }) {
   return (
-    <tr className="border-t border-sky-50 align-top" data-testid={testid}>
+    <tr className="border-t border-sky-50 align-top [&>td]:py-3" data-testid={testid}>
       <td className="py-3 pr-3 font-medium">{row.clientName}</td>
       {row.practitionerName !== undefined && <td className="pr-3">{row.practitionerName}</td>}
-      <td className="pr-3 whitespace-nowrap">{fmtDate(row.apptDate)}</td>
+      <td className="pr-3 whitespace-nowrap">{fmtDate(row.apptDate, YMD)}</td>
       <td className="pr-3">{row.serviceName}</td>
       <td className="pr-3"><StarDisplay value={row.rating} size="h-3.5 w-3.5" /></td>
       <td className="max-w-xs pr-3 text-nb-ink/80">{row.comment || <span className="text-nb-mute">No comment</span>}{row.edited && <span className="ml-1 rounded-full bg-amber-50 px-1.5 text-[10px] font-semibold text-amber-800">edited</span>}</td>
-      <td className="whitespace-nowrap text-nb-mute">{new Date(row.at).toLocaleDateString("en-CA")}</td>
+      <td className="whitespace-nowrap text-nb-mute">{fmtDate(row.at.slice(0, 10), YMD)}</td>
     </tr>
   );
 }

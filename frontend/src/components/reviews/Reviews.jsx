@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ExternalLink, Star } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -69,7 +70,7 @@ export function FeedbackPrompt({ idx }) {
       <p className="text-sm font-semibold">How was your {idx.services[next.serviceSlug]?.name || "visit"} on {new Date(`${next.date}T12:00`).toLocaleDateString("en-CA", { month: "short", day: "numeric" })}?</p>
       <p className="mt-1 text-xs text-nb-mute">Private feedback goes only to Nabitouch. A Google review is optional and separate.</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <a href={`/me/reviews?appt=${next.id}`} className="nb-btn-primary h-11 px-4 text-sm" data-testid="feedback-prompt-rate"><Star className="h-4 w-4" />Share private feedback</a>
+        <Link to={`/me/reviews?appt=${next.id}`} className="nb-btn-primary h-11 px-4 text-sm" data-testid="feedback-prompt-rate"><Star className="h-4 w-4" />Share private feedback</Link>
         <GoogleReviewButton testid="feedback-prompt-google" />
       </div>
     </div>
