@@ -415,8 +415,11 @@ def build_finance_router(db, user_from, settings_doc):
             finally:
                 await db.nt_statement_locks.delete_one({"id": pid})
         if not created:
-            raise HTTPException(409 if skipped else 404, f"A statement already covers this period for {', '.join(n for n in skipped if n)}. Delete the draft first." if skipped else "No invoiced visits for that period")
-        return created
+            raise HTTPException(409 if skipped else 404, f"No new statement for {', '.join(n for n in skipped if n)}: one already covers this period or is being generated. Delete the draft first or retry shortly." if skipped else "No invoiced visits for that period")
+        # The body stays a list for existing clients; skipped practitioners are reported in a header.
+        from fastapi.responses import JSONResponse
+        names = ", ".join(n for n in skipped if n)
+        return JSONResponse(created, headers={"X-Statements-Skipped": names.encode("ascii", "ignore").decode()} if names else None)
 
     async def _create_statement(pid, vs, start, end, user, pay_rules, created):
         if vs:

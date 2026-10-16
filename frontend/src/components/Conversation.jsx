@@ -7,7 +7,7 @@ function stamp(value) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString("en-CA", { timeZone: "America/Edmonton", hour: "numeric", minute: "2-digit" });
 }
 
 function receipt(message, role) {

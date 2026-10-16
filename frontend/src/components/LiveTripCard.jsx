@@ -21,7 +21,7 @@ function Timeline({ appt, notices }) {
   return (
     <div className="mt-5" data-testid="trip-timeline">
       <div className="flex items-center gap-1.5">{STEPS.map(([s, label], i) => <div key={s} className="flex-1"><div className={`h-1.5 rounded-full ${i <= reached ? "bg-gradient-to-r from-nb-blue to-nb-turq" : "bg-white/20"}`} /><p className={`mt-1.5 text-[10px] ${i <= reached ? "text-white" : "text-white/50"}`}>{label}</p></div>)}</div>
-      {items.length > 0 && <ol className="mt-4 space-y-2 border-l border-white/20 pl-3">{items.map((x, i) => <li key={i} className="text-xs text-white/85" data-testid={`trip-timeline-item-${i}`}><span className="nb-num mr-2 text-white/60">{new Date(x.at).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })}</span>{x.label}</li>)}</ol>}
+      {items.length > 0 && <ol className="mt-4 space-y-2 border-l border-white/20 pl-3">{items.map((x, i) => <li key={i} className="text-xs text-white/85" data-testid={`trip-timeline-item-${i}`}><span className="nb-num mr-2 text-white/60">{new Date(x.at).toLocaleTimeString("en-CA", { timeZone: "America/Edmonton", hour: "numeric", minute: "2-digit" })}</span>{x.label}</li>)}</ol>}
     </div>
   );
 }
@@ -36,7 +36,7 @@ export function LiveTripCard({ appt, practitioner }) {
   const gps = sess?.source === "gps" && sess?.phase === "live" && !sess?.stale;
   const ageSec = sess?.ageSec != null ? sess.ageSec : null;
   const [freshLabel, dot] = freshness(ageSec);
-  const arrival = etaMin != null ? new Date(Date.now() + etaMin * 60000).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" }) : null;
+  const arrival = etaMin != null ? new Date(Date.now() + etaMin * 60000).toLocaleTimeString("en-CA", { timeZone: "America/Edmonton", hour: "numeric", minute: "2-digit" }) : null;
   const arrived = appt.status === "arrived";
   return (
     <section className="overflow-hidden rounded-[32px] text-white nb-lagoon shadow-[0_24px_60px_-24px_rgba(11,46,138,0.6)]" data-testid="live-trip-card">

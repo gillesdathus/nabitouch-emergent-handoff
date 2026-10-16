@@ -132,7 +132,7 @@ export const api = {
   payRules: () => http.get("/finance/pay-rules").then(data),
   savePayRules: (body) => http.put("/finance/pay-rules", body).then(data),
   statements: () => http.get("/finance/statements").then(data),
-  createStatements: (body) => http.post("/finance/statements", body).then(data),
+  createStatements: (body) => http.post("/finance/statements", body).then((r) => Object.assign(r.data, { skipped: r.headers['x-statements-skipped'] || '' })),
   approveStatement: (id) => http.post(`/finance/statements/${id}/approve`, {}).then(data),
   deleteStatement: (id) => http.delete(`/finance/statements/${id}`).then(data),
   financeReport: (kind, params) => http.get(`/finance/reports/${kind}`, { params }).then(data),

@@ -7,7 +7,7 @@ import { Confirm } from "@/components/ui-kit";
 
 const KINDS = [["obstructed", "Space obstructed"], ["unsafe", "Unsafe"], ["unhygienic", "Unhygienic"], ["unsuitable", "Unsuitable for treatment"], ["other", "Other"]];
 const FIX_TEXT = "Before we begin, the treatment area needs a few changes so the session can go ahead safely. I'll explain at the door.";
-const time = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null);
+const time = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-CA", { timeZone: "America/Edmonton", hour: "numeric", minute: "2-digit" }) : null);
 
 function IncidentSheet({ appt, onDone }) {
   const [kind, setKind] = useState("obstructed");

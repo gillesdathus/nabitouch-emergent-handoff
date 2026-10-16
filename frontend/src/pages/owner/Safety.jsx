@@ -6,7 +6,7 @@ import { useDemo } from "@/store/DemoStore";
 import { EmptyState, Notice, PageHeader, Reveal, Segmented } from "@/components/tide";
 
 const OUTCOMES = [["resume", "Resume visit"], ["resume_session", "Resume session"], ["leave", "Practitioner leaves"], ["cancel", "Cancel visit"]];
-const stamp = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const stamp = (iso) => new Date(iso).toLocaleString("en-CA", { timeZone: "America/Edmonton", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 function Managers() {
   const [data, setData] = useState(null);

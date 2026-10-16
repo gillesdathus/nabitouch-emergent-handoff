@@ -36,7 +36,7 @@ export function Statements({ practitioners }) {
   useEffect(() => { load(); }, [load]);
   const generate = async () => {
     setBusy(true);
-    try { const made = await api.createStatements({ start: range[0], end: range[1], practitionerId: pid }); toast.success(`${made.length} draft statement${made.length > 1 ? "s" : ""} generated`); load(); }
+    try { const made = await api.createStatements({ start: range[0], end: range[1], practitionerId: pid }); toast.success(`${made.length} draft statement${made.length > 1 ? "s" : ""} generated`); if (made.skipped) toast.warning(`Skipped: ${made.skipped}. A statement already covers this period or is being generated.`); load(); }
     catch (e) { toast.error(apiError(e)); }
     setBusy(false);
   };

@@ -132,7 +132,7 @@ export function tripState(appt, now = Date.now()) {
   const sched = new Date(`${appt.date}T${appt.time}:00`);
   return { t, pos: at(t), route: Array.from({ length: 41 }, (_, i) => at(i / 40)), etaMin, arrival, remainingKm: Math.max(0, tr.km * (1 - t)), lateMin: Math.round((arrival - sched) / 60000), arriving: t >= 0.97 };
 }
-export const fmtClockTime = (d) => d.toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit' });
+export const fmtClockTime = (d) => d.toLocaleTimeString('en-CA', { timeZone: "America/Edmonton", hour: 'numeric', minute: '2-digit' });
 
 export const RECEPTION_PERMS = [
   ['viewLocations', 'View live practitioner locations'], ['viewEta', 'View ETAs'], ['viewAddresses', 'View appointment addresses'],
@@ -213,7 +213,7 @@ export const todayISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Amer
 export const addDays = (iso, n) => { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 export const fmtDate = (iso, opts = { weekday: 'short', month: 'short', day: 'numeric' }) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-CA', opts);
 export const fmtTime = (hhmm) => { if (!hhmm) return ''; const [h, m] = hhmm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`; };
-export const fmtStamp = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-CA', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Edmonton' }) : '—');
+export const fmtStamp = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-CA', { timeZone: "America/Edmonton", hour: 'numeric', minute: '2-digit', timeZone: 'America/Edmonton' }) : '—');
 export const endTime = (hhmm, dur) => { const [h, m] = hhmm.split(':').map(Number); const t = h * 60 + m + Number(dur); return `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`; };
 export const fullName = (c) => (c ? `${c.preferredName || c.firstName} ${c.lastName}` : 'Guest');
 
