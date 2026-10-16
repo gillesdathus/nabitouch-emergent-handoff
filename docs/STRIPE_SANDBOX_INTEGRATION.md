@@ -1,11 +1,13 @@
 # Stripe sandbox integration and acceptance
 
-Status: implementation prepared; external acceptance **NOT RUN**. No Stripe
-Checkout Session, PaymentIntent, refund or delivered provider event is claimed
-as acceptance evidence. The connected account inventory exposed only a live
-DG Solutions Agency context; it was not used for payment operations. Stripe CLI
-1.52.0 reports no authentication/test key. No approved staging endpoint has been
-provided. No VPS, DNS, HTTPS, production data or customer delivery was changed.
+Status: **one real deposit/backend settlement accepted** on 16 October 2026;
+full lifecycle acceptance remains incomplete. The owner-provided Nabitouch test
+key and real CLI forwarding verified a paid CAD $25.20 Checkout, succeeded
+PaymentIntent/Charge and signed webhook settlement. See the redacted
+[real acceptance evidence](STRIPE_SANDBOX_ACCEPTANCE_2026-10-16.md), including
+local replay testing and the local frontend-return limitation. No approved
+public staging endpoint is assumed. No VPS, DNS, HTTPS, production data or
+customer delivery was changed.
 
 ## Implemented invoice flow
 
@@ -114,7 +116,11 @@ references require secure operator reconciliation before a refund.
    Initial preflight without --stripe-test still forbids Stripe credentials and
    enabled checkout. A passing preflight is not deployment authorization.
 
-## Genuine provider acceptance procedure (all pending)
+## Genuine provider acceptance procedure
+
+The linked acceptance report verifies one deposit and real signed completion,
+original expiry, local replay and signature rejection. Other scenarios below
+remain pending, including correct browser return UX and real refunds.
 
 Use synthetic customers with synthetic addresses and no production data. Have
 staff issue each invoice, then use its authenticated Nabitouch Checkout action;
@@ -180,9 +186,11 @@ Do not replay/refund uncertain payments under a fresh operation key. Do not
 restore an old database over newer payment events; reconcile money first using
 the existing [rollback guide](BACKUP_FIRST_DEPLOYMENT_ROLLBACK.md).
 
-Release recommendation: **NO GO for Stripe acceptance or production** until
-sandbox credentials, approved endpoint/listener and every applicable genuine
-transaction/webhook reconciliation above are verified. New plan payment/refund
+Release recommendation: **PASS for the evidenced single deposit/backend case;
+NO GO for full Stripe lifecycle acceptance or production** until every applicable
+genuine transaction/webhook scenario and browser return above are verified.
+The local sandbox credentials/listener have now been verified; a public staging
+endpoint remains unprovisioned. New plan payment/refund
 reconciliation remains a separate implementation prerequisite. Resend, browser
 E2E and Android physical-device acceptance follow with separate provider access
 and notification authorization; iOS/APNs remain deferred.

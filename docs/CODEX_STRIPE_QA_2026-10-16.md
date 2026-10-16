@@ -1,5 +1,10 @@
 # Stripe sandbox implementation verification — 16 October 2026
 
+This is the earlier implementation-only record. Subsequent genuine provider
+verification is recorded in
+[real deposit acceptance](STRIPE_SANDBOX_ACCEPTANCE_2026-10-16.md); its paid
+Session/webhook results supersede the earlier external NOT RUN status below.
+
 Source verified against remote `feature/codex-production-readiness` at
 `12af54c8022ca8869aec3e0aa3fc6d041cdc8271`. All previous QA fixes are preserved.
 No deployment, live charge, production database operation, customer notification
