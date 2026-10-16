@@ -1198,6 +1198,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             app_url = reservation["appUrl"]
             form = {
                 "mode": "payment",
+                "integration_identifier": "nabitouch_qlagoonx",
                 "success_url": app_url + "/me/billing?card=return&session_id={CHECKOUT_SESSION_ID}",
                 "cancel_url": app_url + "/me/billing?card=cancel",
                 "line_items[0][quantity]": "1",

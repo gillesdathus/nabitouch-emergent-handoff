@@ -82,6 +82,7 @@ def test_hosted_checkout_server_amount_and_duplicate_submission(sandbox, amount)
     form = calls[0][2]["data"]
     assert form["line_items[0][price_data][unit_amount]"] == str(amount)
     assert form["line_items[0][price_data][currency]"] == "cad"
+    assert form["integration_identifier"] == "nabitouch_qlagoonx"
     assert calls[0][2]["idempotency_key"].startswith("checkout-")
     assert "customer_email" not in form and "receipt_email" not in form
     assert client.post(f"/api/invoices/{iid}/checkout", json={"amountCents": 10081}).status_code == 400

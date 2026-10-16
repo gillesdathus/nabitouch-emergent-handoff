@@ -4,7 +4,7 @@ import os
 import httpx
 from fastapi import HTTPException
 
-API_VERSION = "2026-08-26.dahlia; integration_identifier=nabitouch_qlagoonx"
+API_VERSION = "2026-08-26.dahlia"
 
 
 def validate_stripe_env():
