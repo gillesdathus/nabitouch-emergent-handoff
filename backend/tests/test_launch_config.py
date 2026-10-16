@@ -289,7 +289,7 @@ def test_production_process_refuses_uploads_cards_and_import():
     env = os.environ.copy()
     env.update({
         "APP_ENV": "production", "DEMO_MODE": "false", "COOKIE_SECURE": "true", "EMAIL_PROVIDER": "disabled",
-        "DB_NAME": "nabitouch_launch_check",
+        "DB_NAME": os.environ["DB_NAME"] + "_launch",
         "REDIS_URL": "rediss://:test-password@127.0.0.1:6390/0",
         "DOCUMENT_UPLOADS_ENABLED": "false", "STRIPE_CARD_CHECKOUT_ENABLED": "false",
         "LEGACY_PATIENT_IMPORT_ENABLED": "false", "HOSTING_STRATEGY": "shared-vps",

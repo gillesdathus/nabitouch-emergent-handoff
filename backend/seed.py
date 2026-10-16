@@ -296,9 +296,9 @@ def build_seed():
         {"id": "z-outer", "name": "Outer ring & suburbs", "radiusKm": 25, "fee": 30, "color": "#1565F0", "enabled": True},
     ]
     giftcards = [
-        {"id": "gc-1", "code": "NABI-GIFT-4821", "amount": 120, "balance": 120, "purchaser": "Sarah Thompson",
+        {"id": "gc-1", "code": "NABI-GIFT-4821", "amount": 120, "balance": 120, "amountCents": 12000, "balanceCents": 12000, "version": 1, "purchaser": "Sarah Thompson",
          "recipient": "Emma T.", "status": "active", "issued": d(-5)},
-        {"id": "gc-2", "code": "NABI-GIFT-1177", "amount": 75, "balance": 0, "purchaser": "Walk-in (demo)",
+        {"id": "gc-2", "code": "NABI-GIFT-1177", "amount": 75, "balance": 0, "amountCents": 7500, "balanceCents": 0, "version": 1, "purchaser": "Walk-in (demo)",
          "recipient": "Sarah Thompson", "status": "redeemed", "issued": d(-70)},
     ]
     templates = [

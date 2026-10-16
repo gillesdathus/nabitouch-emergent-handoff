@@ -11,8 +11,7 @@ if not BASE_URL:
             if line.startswith("REACT_APP_BACKEND_URL="):
                 BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
 
-OWNER = ("owner@nabitouch.test", "Tide-ASlUVxgtlyYfG3c2")
-SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-7ycTsfXpHCJV")  # current sample password (see /app/memory/test_credentials.md)
+from t1_common import OWNER, SAMPLE_PW
 CLIENT = ("sarah.demo@example.com", SAMPLE_PW)
 PRO = ("maya.demo@example.com", SAMPLE_PW)
 KINDS = ["revenue", "collections", "outstanding", "insurance", "giftcards", "earnings", "retention", "services", "refunds"]

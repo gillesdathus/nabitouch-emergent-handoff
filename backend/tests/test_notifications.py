@@ -3,6 +3,7 @@ import asyncio
 import os
 import time
 import uuid
+from datetime import date, timedelta
 
 import pytest
 import requests
@@ -255,10 +256,15 @@ def test_no_recipient_cancels_without_a_sent_audit():
     _run(run())
 
 
+_booking_day = 0
+
+
 def _book(headers, when="10:00"):
-    day = 1 + (int(uuid.uuid4().hex[:2], 16) % 27)
+    global _booking_day
+    _booking_day += 1
+    day = (date.today() + timedelta(days=400 + _booking_day)).isoformat()
     body = {"client": {}, "practitionerId": "p-maya", "idempotencyKey": "mail-" + uuid.uuid4().hex[:12],
-            "appointment": {"date": f"2027-06-{day:02d}", "time": when, "duration": 60, "serviceSlug": "swedish",
+            "appointment": {"date": day, "time": when, "duration": 60, "serviceSlug": "swedish",
                             "address": {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown", "postal": "T5J 2R4", "clientConfirmed": True},
                             "pricing": {"subtotal": 100, "gst": 5, "total": 105}, "paymentMethod": "card", "preferences": {}},
             "source": "online"}
@@ -278,7 +284,7 @@ def test_live_booking_queues_then_records_provider_acceptance():
     email = f"box.{uuid.uuid4().hex[:8]}@resend.dev"
     created = requests.post(f"{_api()}/auth/register", json={
         "email": email, "password": "TestPass!234", "firstName": "Box", "lastName": "Client",
-        "phone": "780-555-0101", "dob": "1992-02-02", "marketingConsent": False,
+        "phone": "780-555-0101", "dob": "1992-02-02", "marketingConsent": False, "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True,
     }, timeout=20)
     assert created.status_code == 200, created.text
     headers = _login(email, "TestPass!234")
@@ -305,7 +311,7 @@ def test_demo_reset_drops_notification_rows_and_detached_accounts():
     email = f"reset.{uuid.uuid4().hex[:8]}@resend.dev"
     assert requests.post(f"{_api()}/auth/register", json={
         "email": email, "password": "TestPass!234", "firstName": "Reset", "lastName": "Client",
-        "phone": "780-555-0102", "dob": "1993-03-03", "marketingConsent": False,
+        "phone": "780-555-0102", "dob": "1993-03-03", "marketingConsent": False, "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True,
     }, timeout=20).status_code == 200
     headers = _login(email, "TestPass!234")
     _book(headers, "13:00")
@@ -323,7 +329,7 @@ def test_missing_client_profile_is_restored_before_confirmation():
     email = f"restore.{uuid.uuid4().hex[:8]}@resend.dev"
     created = requests.post(f"{_api()}/auth/register", json={
         "email": email, "password": "TestPass!234", "firstName": "Restored", "lastName": "Client",
-        "phone": "780-555-0103", "dob": "1994-04-04", "marketingConsent": False,
+        "phone": "780-555-0103", "dob": "1994-04-04", "marketingConsent": False, "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True,
     }, timeout=20)
     assert created.status_code == 200, created.text
     subject = created.json()["subject"]

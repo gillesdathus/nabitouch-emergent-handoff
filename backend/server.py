@@ -2177,7 +2177,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
             has_session = request.cookies.get("access_token") or request.cookies.get("refresh_token")
-            if has_session and not request.headers.get("authorization", "").lower().startswith("bearer ") and request.url.path not in self.EXEMPT:
+            challenge_authenticated = False
+            challenge_types = {"/api/auth/mfa/enroll": "mfa-enroll", "/api/auth/mfa/confirm": "mfa-enroll", "/api/auth/mfa/verify": "mfa"}
+            if request.url.path in challenge_types:
+                try:
+                    body = await request.json()
+                    claim = jwt.decode(str(body.get("challenge") or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+                    challenge_authenticated = claim.get("type") == challenge_types[request.url.path] and bool(claim.get("sub"))
+                except (ValueError, AttributeError, jwt.InvalidTokenError):
+                    pass
+            # A signed, short-lived login challenge authenticates this request independently
+            # of any stale browser cookie. Cookie-authenticated enrollment still needs CSRF.
+            if has_session and not challenge_authenticated and not request.headers.get("authorization", "").lower().startswith("bearer ") and request.url.path not in self.EXEMPT:
                 header = request.headers.get("x-csrf-token")
                 cookie = request.cookies.get("csrf_token")
                 if not header or not cookie or not _same(header, cookie):

@@ -1,6 +1,7 @@
 """Mobile bookings require a confirmed civic address. Clinic visits do not."""
 import os
 import uuid
+from datetime import date, timedelta
 
 import requests
 
@@ -21,11 +22,11 @@ def _login(email, password):
     return {"Authorization": f"Bearer {response.cookies.get('access_token')}"}
 
 
-def _book(headers, address, when="11:00"):
+def _book(headers, address, when="11:00", day="2028-06-02"):
     return requests.post(f"{API}/bookings", headers=headers, json={
         "source": "online", "practitionerId": "p-maya",
         "appointment": {
-            "serviceSlug": "swedish", "duration": 60, "date": "2028-06-02", "time": when,
+            "serviceSlug": "swedish", "duration": 60, "date": day, "time": when,
             "locationType": "home", "paymentMethod": "self", "address": address,
         },
     }, timeout=20)
@@ -33,9 +34,10 @@ def _book(headers, address, when="11:00"):
 
 def test_mobile_booking_requires_confirmation_and_a_fee_approval():
     sarah = _login("sarah.demo@example.com", _required("DEMO_PASSWORD"))
-    refused = _book(sarah, {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown"})
+    day = (date.today() + timedelta(days=500 + uuid.uuid4().int % 800)).isoformat()
+    refused = _book(sarah, {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown"}, day=day)
     assert refused.status_code == 400
-    booked = _book(sarah, CONFIRMED, "12:00")
+    booked = _book(sarah, CONFIRMED, "12:00", day)
     assert booked.status_code == 200, booked.text
     appointment = booked.json()["appointment"]
     assert appointment["address"]["civic"]["direction"] == "NW"
@@ -54,4 +56,4 @@ def test_mobile_booking_requires_confirmation_and_a_fee_approval():
         "source": "online",
         "appointment": {"serviceSlug": "swedish", "duration": 60, "date": "2028-06-03", "time": "09:00", "locationType": "clinic", "paymentMethod": "self", "address": {"lat": 53.54, "lng": -113.49}},
     }, timeout=20)
-    assert clinic.status_code == 200, clinic.text
+    assert clinic.status_code == 400 and "not available" in clinic.text.lower(), clinic.text

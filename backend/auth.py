@@ -18,6 +18,11 @@ from emailer import send_email
 from devices import revoke_devices
 
 ALG = "HS256"
+
+
+def blocks_demo_account(user, production):
+    """Production refuses leftover demo rows. Preview still allows them when DEMO_MODE is on."""
+    return bool(production and user and user.get("demo") is True)
 ACCESS_MIN, REFRESH_DAYS, MAX_FAILS, LOCK_MIN = 15, 7, 5, 15
 NATIVE_REFRESH_DAYS = 30
 NATIVE_HEADER = "x-nabitouch-client"
@@ -198,6 +203,9 @@ def build_auth(db, coll, add_audit):
         if p.get("type") != "access" or not row:
             return None
         user = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
+        from config import is_production
+        if blocks_demo_account(user, is_production()):
+            return None
         if user and user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
             return None
         if user:
@@ -251,6 +259,9 @@ def build_auth(db, coll, add_audit):
         if rec and rec.get("count", 0) >= MAX_FAILS and rec.get("lockedUntil", "") > datetime.now(timezone.utc).isoformat():
             raise HTTPException(429, "Too many attempts — try again in 15 minutes")
         u = await users.find_one({"email": email})
+        from config import is_production
+        if blocks_demo_account(u, is_production()):
+            u = None
         hashed = u["password_hash"] if u else timing_hash()
         if not u or not check_pw(str(body.get("password", "")), hashed):
             cnt = (rec or {}).get("count", 0) + 1
@@ -315,7 +326,8 @@ def build_auth(db, coll, add_audit):
             await revoke_devices(db, "refresh_reuse", session_id=p["sid"])
             raise HTTPException(401, "Session expired")
         account = await users.find_one({"id": p["sub"]}, {"_id": 0, "password_hash": 0})
-        if not account:
+        from config import is_production
+        if not account or blocks_demo_account(account, is_production()):
             raise HTTPException(401, "Session expired")
         if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
             raise HTTPException(401, "Sign in with your authenticator")
@@ -424,8 +436,9 @@ def build_auth(db, coll, add_audit):
         row = await live_session(p["sid"])
         if not row or row.get("refreshJti") != p["jti"] or row.get("userId") != p["sub"]:
             raise HTTPException(401, "Session expired")
-        account = await users.find_one({"id": p["sub"]}, {"_id": 1, "role": 1})
-        if not account:
+        account = await users.find_one({"id": p["sub"]}, {"_id": 1, "role": 1, "demo": 1})
+        from config import is_production
+        if not account or blocks_demo_account(account, is_production()):
             raise HTTPException(401, "Session expired")
         if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
             raise HTTPException(401, "Sign in with your authenticator")
@@ -471,7 +484,9 @@ def build_auth(db, coll, add_audit):
             return None
         if claim.get("type") != expected:
             return None
-        return await users.find_one({"id": claim["sub"]})
+        user = await users.find_one({"id": claim["sub"]})
+        from config import is_production
+        return None if blocks_demo_account(user, is_production()) else user
 
     def _recovery_hash(code):
         return hashlib.sha256(str(code).strip().lower().encode()).hexdigest()
@@ -552,6 +567,9 @@ def build_auth(db, coll, add_audit):
         if claim.get("type") != expected:
             raise HTTPException(401, "Sign in again")
         user = await users.find_one({"id": claim["sub"]})
+        from config import is_production
+        if blocks_demo_account(user, is_production()):
+            raise HTTPException(401, "Sign in again")
         row = await db["nt_mfa"].find_one({"userId": claim["sub"], "enabled": True}) if user else None
         if not user or not row:
             raise HTTPException(401, "Sign in again")

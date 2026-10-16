@@ -7,16 +7,41 @@ import os
 import random
 import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 import requests
 from dotenv import dotenv_values
 
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or dotenv_values("/app/frontend/.env")["REACT_APP_BACKEND_URL"]).rstrip("/")
+
+def _backend_env():
+    if os.environ.get("PYTHON_DOTENV_DISABLED") == "1":
+        return {}
+    candidates = [Path("/app/backend/.env"), Path(__file__).resolve().parents[1] / ".env"]
+    for path in candidates:
+        if path.is_file():
+            return dotenv_values(path)
+    return {}
+
+
+def _need(name, *aliases):
+    """Isolated suites read secrets from the environment. They are not stored in source."""
+    file_env = _backend_env()
+    for source in (os.environ, file_env):
+        for key in (name, *aliases):
+            value = (source.get(key) or "").strip()
+            if value:
+                return value
+    raise RuntimeError(f"{name} must be set for isolated tests")
+
+
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or dotenv_values("/app/frontend/.env").get("REACT_APP_BACKEND_URL") or "").rstrip("/")
+if not BASE_URL:
+    raise RuntimeError("REACT_APP_BACKEND_URL must be set for isolated tests")
 API = f"{BASE_URL}/api"
-BENV = dotenv_values("/app/backend/.env")
-OWNER = ("owner@nabitouch.test", "Tide-ASlUVxgtlyYfG3c2")
-SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-7ycTsfXpHCJV")
+BENV = {**_backend_env(), **os.environ}
+OWNER = (_need("OWNER_EMAIL"), _need("OWNER_PASSWORD"))
+SAMPLE_PW = _need("DEMO_PASSWORD", "SAMPLE_PW")
 SARAH = ("sarah.demo@example.com", SAMPLE_PW)
 MAYA = ("maya.demo@example.com", SAMPLE_PW)
 NATIVE = {"X-Nabitouch-Client": "native"}
@@ -26,7 +51,7 @@ def login(creds, csrf=True):
     s = requests.Session()
     r = s.post(f"{API}/auth/login", json={"email": creds[0], "password": creds[1]}, timeout=20)
     if r.status_code != 200:
-        pytest.skip(f"login failed {creds[0]}: {r.status_code} {r.text[:200]}")
+        pytest.fail(f"fixture login failed: HTTP {r.status_code}")
     if csrf:
         s.headers["X-CSRF-Token"] = s.cookies.get("csrf_token") or ""
     return s

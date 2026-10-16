@@ -1253,7 +1253,9 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"received": True, "settled": False, "review": review}
         if kind in ("invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"):
             return await plan_subscription_event(db, kind, obj, add_audit)
-        if kind != "checkout.session.completed":
+        if kind not in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+            return {"received": True, "settled": False}
+        if obj.get("payment_status") != "paid":
             return {"received": True, "settled": False}
         checkout_row = await db.nt_checkouts.find_one({"sessionId": obj.get("id")})
         if not checkout_row:

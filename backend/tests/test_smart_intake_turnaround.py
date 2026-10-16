@@ -8,13 +8,14 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from t1_common import API, BENV, MAYA, OWNER, SARAH, login
+from booking_fixtures import EDMONTON_HOME
+from t1_common import API, BENV, MAYA, OWNER, SAMPLE_PW, SARAH, login
 
 pytestmark = pytest.mark.real_consent
 DB = MongoClient(BENV["MONGO_URL"])[BENV["DB_NAME"]]
 TZ = ZoneInfo("America/Edmonton")
 SIG = "data:image/png;base64," + "iVBORw0KGgo" * 60
-ADDR = {"label": "Home", "line": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "id": "ad-sarah", "clientConfirmed": True}
+ADDR = dict(EDMONTON_HOME)
 S = {}
 
 
@@ -126,7 +127,7 @@ class TestIntakeConsent:
 
     def test_other_client_403(self):
         email = f"test_intake_{uuid.uuid4().hex[:6]}@example.com"
-        pw = "Sample-7ycTsfXpHCJV"
+        pw = SAMPLE_PW
         requests.post(f"{API}/auth/register", json={"email": email, "password": pw, "firstName": "TEST", "lastName": "Other", "phone": "780-555-0143",
                                                     "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True}, timeout=20)
         c = login((email, pw))
@@ -292,8 +293,12 @@ class TestIntakeConsent:
         today = now.date().isoformat()
         # second booking: another free slot, then both moved to today (test setup only)
         second = book(owner, times=("13:00", "14:00", "15:00"))
-        t1 = (now - timedelta(minutes=5)).strftime("%H:%M")
-        t2 = (now + timedelta(minutes=40)).strftime("%H:%M")
+        # Keep both synthetic visits on today's schedule, including around midnight.
+        # A +40 minute clock wrapped into tomorrow while retaining today's date.
+        minute = now.hour * 60 + now.minute
+        first_minute, next_minute = max(0, minute - 1), max(1, minute)
+        t1 = f"{first_minute // 60:02d}:{first_minute % 60:02d}"
+        t2 = f"{next_minute // 60:02d}:{next_minute % 60:02d}"
         DB.nt_appointments.update_one({"id": first["id"]}, {"$set": {"date": today, "time": t1}})
         DB.nt_appointments.update_one({"id": second["id"]}, {"$set": {"date": today, "time": t2, "status": "confirmed"}})
         S["n1"], S["n2"] = first["id"], second["id"]

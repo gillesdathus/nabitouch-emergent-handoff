@@ -7,12 +7,13 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from t1_common import API, BENV, MAYA, OWNER, SARAH, login
+from booking_fixtures import EDMONTON_HOME
+from t1_common import API, BENV, MAYA, OWNER, SAMPLE_PW, SARAH, login
 
 DB = MongoClient(BENV["MONGO_URL"])[BENV["DB_NAME"]]
 TZ = ZoneInfo("America/Edmonton")
 GOOGLE = "https://g.page/r/CWre3DsJWCgxEAE/review"
-ADDR = {"label": "Home", "line": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "id": "ad-sarah", "clientConfirmed": True}
+ADDR = dict(EDMONTON_HOME)
 REVIEWABLE = ["completed", "processing", "closed"]
 S = {}
 
@@ -35,7 +36,7 @@ def maya():
 @pytest.fixture(scope="module")
 def other_client():
     email = f"test_rev_{uuid.uuid4().hex[:6]}@example.com"
-    pw = "Sample-7ycTsfXpHCJV"
+    pw = SAMPLE_PW
     requests.post(f"{API}/auth/register", json={"email": email, "password": pw, "firstName": "TEST", "lastName": "Reviewer", "phone": "780-555-0145",
                                                 "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True}, timeout=20)
     return login((email, pw))
@@ -47,7 +48,16 @@ def unreviewed_sarah(practitioner=None, n=0):
     if practitioner:
         q["practitionerId"] = practitioner
     rows = [a for a in DB.nt_appointments.find(q, {"_id": 0, "id": 1, "practitionerId": 1}) if a["id"] not in reviewed]
-    return rows[n]["id"] if len(rows) > n else None
+    while len(rows) <= n:
+        aid = "a-TEST-rev-" + uuid.uuid4().hex[:10]
+        person = practitioner or "p-maya"
+        DB.nt_appointments.insert_one({
+            "id": aid, "clientId": "c-sarah", "practitionerId": person, "status": "completed",
+            "serviceSlug": "swedish", "duration": 60, "date": "2024-03-03", "time": "15:00",
+            "ref": "TEST-REV", "locationType": "home", "synthetic": True,
+        })
+        rows.append({"id": aid, "practitionerId": person})
+    return rows[n]["id"]
 
 
 # ---- Public config

@@ -18,11 +18,11 @@ if not BASE_URL:
 API = f"{BASE_URL}/api"
 WH_SECRET = dotenv_values("/app/backend/.env").get("STRIPE_WEBHOOK_SECRET")
 
-OWNER = ("owner@nabitouch.test", "Tide-ASlUVxgtlyYfG3c2")
-SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-7ycTsfXpHCJV")
+from booking_fixtures import EDMONTON_HOME
+from t1_common import OWNER, SAMPLE_PW
 CLIENT = ("sarah.demo@example.com", SAMPLE_PW)
 PRO = ("maya.demo@example.com", SAMPLE_PW)
-ADDR = {"label": "Home", "line": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "id": "ad-sarah", "zoneId": "z-central", "clientConfirmed": True}
+ADDR = {**EDMONTON_HOME, "zoneId": "z-central"}
 NATIVE = {"X-Nabitouch-Client": "native"}
 
 

@@ -65,7 +65,7 @@ def _token():
 
 def sample_catalog():
     """Isolated tests may opt into the Edmonton samples. The running app does not."""
-    return os.environ.get("GEO_SAMPLE_CATALOG") == "true"
+    return os.environ.get("GEO_SAMPLE_CATALOG") == "true" and os.environ.get("APP_ENV", "development").strip().lower() != "production"
 
 
 MAPBOX_REQUIRED = "Address search needs a Mapbox token. Add MAPBOX_TOKEN to this environment. Sample addresses are not offered."
@@ -165,7 +165,7 @@ class Geocoder:
     async def resolve(self, line="", mapbox_id="", point=None):
         """Return the coordinates used for zone and fee decisions. Client coordinates lose when a place resolves."""
         place_id = str(mapbox_id or "")
-        if place_id.startswith("local-"):
+        if place_id.startswith("local-") and sample_catalog():
             hit = _local_by_id(place_id)
             if not hit:
                 raise GeocodeError("That address could not be found. Choose a suggestion or enter the street and city.")

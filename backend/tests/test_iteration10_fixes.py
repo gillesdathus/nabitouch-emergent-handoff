@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from t1_common import API
+from t1_common import API, SAMPLE_PW
 from test_smart_intake_turnaround import DB, TZ, baseline_body, book, end_if_active, make_ready, owner, sarah, maya, start, to_arrived  # noqa: F401, F811
 
 pytestmark = pytest.mark.real_consent
@@ -101,7 +101,12 @@ class TestIteration10:
     def test_ops_alerts_expire(self, owner):  # noqa: F811
         old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
         now = datetime.now(timezone.utc).isoformat()
-        cancelled = DB.nt_appointments.find_one({"status": "cancelled"}, {"id": 1})["id"]
+        cancelled_row = DB.nt_appointments.find_one({"status": "cancelled"}, {"id": 1})
+        if not cancelled_row:
+            cancelled = "a-TEST-can-" + uuid.uuid4().hex[:8]
+            DB.nt_appointments.insert_one({"id": cancelled, "status": "cancelled", "ref": "TEST-CAN", "practitionerId": "p-maya", "date": "2000-01-01", "time": "09:00", "duration": 60, "locationType": "home"})
+        else:
+            cancelled = cancelled_row["id"]
         rows = {
             "old": {"at": old, "kind": "reception", "nextAppointmentId": None},
             "dead_next": {"at": now, "kind": "at_risk", "nextAppointmentId": cancelled},
@@ -141,7 +146,7 @@ def test_clinical_intake_version_gap_probe():
     import requests
     from t1_common import login
     email = f"test_gap_{uuid.uuid4().hex[:6]}@example.com"
-    pw = "Sample-7ycTsfXpHCJV"
+    pw = SAMPLE_PW
     requests.post(f"{API}/auth/register", json={"email": email, "password": pw, "firstName": "TEST", "lastName": "Gap", "phone": "780-555-0144",
                                                 "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True}, timeout=20)
     c = login((email, pw))
