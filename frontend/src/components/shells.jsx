@@ -155,15 +155,23 @@ function PublicFooter() {
 export function AccountMenu() {
   const nav = useNavigate();
   const { pathname } = useLocation();
-  const { user, logout } = useDemo();
+  const { user, logout, api, setUser } = useDemo();
   const spaces = spacesOf(user);
   const current = workspaceForPath(pathname);
   const signOut = async () => { await logout(); nav("/"); };
+  const switchWorkspace = async (role) => {
+    try {
+      const next = await api.setWorkspace(role);
+      if (setUser) setUser(next);
+      else if (user) Object.assign(user, next);
+    } catch { /* navigation still proceeds; preference is best-effort */ }
+    nav(WORKSPACES[role].to);
+  };
   if (!user) return <Link to="/login" data-testid="account-sign-in" aria-label="Sign in" className="nb-btn-ghost h-10 w-10 px-0 text-sm lg:w-auto lg:px-4"><LogIn className="h-4 w-4 lg:hidden" /><span className="hidden lg:inline">Sign in</span></Link>;
   return (
     <div className="flex items-center gap-2">
       {spaces.length > 1 && (
-        <select aria-label="Workspace" data-testid="workspace-switch" className="nb-input h-10 w-[7.5rem] text-sm sm:w-auto" value={spaces.includes(current) ? current : spaces[0]} onChange={(e) => nav(WORKSPACES[e.target.value].to)}>
+        <select aria-label="Workspace" data-testid="workspace-switch" className="nb-input h-10 w-[7.5rem] text-sm sm:w-auto" value={spaces.includes(current) ? current : spaces[0]} onChange={(e) => switchWorkspace(e.target.value)}>
           {spaces.map((role) => <option key={role} value={role}>{WORKSPACES[role].label}</option>)}
         </select>
       )}

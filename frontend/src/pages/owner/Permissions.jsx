@@ -52,23 +52,74 @@ function AuthenticatorCard() {
 function StaffAccounts() {
   const { api, state } = useDemo();
   const [list, setList] = useState([]);
-  const [f, setF] = useState({ name: "", email: "", password: "", role: "practitioner", practitionerId: "" });
+  const [f, setF] = useState({ name: "", email: "", role: "practitioner", roles: ["practitioner"], practitionerId: "", preferredWorkspace: "practitioner" });
   const [creating, setCreating] = useState(false);
   const load = () => api.staff().then(setList).catch(() => {});
   useEffect(() => { load(); }, []); // eslint-disable-line
-  const create = async () => { try { await api.createStaff({ ...f, practitionerId: f.practitionerId || null }); toast.success("Staff account created"); setF({ ...f, name: "", email: "", password: "" }); setCreating(false); load(); } catch (e) { toast.error(apiError(e)); } };
+  const invite = async () => {
+    try {
+      const result = await api.inviteStaff({ ...f, roles: f.roles, role: f.role, practitionerId: f.practitionerId || null });
+      toast.success(result.message || "Invitation created");
+      if (result.previewInviteToken) toast.message(`Invite link: ${window.location.origin}/join?token=${result.previewInviteToken}`);
+      setF({ name: "", email: "", role: "practitioner", roles: ["practitioner"], practitionerId: "", preferredWorkspace: "practitioner" });
+      setCreating(false);
+      load();
+    } catch (e) { toast.error(apiError(e)); }
+  };
+  const setRoles = async (user, roles) => {
+    try { await api.patchStaff(user.id, { roles }); toast.success("Roles updated"); load(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+  const setStatus = async (user, status) => {
+    try { await api.patchStaff(user.id, { roles: user.roles || [user.role], status }); toast.success(status === "suspended" ? "Account suspended" : "Account activated"); load(); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+  const revokeSessions = async (user) => {
+    try { const result = await api.revokeStaffSessions(user.id); toast.success(`Revoked ${result.revoked || 0} session(s)`); }
+    catch (e) { toast.error(apiError(e)); }
+  };
+  const toggleRole = (role) => {
+    setF((current) => {
+      const have = new Set(current.roles || [current.role]);
+      if (have.has(role)) have.delete(role); else have.add(role);
+      if (!have.size) have.add("practitioner");
+      const roles = ["owner", "manager", "practitioner", "desk"].filter((item) => have.has(item));
+      return { ...current, roles, role: roles[0], preferredWorkspace: roles.includes("practitioner") ? "practitioner" : (roles.includes("desk") ? "desk" : "owner") };
+    });
+  };
   return (
     <div className="space-y-4" data-testid="staff-accounts">
       <SectionHead eyebrow="Accounts" title="Staff accounts" />
-      <div className="nb-card divide-y divide-sky-100">{list.map((u) => <div key={u.id} className="flex items-center gap-3 p-3 text-sm" data-testid={`staff-row-${u.email}`}><UserRound className="h-4 w-4 text-nb-teal" /><span className="flex-1"><b>{u.name}</b> · {u.email}</span><span className="text-xs capitalize text-nb-mute">{u.role === "desk" ? "reception" : u.role}{u.demo ? " · demo" : ""}</span></div>)}{list.length === 0 && <p className="p-4 text-sm text-nb-mute">No staff accounts loaded.</p>}</div>
-      <button type="button" className="nb-btn-ghost h-10 px-4 text-sm" data-testid="staff-create-open" onClick={() => setCreating((value) => !value)}>{creating ? "Close" : "Add staff account"}</button>
+      <p className="text-sm text-nb-mute">Prefer invitations. Administrators never choose another person&apos;s password or authenticator secret.</p>
+      <div className="nb-card divide-y divide-sky-100">
+        {list.map((u) => (
+          <div key={u.id} className="space-y-2 p-3 text-sm" data-testid={`staff-row-${u.email}`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <UserRound className="h-4 w-4 text-nb-teal" />
+              <span className="flex-1"><b>{u.name}</b> · {u.email}</span>
+              <span className="text-xs capitalize text-nb-mute">{(u.roles || [u.role]).map((role) => (role === "desk" ? "reception" : role)).join(", ")}{u.status ? ` · ${u.status}` : ""}{u.demo ? " · demo" : ""}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-suspend-${u.email}`} onClick={() => setStatus(u, u.status === "suspended" ? "active" : "suspended")}>{u.status === "suspended" ? "Activate" : "Suspend"}</button>
+              <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-revoke-sessions-${u.email}`} onClick={() => revokeSessions(u)}>Revoke sessions</button>
+              <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-add-desk-${u.email}`} onClick={() => setRoles(u, Array.from(new Set([...(u.roles || [u.role]), "desk"])))}>Add reception</button>
+              <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-add-manager-${u.email}`} onClick={() => setRoles(u, Array.from(new Set([...(u.roles || [u.role]), "manager"])))}>Add manager</button>
+            </div>
+          </div>
+        ))}
+        {list.length === 0 && <p className="p-4 text-sm text-nb-mute">No staff accounts loaded.</p>}
+      </div>
+      <button type="button" className="nb-btn-ghost h-10 px-4 text-sm" data-testid="staff-create-open" onClick={() => setCreating((value) => !value)}>{creating ? "Close" : "Invite staff"}</button>
       {creating && <div className="nb-card grid gap-3 p-4 sm:grid-cols-2">
         <input className="nb-input" placeholder="Full name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} data-testid="staff-name-input" />
         <input className="nb-input" type="email" placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} data-testid="staff-email-input" />
-        <input className="nb-input" type="password" placeholder="Temporary password (8+)" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} data-testid="staff-password-input" />
-        <select className="nb-input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} data-testid="staff-role-select"><option value="practitioner">Practitioner</option><option value="desk">Reception</option></select>
-        {f.role === "practitioner" && <select className="nb-input sm:col-span-2" value={f.practitionerId} onChange={(e) => setF({ ...f, practitionerId: e.target.value })} data-testid="staff-pract-select"><option value="">New practitioner profile</option>{state.practitioners.map((p) => <option key={p.id} value={p.id}>{`Link to ${p.name}`}</option>)}</select>}
-        <button disabled={!f.name || !f.email || f.password.length < 8} onClick={create} data-testid="staff-create-btn" className="nb-btn-primary sm:col-span-2">Create staff account</button>
+        <div className="sm:col-span-2 flex flex-wrap gap-3 text-sm" data-testid="staff-role-flags">
+          {[["owner", "Owner"], ["manager", "Manager"], ["desk", "Reception"], ["practitioner", "Practitioner"]].map(([id, label]) => (
+            <label key={id} className="inline-flex items-center gap-2"><input type="checkbox" checked={(f.roles || []).includes(id)} onChange={() => toggleRole(id)} data-testid={`staff-role-${id}`} />{label}</label>
+          ))}
+        </div>
+        {(f.roles || []).includes("practitioner") && <select className="nb-input sm:col-span-2" value={f.practitionerId} onChange={(e) => setF({ ...f, practitionerId: e.target.value })} data-testid="staff-pract-select"><option value="">New practitioner profile</option>{state.practitioners.map((p) => <option key={p.id} value={p.id}>{`Link to ${p.name}`}</option>)}</select>}
+        <button disabled={!f.name || !f.email} onClick={invite} data-testid="staff-create-btn" className="nb-btn-primary sm:col-span-2">Send invitation</button>
       </div>}
     </div>
   );

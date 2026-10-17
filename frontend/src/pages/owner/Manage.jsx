@@ -289,7 +289,16 @@ export default function Manage() {
   const [invite, setInvite] = useState(null);
   const [clientId, setClientId] = useState(null);
   const [personId, setPersonId] = useState(null);
-  const [person, setPerson] = useState({ name: "", email: "", phone: "", role: "practitioner" });
+  const [person, setPerson] = useState({ name: "", email: "", phone: "", role: "practitioner", roles: ["practitioner"] });
+  const toggleInviteRole = (role) => {
+    setPerson((current) => {
+      const have = new Set(current.roles || [current.role]);
+      if (have.has(role)) have.delete(role); else have.add(role);
+      if (!have.size) have.add("practitioner");
+      const roles = ["owner", "manager", "practitioner", "desk"].filter((item) => have.has(item));
+      return { ...current, roles, role: roles[0] };
+    });
+  };
   const soon = (d) => d <= addDays(todayISO(), 60);
   const today = todayISO();
   const openTab = (name, extra) => {
@@ -349,15 +358,20 @@ export default function Manage() {
         <TabsList className="h-11 rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100">{["practitioners", "services", "clients"].map((t) => <TabsTrigger key={t} value={t} data-testid={`manage-tab-${t}`} className="rounded-full px-4 capitalize data-[state=active]:bg-nb-ink data-[state=active]:text-white">{t}</TabsTrigger>)}</TabsList>
         <TabsContent value="practitioners" className="mt-5 space-y-3">
           <div className="nb-card space-y-3 p-4" data-testid="practitioner-invite">
-            <div className="flex items-center justify-between gap-3"><p className="font-semibold">Practitioners</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Add practitioner"}</button></div>
+            <div className="flex items-center justify-between gap-3"><p className="font-semibold">Staff invitations</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Invite staff"}</button></div>
             {showInvite && <>
-            <p className="text-xs text-nb-mute">This creates an invited profile. You do not set their password. Email delivery is off in this preview, so a single-use link is shown once. SMS is not configured.</p>
+            <p className="text-xs text-nb-mute">Invite owner, manager, reception, or practitioner roles. You do not set their password. A single-use link is shown once when email delivery is off.</p>
             <div className="grid gap-2 sm:grid-cols-2">
               <input className="nb-input h-10" placeholder="Name" value={person.name} onChange={(e) => setPerson({ ...person, name: e.target.value })} data-testid="invite-name" />
               <input className="nb-input h-10" placeholder="Email" value={person.email} onChange={(e) => setPerson({ ...person, email: e.target.value })} data-testid="invite-email" />
               <input className="nb-input h-10" placeholder="Mobile phone" value={person.phone} onChange={(e) => setPerson({ ...person, phone: e.target.value })} data-testid="invite-phone" />
+              <div className="sm:col-span-2 flex flex-wrap gap-3 text-sm" data-testid="invite-roles">
+                {[["owner", "Owner"], ["manager", "Manager"], ["desk", "Reception"], ["practitioner", "Practitioner"]].map(([id, label]) => (
+                  <label key={id} className="inline-flex items-center gap-2"><input type="checkbox" checked={(person.roles || []).includes(id)} onChange={() => toggleInviteRole(id)} data-testid={`invite-role-${id}`} />{label}</label>
+                ))}
+              </div>
             </div>
-            <button type="button" className="nb-btn-primary h-10 px-4 text-sm" data-testid="invite-send" onClick={() => run(() => api.inviteStaff(person), "Invitation created").then((result) => { setInvite(result); setPerson({ name: "", email: "", phone: "", role: "practitioner" }); setShowInvite(false); }).catch(() => {})}>Create invitation</button>
+            <button type="button" className="nb-btn-primary h-10 px-4 text-sm" data-testid="invite-send" onClick={() => run(() => api.inviteStaff({ ...person, roles: person.roles, role: person.role }), "Invitation created").then((result) => { setInvite(result); setPerson({ name: "", email: "", phone: "", role: "practitioner", roles: ["practitioner"] }); setShowInvite(false); }).catch(() => {})}>Create invitation</button>
             </>}
             {invite?.previewInviteToken && <p className="break-all rounded-2xl bg-sky-50 p-3 text-xs" data-testid="invite-link">Copy this link once: {window.location.origin}/join?token={invite.previewInviteToken}</p>}
             {invite && !invite.previewInviteToken && <p className="text-sm">{invite.message}</p>}

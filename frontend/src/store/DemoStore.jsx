@@ -79,6 +79,7 @@ export function DemoProvider({ children }) {
 
   const value = {
     ...auth,
+    setUser,
     perm: (k) => !!state?.settings?.[0]?.receptionPerms?.[k], // simulated client-side check; production enforces server-side
     state, idx, error, refresh, run, api,
     clientId, setClientId, practitionerId, setPractitionerId, ownerMode, setOwnerMode,

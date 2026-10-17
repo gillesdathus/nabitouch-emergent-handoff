@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { CheckCircle2, AlertCircle } from "lucide-react";
+import { CheckCircle2, AlertCircle, FilePlus2 } from "lucide-react";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
+import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { Counter, PayPill, Pill, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { money, fmtDate, fmtStamp, CLAIM_STATUS, paymentQueues } from "@/lib/domain";
@@ -36,6 +37,7 @@ function ReportPanel({ api, run, practitioners }) {
 export default function Payments({ role = "owner" }) {
   const { state, idx, api, run } = useDemo();
   const [sel, setSel] = useState(null);
+  const [createInvoice, setCreateInvoice] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importReport, setImportReport] = useState(null);
   const appts = state.appointments.filter((a) => a.settle);
@@ -54,7 +56,20 @@ export default function Payments({ role = "owner" }) {
   const kpis = [["Card & cash collected", sum((a) => a.settle.clientPaid - a.settle.refunded), "kpi-collected-client"], ["Insurer payments received", sum((a) => a.settle.insuranceConfirmed), "kpi-insurer-paid"], ["Insurance receivables", sum((a) => a.settle.insurancePending), "kpi-receivables"], ["Client balances due", outstanding.reduce((s, a) => s + a.settle.payable, 0), "kpi-outstanding"]];
   return (
     <div className="space-y-8" data-testid={`${role}-payments`}>
-      <SectionHead eyebrow="Invoices & reports" title="Invoices, payments, and reports" action={<span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-nb-mute">Insurance billing is not connected</span>} />
+      <SectionHead
+        eyebrow="Invoices & reports"
+        title="Invoices, payments, and reports"
+        action={(
+          <div className="flex flex-wrap items-center gap-2">
+            {(role === "owner" || role === "desk") && (
+              <button type="button" className="nb-btn-primary h-10 px-4 text-sm" data-testid="payments-create-invoice" onClick={() => setCreateInvoice(true)}>
+                <FilePlus2 className="h-4 w-4" />Create invoice
+              </button>
+            )}
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-nb-mute">Insurance billing is not connected</span>
+          </div>
+        )}
+      />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{kpis.map(([l, v, t]) => <div key={t} className="nb-card p-5" data-testid={t}><p className="text-xs text-nb-mute">{l}</p><p className="mt-2 text-2xl font-semibold"><Counter value={v} prefix="$" decimals={2} /></p></div>)}</div>
       <div className="grid gap-6 lg:grid-cols-3">
         {follow("Pending payment", queues.pending, "payment-pending")}
@@ -88,6 +103,7 @@ export default function Payments({ role = "owner" }) {
         {importReport && <p className="text-sm" data-testid="history-import-report">{importReport.rows} rows · {importReport.errors?.length || 0} errors · {importReport.created ?? 0} created</p>}
       </div>}
       {sel && <AppointmentSheet apptId={sel} role={role} onClose={() => setSel(null)} />}
+      {createInvoice && <CreateInvoiceDialog open onClose={() => setCreateInvoice(false)} />}
     </div>
   );
 }

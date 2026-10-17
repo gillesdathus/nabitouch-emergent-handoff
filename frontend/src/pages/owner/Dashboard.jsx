@@ -7,6 +7,7 @@ import { HubLink } from "@/components/tide";
 import { TurnaroundBoard } from "@/components/session/TurnaroundBoard";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { ClientProfile } from "@/components/ops/Profiles";
 import { Counter, PayPill, StatusPill } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
@@ -28,6 +29,7 @@ export default function Dashboard() {
   const [openId, setOpenId] = useState(null);
   const [clientId, setClientId] = useState(null);
   const [booking, setBooking] = useState(false);
+  const [invoice, setInvoice] = useState(false);
   const today = todayISO();
   const visitsToday = state.appointments.filter((item) => item.date === today && !["cancelled", "no_show"].includes(item.status));
   const booked = visitsToday.reduce((sum, item) => sum + (item.pricing?.total || 0), 0);
@@ -75,7 +77,16 @@ export default function Dashboard() {
       )}
       {actions && (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" data-testid="dashboard-actions">
-          {(training ? [[() => { if (state.clients.length) setBooking(true); }, "New booking", CalendarPlus, "Book into the training sandbox."]] : [[() => { if (state.clients.length) setBooking(true); }, "New booking", CalendarPlus, "Open the existing booking form."], [() => navigate("/owner/manage?invite=1"), "Add practitioner", UserPlus, "Invitation only. You do not set their password."], [() => navigate("/owner/manage?create=service"), "Create service", Sparkles, "Draft a treatment, then add its photo."], [() => navigate("/owner/payments"), "Open invoices", Receipt, "Balances and period reports."], [() => navigate("/owner/availability"), "Block availability", CalendarOff, "Close time without cancelling a visit."], [() => navigate("/owner/promos?create=1"), "Create promotion", Tag, "Saved as a draft until you turn it on."]]).map(([go, label, Icon, detail]) => <div key={label} className="nb-card px-1"><HubLink icon={Icon} title={label} detail={detail} onClick={go} /></div>)}
+          {(training ? [[() => setBooking(true), "New booking", CalendarPlus, "Book into the training sandbox."]] : [
+            [() => setBooking(true), "Phone booking", CalendarPlus, "Search or create a patient, then book by phone, WhatsApp, SMS, or walk-in."],
+            [() => setInvoice(true), "New invoice", Receipt, "Standalone draft invoice without an appointment."],
+            [() => navigate("/owner/manage?invite=1"), "Add practitioner", UserPlus, "Invitation only. You do not set their password."],
+            [() => navigate("/owner/manage?create=service"), "Create service", Sparkles, "Draft a treatment, then add its photo."],
+            [() => navigate("/owner/payments"), "Invoices & reports", Receipt, "Balances, manuals, and period reports."],
+            [() => navigate("/owner/availability"), "Block availability", CalendarOff, "Close time without cancelling a visit."],
+            [() => navigate("/owner/promos?create=1"), "Create promotion", Tag, "Saved as a draft until you turn it on."],
+            [() => navigate("/account/security"), "Account & security", Sparkles, "Password, authenticator, and sessions."],
+          ]).map(([go, label, Icon, detail]) => <div key={label} className="nb-card px-1"><HubLink icon={Icon} title={label} detail={detail} onClick={go} /></div>)}
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -137,6 +148,7 @@ export default function Dashboard() {
       {openId && <AppointmentSheet apptId={openId} role="owner" onClose={() => setOpenId(null)} />}
       {clientId && <ClientProfile clientId={clientId} onClose={() => setClientId(null)} />}
       {booking && <NewBookingDialog open onClose={() => setBooking(false)} />}
+      {invoice && <CreateInvoiceDialog open onClose={() => setInvoice(false)} />}
       {!training && <RetentionNudges state={state} idx={idx} />}
     </div>
   );
