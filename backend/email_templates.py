@@ -68,6 +68,7 @@ def email_test_message():
         '<p style="margin:0 0 18px">Hi there,</p>'
         '<p style="margin:0 0 18px">This is a controlled Nabitouch transactional email test. No action is needed.</p>'
         '<p style="margin:0 0 18px">This message contains no appointment or health information.</p>'
+        '<p style="margin:0 0 18px">Visit <a href="https://nabitouch.com" style="color:#0E7C86">https://nabitouch.com</a> if you reached this by mistake.</p>'
         '<p style="margin:0">Nabitouch will never ask for your password or full payment card details by email.</p>'
     )
     return subject, wrap(body, subject, delivery_test=True)

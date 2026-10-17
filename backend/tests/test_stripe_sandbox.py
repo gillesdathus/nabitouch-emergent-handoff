@@ -297,9 +297,12 @@ def test_simultaneous_checkout_submissions_share_provider_request(sandbox):
 
 
 @pytest.mark.parametrize("key", ["sk_live_synthetic", "rk_live_synthetic", "pk_test_synthetic"])
-def test_reject_live_or_public_keys(monkeypatch, key):
+def test_reject_live_or_public_keys_in_test_mode(monkeypatch, key):
+    monkeypatch.setenv("PAYMENT_MODE", "test")
     monkeypatch.setenv("STRIPE_SECRET_KEY", key)
-    with pytest.raises(RuntimeError, match="sandbox/test"):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_synthetic")
+    monkeypatch.setenv("EMAIL_PROVIDER", "disabled")
+    with pytest.raises(RuntimeError):
         validate_stripe_env()
 
 

@@ -127,14 +127,30 @@ class ResetIn(BaseModel):
 
 
 def reset_email_html(name, link):
-    brand = escape(os.environ["EMAIL_FROM_NAME"])
-    return (f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
-            f'<p style="font-size:18px;font-weight:bold;margin:0 0 16px">{brand}</p>'
-            f'<p>Hi {escape(name)},</p>'
-            f'<p>We received a request to reset the password for your {brand} account. This link works once and expires in {RESET_MIN} minutes.</p>'
-            f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#18A8F5;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Choose a new password</a></p>'
-            f'<p>If you did not request this, you can ignore this email and your password will stay the same.</p>'
-            f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
+    """Email-safe password-reset body. Usable without images; shell branding comes from emailtpl.wrap."""
+    brand = escape(os.environ.get("EMAIL_FROM_NAME") or "Nabitouch")
+    safe_link = escape(link, quote=True)
+    safe_link_text = escape(link)
+    return (
+        f'<p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0F2A3D">Hi {escape(name)},</p>'
+        f'<p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0F2A3D">'
+        f'We received a request to reset the password for your {brand} account. '
+        f'This link works once and expires in {RESET_MIN} minutes.</p>'
+        # Bulletproof table button (Outlook + Apple Mail).
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0">'
+        '<tr><td align="center" bgcolor="#18A8F5" style="background-color:#18A8F5;border-radius:8px">'
+        f'<a href="{safe_link}" style="display:inline-block;padding:14px 28px;font-family:Arial,Helvetica,sans-serif;'
+        f'font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">Choose a new password</a>'
+        '</td></tr></table>'
+        '<p style="margin:0 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#0F2A3D">'
+        'If the button does not work, copy and paste this link into your browser:</p>'
+        f'<p style="margin:0 0 20px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.5;color:#0E5E8C;word-break:break-all">'
+        f'{safe_link_text}</p>'
+        '<p style="margin:0 0 16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#0F2A3D">'
+        'If you did not request this, you can ignore this email and your password will stay the same.</p>'
+        f'<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#6B8296">'
+        f'Sent by {brand}. We never ask for your password or card details by email.</p>'
+    )
 
 
 class StaffIn(BaseModel):

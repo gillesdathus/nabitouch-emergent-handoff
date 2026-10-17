@@ -156,6 +156,25 @@ def plain_email(html):
     return "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
 
 
+def assert_complete_email_body(html: str) -> None:
+    """Refuse incomplete or client-hostile payloads before they reach the provider."""
+    stripped = (html or "").lstrip().lower()
+    if not stripped.startswith("<!doctype html"):
+        raise ValueError("Email HTML must start with <!doctype html> for Apple Mail compatibility")
+    if "<script" in stripped or "<iframe" in stripped or "<object" in stripped or "<embed" in stripped:
+        raise ValueError("Email HTML must not include script, iframe, object, or embed tags")
+    if "src=\"http://" in stripped or "src='http://" in stripped:
+        raise ValueError("Email HTML must not load remote http assets")
+    # background-image (including gradients) often stalls Apple Mail rendering.
+    if "background-image:" in stripped:
+        raise ValueError("Email HTML must not use CSS background-image")
+    text = plain_email(html)
+    if len(text) < 40:
+        raise ValueError("Email plain-text body is empty or too short")
+    if "https://" not in text and "https://" not in stripped:
+        raise ValueError("Email body must include an https link")
+
+
 def acceptance_guard(to):
     """Exact approved inbox/sender only; no wildcard or redirect bypass."""
     if os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() != "true":
@@ -190,6 +209,12 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
     from config import email_provider
     _assert_safe_email(subject, html)
     html = wrap(html, subject)
+    try:
+        assert_complete_email_body(html)
+        _assert_safe_email(subject, html)
+    except ValueError as exc:
+        logger.error("Email body rejected before send: %s", type(exc).__name__)
+        raise HTTPException(500, "Failed to send email") from exc
     provider = email_provider()
     if provider in ("resend", "emergent"):
         acceptance_guard(to)
@@ -244,7 +269,17 @@ async def _send_resend(*, to: str, subject: str, html: str, idempotency_key: str
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     if not key or not sender:
         raise HTTPException(503, "Email is not configured")
-    payload = {"from": sender, "to": [to], "subject": subject, "html": html, "text": plain_email(html), "tags": [{"name": "template", "value": TEMPLATE_VERSION.replace(".", "-")}]}
+    text = plain_email(html)
+    if not text.strip():
+        raise HTTPException(500, "Failed to send email")
+    payload = {
+        "from": sender,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+        "tags": [{"name": "template", "value": TEMPLATE_VERSION.replace(".", "-")}],
+    }
     reply = (os.environ.get("EMAIL_REPLY_TO") or "").strip()
     if reply:
         payload["reply_to"] = reply
