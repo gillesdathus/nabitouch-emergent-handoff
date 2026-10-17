@@ -78,12 +78,16 @@ def test_client_price_is_ignored(sarah):
 
 
 def test_concurrent_slot_allows_one(sarah):
+    address = {
+        "line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown", "postal": "T5J 2R4",
+        "clientConfirmed": True, "lat": 53.5461, "lng": -113.4938,
+    }
     def book(time):
         return requests.post(f"{API}/bookings", headers=sarah, json={
             "source": "online", "practitionerId": "p-liam",
             "appointment": {"serviceSlug": "swedish", "duration": 60, "date": "2026-12-03", "time": time,
-                            "locationType": "clinic", "paymentMethod": "self",
-                            "pricing": {"total": 1}, "address": {"lat": 53.5461, "lng": -113.4938}},
+                            "locationType": "home", "paymentMethod": "self",
+                            "pricing": {"total": 1}, "address": address},
         }, timeout=20)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: book("16:00"), (1, 2)))

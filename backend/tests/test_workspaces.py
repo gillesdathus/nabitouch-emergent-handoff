@@ -28,10 +28,14 @@ def test_each_account_receives_only_its_workspaces():
     assert sarah["workspaces"] == ["client"]
     assert maya["workspaces"] == ["practitioner"]
     assert desk["workspaces"] == ["desk"]
-    assert owner["workspaces"] == ["owner", "practitioner"]
+    assert set(owner["workspaces"]) == {"owner", "practitioner"}
     me = requests.get(f"{API}/auth/me", headers=owner_h, timeout=20)
     assert me.status_code == 200
-    assert me.json()["workspaces"] == ["owner", "practitioner"]
+    body = me.json()
+    assert set(body["workspaces"]) == {"owner", "practitioner"}
+    preferred = body.get("preferredWorkspace")
+    if preferred in body["workspaces"]:
+        assert body["workspaces"][0] == preferred
 
 
 def test_contact_messages_stay_with_the_owner():

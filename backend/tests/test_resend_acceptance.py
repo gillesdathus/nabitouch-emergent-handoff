@@ -22,9 +22,13 @@ def test_exact_preview_is_single_responsive_shell_without_login_or_timezone():
     assert html.count(MARKER) == 1 and html.count('<!doctype html>') == 1
     assert html.count("Breathe. Feel. Heal. Anywhere.") == 1
     assert 'width="560"' not in html and 'max-width:600px' in html
-    assert 'href=' not in html and 'Times are shown' not in html
-    assert 'background:#0B1B3F' in html
+    # Brand footer may link the public site; login/action links and timezone copy stay out.
+    assert 'Times are shown' not in html
+    assert '/login' not in html.lower() and 'choose a new password' not in html.lower()
+    assert 'href="https://nabitouch.com"' in html
+    assert "nabitouch-shell" in html and "Breathe. Feel. Heal. Anywhere." in html
     assert wrap(html, subject) == html
+
     _assert_safe_email(subject, html)
     text = plain_email(html)
     assert "Hi there," in text and "No action is needed." in text

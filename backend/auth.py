@@ -1000,19 +1000,59 @@ def build_auth(db, coll, add_audit):
 
     @r.post("/staff/invites/{invite_id}/resend")
     async def resend_invite(invite_id: str, request: Request):
+        """Rotate the single-use token for an existing invited account. Does not create a duplicate user."""
         owner = await require(request, "owner")
         invite = await db.nt_staff_invites.find_one({"id": invite_id})
         if not invite or invite.get("used") or invite.get("revoked"):
             raise HTTPException(404, "Invitation not found")
         account = await users.find_one({"id": invite["userId"]})
-        if not account:
-            raise HTTPException(404, "Invitation not found")
-        await db.nt_staff_invites.update_one({"id": invite_id}, {"$set": {"revoked": True, "revokedAt": datetime.now(timezone.utc).isoformat()}})
-        return await _issue_invite(
-            owner, email=account["email"], name=account.get("name") or account["email"],
-            roles=normalize_roles(invite.get("roles") or account.get("roles"), account.get("role")),
-            phone="", practitioner_id=account.get("subject"), preferred=account.get("preferredWorkspace"),
+        if not account or account.get("status") not in ("invited", "active") or not account.get("invitePending", True):
+            if not account or account.get("status") == "revoked":
+                raise HTTPException(404, "Invitation not found")
+            if not account.get("invitePending") and account.get("status") == "active":
+                raise HTTPException(409, "This invitation was already accepted")
+        now = datetime.now(timezone.utc)
+        await db.nt_staff_invites.update_one(
+            {"id": invite_id},
+            {"$set": {"revoked": True, "revokedAt": now.isoformat()}},
         )
+        raw = secrets.token_urlsafe(32)
+        roles = normalize_roles(invite.get("roles") or account.get("roles"), account.get("role"))
+        fresh = {
+            "id": "inv-" + uuid.uuid4().hex[:10],
+            "tokenHash": hashlib.sha256(raw.encode()).hexdigest(),
+            "userId": account["id"],
+            "used": False,
+            "revoked": False,
+            "roles": roles,
+            "email": account["email"],
+            "createdAt": now.isoformat(),
+            "expiresAt": (now + timedelta(hours=72)).isoformat(),
+        }
+        await db.nt_staff_invites.insert_one(fresh)
+        await users.update_one({"id": account["id"]}, {"$set": {"status": "invited", "invitePending": True}})
+        await add_audit(owner["name"], f"Staff invitation resent: {account.get('email')}")
+        result = {
+            "invited": True, "delivery": "not_sent", "role": account.get("role") or primary_role(roles),
+            "roles": roles, "email": account["email"], "inviteId": fresh["id"],
+        }
+        if preview_local_reset():
+            result["delivery"] = "preview_link"
+            result["previewInviteToken"] = raw
+            result["message"] = "Email delivery is not configured. Copy this single-use link. It expires in 72 hours."
+            return result
+        link = f"{os.environ['APP_URL'].rstrip('/')}/join?token={raw}"
+        try:
+            await send_email(
+                to=account["email"],
+                subject="Your Nabitouch staff invitation",
+                html=f"<p>You have been invited to Nabitouch. This link expires in 72 hours.</p><p><a href=\"{escape(link)}\">Accept invitation</a></p>",
+            )
+        except Exception as exc:
+            raise HTTPException(503, "The invitation was saved, but email delivery failed. Ask for the preview link only on this computer.") from exc
+        result["delivery"] = "email"
+        result["message"] = "Invitation email sent."
+        return result
 
     @r.post("/staff/invites/{invite_id}/revoke")
     async def revoke_invite(invite_id: str, request: Request):
