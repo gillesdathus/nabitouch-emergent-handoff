@@ -8,13 +8,29 @@ from payment_policy import (
     closed_policy,
     collection_status,
     due_after_payment,
+    due_for_booking,
     review_after_expiry,
     deposit_cents,
     preview_policy,
     resolve_payment_policy,
     settlement,
 )
+from recovery import apply_campaign_price
 from pricing import launch_welcome_offer, quote
+
+
+def test_campaign_discount_is_included_before_the_deposit_is_calculated():
+    policy = {"mode": "choice", "depositType": "percent", "depositPercent": 25, "depositCents": 0, "cashAccepted": True}
+    fields = {"paymentMethod": "self", "payNow": "deposit"}
+    before = due_for_booking(126, policy, fields)
+    priced = apply_campaign_price({"base": 120, "addons": 0, "travel": 0, "discount": 0, "tax": 6, "total": 126}, 20, 0.05, False)
+    after = due_for_booking(priced["total"], policy, fields)
+    assert before["totalCents"] == 12600
+    assert before["dueNowCents"] == 3150
+    assert after["totalCents"] == 10080
+    assert after["dueNowCents"] == 2520
+    assert after["remainingCents"] == 7560
+    assert due_for_booking(priced["total"], policy, {"paymentMethod": "insurance", "payNow": "deposit"}) is None
 
 
 def test_missing_production_policy_does_not_assume_a_deposit_or_cash():

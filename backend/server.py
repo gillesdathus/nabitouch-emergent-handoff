@@ -47,9 +47,9 @@ from availability import (
     assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
     validate_policy, validate_scheduling, visible_to,
 )
-from payment_policy import resolve_payment_policy, settlement
+from payment_policy import due_for_booking, resolve_payment_policy
 from recovery import (
-    apply_campaign_price, award_campaign, build_recovery_router, consume_recovery_hold, release_campaign, reserve_campaign, validate_fee,
+    apply_campaign_price, award_campaign, build_recovery_router, campaign_quote, consume_recovery_hold, release_campaign, reserve_campaign, validate_fee,
 )
 from pricing import (
     BLOCKING_STATUSES, client_matches_person, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
@@ -1439,14 +1439,10 @@ async def resolve_booking(payload, user):
     payment_policy = resolve_payment_policy(
         settings.get("paymentPolicy"), production=is_production(), explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
     )
-    due = None
-    if fields.get("paymentMethod") != "insurance":
-        choice = fields.get("payNow") if fields.get("payNow") in ("full", "deposit", "cash") else ("cash" if fields.get("selfMethod") == "cash" else None)
-        if choice:
-            try:
-                due = settlement(quoted["total"], payment_policy, choice)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+    try:
+        due = due_for_booking(quoted["total"], payment_policy, fields)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "incoming": incoming, "source": source, "fields": fields, "service": service, "duration": duration,
         "location": location, "address": address, "zone": zone, "km": km, "settings": settings,
@@ -1459,10 +1455,21 @@ async def resolve_booking(payload, user):
 async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     """Provisional server price. It does not reserve the welcome benefit or create a visit."""
     ctx = await resolve_booking(payload, await user_from(request))
-    pricing = ctx["quoted"]
+    pricing = dict(ctx["quoted"])
+    if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not pricing.get("welcomeOffer"):
+        offer = await campaign_quote(
+            db, payload["campaignId"], ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"],
+        )
+        if offer:
+            pricing["campaignTitle"] = offer["title"]
+            pricing = apply_campaign_price(pricing, offer["percent"], ctx["settings"].get("gst", 0.05), offer["stackable"])
+    try:
+        due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")), "packageCredit": bool(pricing.get("packageCredit")),
-        "settlement": ctx.get("settlement"), "paymentPolicy": ctx.get("paymentPolicy"),
+        "settlement": due, "paymentPolicy": ctx.get("paymentPolicy"),
     }
 
 
@@ -1622,7 +1629,17 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt["claim"] = {"status": "verification_pending" if is_ins else "none",
                      "eligible": claim_eligible(appt["pricing"], settings.get("gst", 0.05)) if is_ins else 0,
                      "approved": 0, "insurerPayment": "none", "insurerPaid": 0, "history": []}
-    due = ctx.get("settlement")
+    try:
+        due = due_for_booking(quoted["total"], ctx["paymentPolicy"], fields)
+    except ValueError as exc:
+        await release_promotions(claimed_ids)
+        await release_campaign(db, campaign_reservation)
+        await release_redemption(db, coll, client_id, appt_id, loyalty_points)
+        await release_welcome(welcome_token)
+        await db.nt_slot_locks.delete_many({"appointmentId": appt_id})
+        if counted_online:
+            await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+        raise HTTPException(400, str(exc)) from exc
     if due:
         appt["payNow"] = due["choice"]
         appt["paymentDue"] = {

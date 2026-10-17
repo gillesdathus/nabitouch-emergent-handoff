@@ -61,6 +61,7 @@ export default function Booking() {
   const quotePayload = step === 5 ? {
     useCredit,
     winbackCode,
+    campaignId: useCredit || winbackCode ? undefined : draft.campaignId || undefined,
     client: me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, email: g.email, phone: g.phone },
     practitionerId: draft.practitionerId || null,
     appointment: {

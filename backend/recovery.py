@@ -687,6 +687,23 @@ def build_recovery_router(db, coll, add_audit, require, user_from, ensure_slot, 
     return router
 
 
+async def campaign_quote(db, campaign_id, client, day, start, duration, service_slug):
+    """Read-only price preview. It does not reserve or increment a redemption."""
+    if not campaign_id:
+        return None
+    campaign = await db.nt_campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not campaign or not campaign_fits(campaign, day, start, duration, service_slug):
+        return None
+    if campaign.get("serviceSlug") not in (None, "", "all", service_slug):
+        return None
+    if not audience_ok(campaign, client):
+        return None
+    already = await db.nt_campaign_redemptions.count_documents({"campaignId": campaign_id, "clientId": (client or {}).get("id"), "status": {"$in": ["reserved", "awarded"]}})
+    if reserve_decision(campaign, client, now(), already) != "reserved":
+        return None
+    return {"percent": campaign.get("discountPercent"), "stackable": bool(campaign.get("stackable")), "title": campaign.get("title")}
+
+
 async def reserve_campaign(db, campaign_id, client, idempotency, day, start, duration, service_slug):
     if not campaign_id:
         return None

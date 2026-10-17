@@ -56,6 +56,17 @@ def deposit_cents(total_cents, policy):
     return amount
 
 
+def due_for_booking(total_dollars, policy, fields):
+    """Amount due for the price that will be stored. Insurance does not collect a card amount."""
+    fields = fields or {}
+    if fields.get("paymentMethod") == "insurance":
+        return None
+    choice = fields.get("payNow") if fields.get("payNow") in CHOICES else ("cash" if fields.get("selfMethod") == "cash" else None)
+    if not choice:
+        return None
+    return settlement(total_dollars, policy, choice)
+
+
 def settlement(total_dollars, policy, choice):
     """Payable now, after the full total exists. Cash is not a prepayment."""
     total = _cents(total_dollars)
