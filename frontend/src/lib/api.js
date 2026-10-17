@@ -67,7 +67,7 @@ export const api = {
   addPractitionerGallery: (id, file) => { const body = new FormData(); body.append("upload", file); return http.post(`/practitioners/${id}/gallery`, body).then(data); },
   removePractitionerGallery: (id, mediaId) => http.delete(`/practitioners/${id}/gallery/${mediaId}`).then(data),
   mediaBlob: (path) => http.get(path, { responseType: "blob" }).then((response) => URL.createObjectURL(response.data)),
-  transition: (id, to, actor, note, opId) => http.post(`/appointments/${id}/transition`, { to, actor, note, opId }).then(data),
+  transition: (id, to, actor, note, opId, location) => http.post(`/appointments/${id}/transition`, { to, actor, note, opId, ...(location ? { location } : {}) }).then(data),
   book: (payload) => http.post('/bookings', payload).then(data),
   quoteBooking: (payload) => http.post('/bookings/quote', payload).then(data),
   saveSoap: (apptId, doc) => http.put(`/soap/${apptId}`, doc).then(data),

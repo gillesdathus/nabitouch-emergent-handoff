@@ -1,8 +1,9 @@
 import pytest
 
-from availability import clinic_is_bookable, clinic_visit_address, merge_clinic, public_clinic, visit_navigation_point
+from availability import clinic_is_bookable, clinic_visit_address, gps_origin, merge_clinic, public_clinic, visit_navigation_point
 from insurers import catalog, invoke
-from billing import lines_from_pricing
+from billing import lines_from_pricing, project
+from pricing import CLINIC_POINT, zone_for
 from payment_policy import (
     allowed_online_amounts,
     authorized_checkout_cents,
@@ -330,7 +331,13 @@ def test_unchanged_verified_clinic_keeps_its_pin_when_other_settings_change():
     assert saved["navigation"] == "ready"
 
 
-def test_trip_start_refuses_an_unverified_clinic_without_inventing_a_pin():
+def _gps(lat, lng, age_s=0, accuracy=12):
+    from datetime import datetime, timedelta, timezone
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=age_s)
+    return {"lat": lat, "lng": lng, "accuracy": accuracy, "recordedAt": stamp.isoformat()}
+
+
+def test_trip_start_uses_current_gps_and_never_a_saved_or_downtown_origin():
     import asyncio
     import server
     from fastapi import HTTPException
@@ -339,25 +346,94 @@ def test_trip_start_refuses_an_unverified_clinic_without_inventing_a_pin():
         async def find_one(self, *_args, **_kwargs):
             return {"id": "p-1", "base": {"lat": 53.5, "lng": -113.4}}
 
+    clinic = {
+        "practitionerId": "p-1",
+        "locationType": "clinic",
+        "address": {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5225, "lng": -113.6235, "navigation": "ready"},
+    }
+    mobile = {
+        "practitionerId": "p-1",
+        "locationType": "home",
+        "address": {"line": "123 Client St", "lat": 53.54, "lng": -113.5, "arrival": {"lat": 53.55, "lng": -113.51}},
+    }
     original = server.coll
     server.coll = lambda _name: _Coll()
+    downtown = {"lat": 53.5461, "lng": -113.4938}
     try:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(server.start_trip({
-                "practitionerId": "p-1",
-                "locationType": "clinic",
-                "address": {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5461, "lng": -113.4938, "navigation": "unavailable"},
-            }, "2026-10-16T00:00:00Z"))
+                **clinic,
+                "address": {**clinic["address"], "navigation": "unavailable", "lat": 53.5461, "lng": -113.4938},
+            }, "2026-10-16T00:00:00Z", _gps(53.48, -113.55)))
         assert exc.value.status_code == 409
         assert exc.value.detail == "This visit has no map coordinates yet."
-        ready = asyncio.run(server.start_trip({
-            "practitionerId": "p-1",
-            "locationType": "clinic",
-            "address": {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5225, "lng": -113.6235, "navigation": "ready"},
-        }, "2026-10-16T00:00:00Z"))
-        assert ready["to"] == {"lat": 53.5225, "lng": -113.6235}
+        with pytest.raises(HTTPException) as missing:
+            asyncio.run(server.start_trip({
+                "locationType": "home", "address": {"line": "123 Client St"},
+            }, "2026-10-16T00:00:00Z", _gps(53.48, -113.55)))
+        assert missing.value.status_code == 409
+        assert missing.value.detail == "This visit has no map coordinates yet."
     finally:
         server.coll = original
+    started = asyncio.run(server.start_trip(clinic, "2026-10-16T00:00:00Z", _gps(53.48, -113.55)))
+    assert started["to"] == {"lat": 53.5225, "lng": -113.6235}
+    assert started["from"] == {"lat": 53.48, "lng": -113.55}
+    assert started["location"] == "gps"
+    assert started["from"] != downtown
+    assert started["from"] != {"lat": 53.5, "lng": -113.4}
+    assert "km" in started and "driveMin" in started
+    mobile_trip = asyncio.run(server.start_trip(mobile, "2026-10-16T00:00:00Z", _gps(53.48, -113.55)))
+    assert mobile_trip["to"] == {"lat": 53.55, "lng": -113.51}
+    assert mobile_trip["from"] == {"lat": 53.48, "lng": -113.55}
+    without_gps = asyncio.run(server.start_trip(clinic, "2026-10-16T00:00:00Z", None))
+    assert without_gps["location"] == "unavailable"
+    assert "from" not in without_gps
+    assert "km" not in without_gps and "driveMin" not in without_gps
+    assert without_gps["to"] == started["to"]
+    stale = asyncio.run(server.start_trip(clinic, "2026-10-16T00:00:00Z", _gps(53.5461, -113.4938, age_s=120)))
+    assert stale["location"] == "unavailable" and "from" not in stale
+    invalid = asyncio.run(server.start_trip(clinic, "2026-10-16T00:00:00Z", {"lat": 91, "lng": 0, "recordedAt": _gps(0, 0)["recordedAt"]}))
+    assert invalid["location"] == "unavailable" and "from" not in invalid
+    hidden = server.hide_practitioner_home({"trip": without_gps})
+    assert "from" not in hidden["trip"]
+    asyncio.run(server.authorize_transition({"role": "practitioner", "subject": "p-1"}, clinic, "en_route"))
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(server.authorize_transition({"role": "practitioner", "subject": "other"}, clinic, "en_route"))
+    assert denied.value.status_code == 403
+    assert gps_origin(None) is None
+    assert gps_origin(_gps(53.48, -113.55, accuracy=400)) is None
+    zone, _km = zone_for({"lat": 53.6015, "lng": -113.4135}, [{"id": "inner", "enabled": True, "radiusKm": 15}])
+    assert CLINIC_POINT == {"lat": 53.5461, "lng": -113.4938}
+    assert zone["id"] == "inner"
+
+
+def test_ledger_stays_consistent_across_card_gift_transfer_cash_and_refund():
+    visit = _visit("deposit", 10080, 2520)
+    lines = []
+    gift = gift_redemption_cents(visit, 10080, 0, 1000)
+    lines.append({"type": "client_payment", "method": "giftcard", "amountCents": gift})
+    received, balance, state, _overdue = project({"totalCents": 10080, "state": "issued", "dueDate": "2099-01-01"}, lines)
+    transfer = manual_settlement_cents(visit, balance, received)
+    assert (gift, transfer, received, balance) == (1000, 1520, 1000, 9080)
+    with pytest.raises(ValueError, match="more than the amount due"):
+        manual_settlement_cents(visit, balance, received, 2000)
+    lines.append({"type": "client_payment", "method": "etransfer", "amountCents": transfer})
+    received, balance, state, _overdue = project({"totalCents": 10080, "state": "issued", "dueDate": "2099-01-01"}, lines)
+    card = authorized_checkout_cents(visit, balance, received)
+    assert (received, balance, card, state) == (2520, 7560, 7560, "partially_paid")
+    assert checkout_event_action("pending", card, card) == "settle"
+    assert checkout_event_action("paid", card, card) == "duplicate"
+    with pytest.raises(ValueError, match="outstanding balance"):
+        manual_settlement_cents(visit, balance, received, balance + 1)
+    lines.append({"type": "client_payment", "method": "card", "amountCents": card})
+    received, balance, state, _overdue = project({"totalCents": 10080, "state": "issued", "dueDate": "2099-01-01"}, lines)
+    assert (received, balance, state) == (10080, 0, "paid")
+    lines.append({"type": "refund", "method": "card", "amountCents": card})
+    received, balance, state, _overdue = project({"totalCents": 10080, "state": "issued", "dueDate": "2099-01-01"}, lines)
+    assert (received, balance, state) == (2520, 7560, "partially_paid")
+    cash = manual_settlement_cents(visit, balance, received)
+    assert cash == 7560
+    assert sum(line["amountCents"] if line["type"] == "client_payment" else -line["amountCents"] for line in lines) == received
 
 
 def test_visit_navigation_uses_only_verified_coordinates():

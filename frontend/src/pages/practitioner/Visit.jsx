@@ -15,6 +15,7 @@ import { Notice, Stepper } from "@/components/tide";
 import { SafetyCenter } from "@/components/SafetyCenter";
 import { MemberBadge } from "@/components/MemberBadge";
 import { openNavigation } from "@/lib/nativeShell";
+import { readTripOrigin, tripOriginMessage } from "@/lib/tripOrigin";
 import { SessionReadiness, useSessionReadiness } from "@/components/session/SessionReadiness";
 import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/components/session/SmartSession";
 import { sendSessionOp, usePendingOps, useSessionOpSync, useTurnaround } from "@/lib/turnaround";
@@ -90,6 +91,7 @@ export function NavHandoff({ appt }) {
         {NAV_APPS.map(([key, label]) => <button key={key} type="button" data-testid={`nav-app-${key}`} onClick={() => choose(key)} className={app === key ? "nb-chip-on h-8 text-xs" : "nb-chip-off h-8 text-xs"}>{label}</button>)}
       </div>
       <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (window.Capacitor?.isNativePlatform?.()) { e.preventDefault(); openNavigation(app, point.lat, point.lng, href); } }} data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
+      <p className="text-xs text-nb-mute" data-testid="visit-navigation-handoff-note">Maps uses this phone's own location. Opening Maps does not record a trip start.</p>
     </div>
   );
 }
@@ -141,7 +143,13 @@ export default function Visit() {
         reloadClock();
         if (res.synced) { setFlash(true); setTimeout(() => setFlash(false), 1100); }
       } else {
-        await run(() => api.transition(appt.id, a.to, actor)); setFlash(true); setTimeout(() => setFlash(false), 1100);
+        let location;
+        if (a.to === "en_route") {
+          const fix = await readTripOrigin();
+          if (fix.status === "ready") location = fix.location;
+          else toast.message("Current location is unavailable.");
+        }
+        await run(() => api.transition(appt.id, a.to, actor, undefined, undefined, location)); setFlash(true); setTimeout(() => setFlash(false), 1100);
       }
     } catch (err) {
       if (a.to === "in_session") reloadReadiness();
@@ -168,7 +176,8 @@ export default function Visit() {
 
       {appt.status === "en_route" && <div className="nb-card space-y-3 p-4" data-testid="tracking-controls">
         <p className="text-sm"><b>Destination.</b> {appt.address?.line}</p>
-        <p className="text-sm">Estimated travel {appt.trip?.driveMin ? `${appt.trip.driveMin} min` : "is calculated once sharing starts"}. <span className="text-xs text-nb-mute">This is not a confirmed arrival.</span></p>
+        <p className="text-sm">Estimated travel {appt.trip?.from && appt.trip?.driveMin ? `${appt.trip.driveMin} min` : "is calculated once sharing starts"}. <span className="text-xs text-nb-mute">This is not a confirmed arrival.</span></p>
+        {tripOriginMessage(appt.trip) && <p className="text-sm text-amber-800" data-testid="visit-location-unavailable">{tripOriginMessage(appt.trip)} Nabitouch has not recorded a trip origin.</p>}
         <div className="flex flex-wrap gap-2">
           {!appt.trip?.sharing
             ? <button type="button" onClick={() => run(() => api.trackingStart(appt.id))} data-testid="tracking-start-btn" className="nb-btn-primary h-11 px-4 text-sm">Start location sharing</button>

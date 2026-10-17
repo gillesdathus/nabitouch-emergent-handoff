@@ -266,6 +266,42 @@ def _finite_point(lat, lng):
     return {"lat": lat, "lng": lng}
 
 
+GPS_STALE_SEC = 30
+GPS_MAX_SKEW_SEC = 120
+GPS_MAX_ACCURACY_M = 150
+
+
+def gps_origin(fix, now=None):
+    """A recorded trip origin is a current device fix. Missing, denied, invalid, and stale fixes are not a location."""
+    if not isinstance(fix, dict):
+        return None
+    point = _finite_point(fix.get("lat"), fix.get("lng"))
+    if not point:
+        return None
+    accuracy = fix.get("accuracy")
+    if accuracy is not None:
+        try:
+            accuracy = float(accuracy)
+        except (TypeError, ValueError):
+            return None
+        if accuracy < 0 or (accuracy > GPS_MAX_ACCURACY_M and not fix.get("approximate")):
+            return None
+    recorded = fix.get("recordedAt")
+    if not recorded:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(recorded).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    skew = (now - stamp).total_seconds()
+    if skew < -GPS_MAX_SKEW_SEC or skew > GPS_STALE_SEC:
+        return None
+    return point
+
+
 def visit_navigation_point(address, location_type="home"):
     """Coordinates for an external maps handoff. A clinic pin is used only after that address was verified."""
     address = address or {}

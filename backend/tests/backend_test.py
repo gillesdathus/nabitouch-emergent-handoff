@@ -170,12 +170,13 @@ class TestLifecycle:
         appt = get_appt(aid)
         trip = appt.get("trip") or {}
         assert trip.get("sharing") is False
+        assert trip.get("simulated") is False
+        assert trip.get("location") == "unavailable"
+        assert "from" not in trip
+        assert "km" not in trip
         started = maya().post(f"{API}/tracking/sessions/{aid}/start")
         assert started.status_code == 200
         assert get_appt(aid).get("trip", {}).get("sharing") is True
-        assert trip.get("simulated") is True
-        assert trip.get("demoSec") == 150
-        assert trip.get("km", 0) > 0
 
 
 # ---------- payments & claims (Payments scenario) ----------

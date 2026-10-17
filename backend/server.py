@@ -44,7 +44,7 @@ from math import radians, sin, cos, asin, sqrt
 from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
-    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
+    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, gps_origin, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
     validate_policy, validate_scheduling, visible_to,
 )
 from payment_policy import due_for_booking, resolve_payment_policy
@@ -395,10 +395,10 @@ def busy_slot(appt):
 
 
 def hide_practitioner_home(appt):
-    """Clients and the desk see the visit, not the practitioner's home coordinate stored as the trip origin."""
+    """Clients and the desk see the visit, not the practitioner's exact start. A missing GPS fix is left missing."""
     trip = appt.get("trip") or {}
     dest = trip.get("to") or {}
-    if dest.get("lat") is None:
+    if dest.get("lat") is None or not trip.get("from"):
         return appt
     public = {"lat": round(float(dest["lat"]) - 0.015, 5), "lng": float(dest["lng"])}
     return {**appt, "trip": {**trip, "from": public}}
@@ -631,9 +631,10 @@ class TransitionIn(BaseModel):
     actor: str = "system"
     note: Optional[str] = None
     opId: Optional[str] = None
+    location: Optional[dict] = None
 
 
-async def apply_transition(appt, to, actor, note=None, op_id=None):
+async def apply_transition(appt, to, actor, note=None, op_id=None, location=None):
     cur = appt["status"]
     if to not in TRANSITIONS.get(cur, []):
         raise HTTPException(409, f"Cannot move from {cur} to {to}")
@@ -657,7 +658,7 @@ async def apply_transition(appt, to, actor, note=None, op_id=None):
     if to == "session_ended" or (to == "leaving" and cur == "interrupted" and session.get("startedAt") and not session.get("endedAt")):
         upd.update(await session_end_update(coll, {**appt, "timer": upd.get("timer", appt.get("timer"))}, ts))
     if to == "en_route":
-        upd["trip"] = await start_trip(appt, ts)
+        upd["trip"] = await start_trip(appt, ts, location)
     elif appt.get("trip", {}).get("sharing"):
         upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": ts}  # stop client-visible tracking
     guard = {"id": appt["id"], "status": cur}
@@ -914,16 +915,18 @@ def km_between(a, b):
     return 2 * 6371 * asin(sqrt(sin((la2 - la1) / 2) ** 2 + cos(la1) * cos(la2) * sin((lo2 - lo1) / 2) ** 2))
 
 
-async def start_trip(appt, ts):
-    p = await coll("practitioners").find_one({"id": appt.get("practitionerId")}, NO_ID) or {}
-    origin = point_of(p.get("base")) or {"lat": 53.5461, "lng": -113.4938}
+async def start_trip(appt, ts, location=None):
+    """Record a trip from the practitioner's current GPS. A missing fix is not replaced with a base, clinic, or city center."""
     dest = visit_navigation_point((appt or {}).get("address"), (appt or {}).get("locationType"))
     if not dest:
         raise HTTPException(409, "This visit has no map coordinates yet.")
+    origin = gps_origin(location)
+    trip = {"to": dest, "startedAt": ts, "sharing": False, "simulated": False, "location": "gps" if origin else "unavailable"}
+    if not origin:
+        return trip
     km = round(km_between(origin, dest) * 1.3 + 0.8, 1)
-    # Simulated GPS: the journey is replayed over ~2.5 real minutes; ETA shown in realistic drive minutes.
-    return {"from": origin, "to": dest, "startedAt": ts, "demoSec": 150, "km": km, "driveMin": round(6 + km * 1.9),
-            "sharing": False, "simulated": True}
+    trip.update({"from": origin, "km": km, "driveMin": round(6 + km * 1.9)})
+    return trip
 
 
 async def authorize_transition(user, appt, to):
@@ -1055,7 +1058,7 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
     body.actor = u["name"]
     op_id = body.opId[:64] if body.opId else None
     try:
-        appt = await apply_transition(appt, body.to, body.actor, body.note, op_id)
+        appt = await apply_transition(appt, body.to, body.actor, body.note, op_id, body.location)
     except HTTPException:
         latest = await coll("appointments").find_one({"id": appt_id}, {"_id": 0})
         if op_id and latest and op_id in (latest.get("opIds") or []):

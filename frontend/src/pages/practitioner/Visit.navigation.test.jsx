@@ -31,6 +31,8 @@ test("a verified clinic visit navigates to its own coordinates", () => {
   const link = host.querySelector("[data-testid='lifecycle-open-navigation-btn']");
   expect(link.getAttribute("href")).toContain("53.5225,-113.6235");
   expect(link.getAttribute("href")).not.toContain(CENTER);
+  expect(link.getAttribute("href")).not.toMatch(/origin=|saddr=/);
+  expect(host.querySelector("[data-testid='visit-navigation-handoff-note']").textContent).toContain("does not record a trip start");
   expect(host.querySelector(".flex-wrap")).toBeTruthy();
   act(() => root.unmount());
   host.remove();

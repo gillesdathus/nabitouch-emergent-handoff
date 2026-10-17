@@ -123,7 +123,7 @@ export const CLAIM_STATUS = {
 // Simulated GPS replay of an authorised work trip. Returns null when not sharing.
 export function tripState(appt, now = Date.now()) {
   const tr = appt?.trip;
-  if (!tr?.sharing || appt.status !== 'en_route') return null;
+  if (!tr?.sharing || !tr.from || !tr.to || appt.status !== 'en_route') return null;
   const t = Math.min(1, Math.max(0, (now - new Date(tr.startedAt).getTime()) / (tr.demoSec * 1000)));
   const { from: a, to: b } = tr;
   const c = { lat: (a.lat + b.lat) / 2 + (b.lng - a.lng) * 0.18, lng: (a.lng + b.lng) / 2 - (b.lat - a.lat) * 0.35 };

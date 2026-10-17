@@ -12,8 +12,8 @@ export function LiveMap(props) {
 
 // Nabitouch-styled interactive map (pan / zoom) on a stylised Edmonton canvas. Simulated positions only.
 function SimulatedMap({ markers = [], routes = [], dests = [], height = 320, testid = "live-map", tag }) {
-  const pts = [...markers.map((m) => m.pos), ...dests.map((d) => d.pos), ...routes.flat()];
-  if (!pts.length) pts.push({ lat: 53.5461, lng: -113.4938 });
+  const pts = [...markers.map((m) => m.pos), ...dests.map((d) => d.pos), ...routes.flat()].filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng));
+  if (!pts.length) return <div className="grid place-items-center rounded-3xl bg-sky-50 px-6 text-center text-sm text-nb-mute" style={{ height }} data-testid={testid}>Current location is unavailable.</div>;
   const lat = pts.map((p) => p.lat), lng = pts.map((p) => p.lng);
   const pad = 0.025;
   const b = { n: Math.max(...lat) + pad, s: Math.min(...lat) - pad, e: Math.max(...lng) + pad, w: Math.min(...lng) - pad };
