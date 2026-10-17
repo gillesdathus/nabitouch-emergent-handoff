@@ -1,6 +1,6 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Exits 2 unless CONFIRM_PRIVATE_DEPLOY=yes. Does not change Nginx, DNS, or business data.
-# Reads deploy/private-release/release-pin.env for the frozen application SHA and image digests.
+# Reads deploy/private-release/release-pin.conf for the frozen application SHA and image digests.
 set -euo pipefail
 umask 077
 
@@ -15,9 +15,9 @@ case "$root" in
 esac
 cd "$root"
 
-pin="$root/deploy/private-release/release-pin.env"
+pin="$root/deploy/private-release/release-pin.conf"
 if [ ! -f "$pin" ]; then
-  echo "Refusing: missing release-pin.env."
+  echo "Refusing: missing release-pin.conf."
   exit 2
 fi
 while IFS= read -r line || [ -n "$line" ]; do
@@ -34,17 +34,17 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$pin"
 
-frozen="${APPLICATION_SHA:?missing APPLICATION_SHA in release-pin.env}"
-short="${APPLICATION_SHORT:?missing APPLICATION_SHORT in release-pin.env}"
-expected_current="${PRE_DEPLOY_LOCAL_DIGEST:?missing PRE_DEPLOY_LOCAL_DIGEST in release-pin.env}"
-expected_rollback="${ROLLBACK_DIGEST:?missing ROLLBACK_DIGEST in release-pin.env}"
-previous_tag="${PREVIOUS_GOOD_TAG:?missing PREVIOUS_GOOD_TAG in release-pin.env}"
-rollback_tag="${ROLLBACK_TAG:?missing ROLLBACK_TAG in release-pin.env}"
+frozen="${APPLICATION_SHA:?missing APPLICATION_SHA in release-pin.conf}"
+short="${APPLICATION_SHORT:?missing APPLICATION_SHORT in release-pin.conf}"
+expected_current="${PRE_DEPLOY_LOCAL_DIGEST:?missing PRE_DEPLOY_LOCAL_DIGEST in release-pin.conf}"
+expected_rollback="${ROLLBACK_DIGEST:?missing ROLLBACK_DIGEST in release-pin.conf}"
+previous_tag="${PREVIOUS_GOOD_TAG:?missing PREVIOUS_GOOD_TAG in release-pin.conf}"
+rollback_tag="${ROLLBACK_TAG:?missing ROLLBACK_TAG in release-pin.conf}"
 
 case "$frozen" in
   0a0d8c74336299bce9958bd39ede2769201a4fd5) ;;
   *)
-    echo "Refusing: APPLICATION_SHA in release-pin.env is not the reviewed RC 0a0d8c7."
+    echo "Refusing: APPLICATION_SHA in release-pin.conf is not the reviewed RC 0a0d8c7."
     exit 2
     ;;
 esac
@@ -174,4 +174,4 @@ PY
 
 new_id="$(docker image inspect nt-next-api:local --format '{{.Id}}')"
 echo "Private API restarted from ${src_tag}. Public Nginx was not changed."
-echo "Record POST_BUILD_DIGEST=${new_id} in deploy/private-release/release-pin.env after owner review."
+echo "Record POST_BUILD_DIGEST=${new_id} in deploy/private-release/release-pin.conf after owner review."
