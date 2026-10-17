@@ -13,18 +13,16 @@
 | Safety report | `docs/FINAL_CUTOVER_SAFETY_REPORT_2026-10-17.md` |
 | Docs HEAD at plan authoring | `b9c714a` (may advance with this doc only) |
 
-### Live status — Hostinger maintenance hold (2026-10-17)
+### Live status — Gate B PASS (2026-10-17)
 
 | Gate / item | Status |
 | --- | --- |
 | **A** backups + isolated restore | **PASS** |
 | **A** off-host (`C:\Nabitouch-Backups`) + SHA-256 | **PASS** |
 | **A** passphrase in password manager | **VERIFIED** |
-| **A** VPS temp passphrase shred | **DEFERRED** (owner authorized; SSH unavailable) |
-| **B** private loopback deploy | **HELD** (owner authorized `CONFIRM_PRIVATE_DEPLOY`; not run — Hostinger emergency kernel maintenance / VPS restart batches; `187.77.204.131` unreachable) |
+| **A** VPS temp passphrase shred | **DONE** |
+| **B** private loopback deploy | **PASS** — see `docs/GATE_B_PRIVATE_DEPLOY_RESULT_2026-10-17.md`; `POST_BUILD_DIGEST=sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` |
 | **C–G**, PR merge, Nginx, Stripe | **Not authorized** |
-
-Resume when SSH returns: shred VPS recover-once file, then **retry Gate B**. See `docs/GATE_A_BACKUP_EXECUTION_RESULT_2026-10-17.md`.
 
 This plan completes **safe preparation** only. Commands under **OWNER** require explicit approval before any run. Do not alter Nginx, public traffic, production records, or live payments.
 
@@ -37,13 +35,13 @@ This plan completes **safe preparation** only. Commands under **OWNER** require 
 | `APPLICATION_SHA` | `0a0d8c74336299bce9958bd39ede2769201a4fd5` |
 | Script refuses other SHAs | Yes |
 | Pre-deploy image must match | `PRE_DEPLOY_LOCAL_DIGEST` / running `:local` |
-| Rollback image must exist | `ROLLBACK_TAG` = `nt-next-api:rollback-0081eac25d1e` + matching digest |
+| Rollback image must exist | Interim `ROLLBACK_TAG` = `nt-next-api:pre-gate-b-f6a73339` + `ROLLBACK_DIGEST=f6a73339…` |
 | Previous-good retag on failure | `PREVIOUS_GOOD_TAG` = `nt-next-api:9aca5eccdc3c` |
 | Public Nginx during private deploy | Must still `proxy_pass http://127.0.0.1:8080` |
 | Private API only | Health on `127.0.0.1:8011` |
 | `STRIPE_CARD_CHECKOUT_ENABLED` | Must be `false` in `/etc/nabitouch-next.env` |
 | Health gate | `mongo=ok`, `redis=ok`, `documentUploads=false`, `cardCheckout=false` |
-| `POST_BUILD_DIGEST` | Still `UNSET` until after authorized private build |
+| `POST_BUILD_DIGEST` | `sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` (Gate B PASS) |
 
 **STOP** if any of the above fail on the VPS before `CONFIRM_PRIVATE_DEPLOY=yes`.
 

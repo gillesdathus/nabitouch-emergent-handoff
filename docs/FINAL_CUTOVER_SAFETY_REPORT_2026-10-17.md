@@ -12,18 +12,18 @@
 
 This report prepares safety gates only. No public traffic was changed. No production database was modified. Draft PR #1 stays unmerged.
 
-### Status addendum — Hostinger maintenance hold (2026-10-17)
+### Status addendum — Gate B complete (2026-10-17)
 
 | Item | Status |
 | --- | --- |
 | Gate A encrypted backups + isolated restore | **PASS** |
 | Off-host copy `C:\Nabitouch-Backups` + SHA-256 | **PASS** |
 | Backup passphrase in owner password manager | **VERIFIED** |
-| VPS temp passphrase shred | **DEFERRED** (authorized; SSH unavailable) |
-| Gate B private loopback deploy | **HELD** (authorized; not executed — Hostinger emergency maintenance) |
+| VPS temp passphrase shred | **DONE** (owner-confirmed earlier) |
+| Gate B private loopback deploy | **PASS** — `POST_BUILD_DIGEST=sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` on `:8011` |
 | Public cutover / Nginx / PR merge / Stripe | **NO-GO** — not authorized |
 
-Detail: `docs/GATE_A_BACKUP_EXECUTION_RESULT_2026-10-17.md`, `docs/FINAL_PRE_DEPLOYMENT_EXECUTION_PLAN_2026-10-17.md`.
+Detail: `docs/GATE_B_PRIVATE_DEPLOY_RESULT_2026-10-17.md`, `docs/GATE_A_BACKUP_EXECUTION_RESULT_2026-10-17.md`, `docs/FINAL_PRE_DEPLOYMENT_EXECUTION_PLAN_2026-10-17.md`.
 
 ---
 
@@ -34,10 +34,10 @@ Detail: `docs/GATE_A_BACKUP_EXECUTION_RESULT_2026-10-17.md`, `docs/FINAL_PRE_DEP
 | Application SHA | `0a0d8c74336299bce9958bd39ede2769201a4fd5` | Reviewed RC |
 | Short tag | `0a0d8c7` | Used for `nt-next-api:src-0a0d8c7` |
 | Pre-deploy local/running digest | `sha256:f6a7333986f70d24d22af50d7d886a9c4f080bef8b9484b2154614a8845d7465` | Last known-good private image (`nt-next-api:9aca5eccdc3c` / `:local`) |
-| Rollback digest | `sha256:0081eac25d1edc251fb45d46ac8351008fffad0afbe5fe87eb9882f59745f7b6` | `nt-next-api:rollback-0081eac25d1e` â€” must remain on host |
-| Post-build digest for RC | `UNSET` in `release-pin.conf` | Fill only after a **private** (loopback) build of `0a0d8c7` reports `health-ok` |
+| Rollback digest (interim) | `sha256:f6a7333986f70d24d22af50d7d886a9c4f080bef8b9484b2154614a8845d7465` | `nt-next-api:pre-gate-b-f6a73339` — historical `0081eac` unavailable |
+| Post-build digest for RC | `sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` | Recorded after private loopback Gate B `health-ok` |
 
-`deploy/private-release/deploy-private-api.sh` now loads `release-pin.conf`, refuses any SHA other than this RC, keeps public Nginx on `127.0.0.1:8080`, and requires card checkout / uploads / legacy import off. **It was not executed.**
+`deploy/private-release/deploy-private-api.sh` loads `release-pin.conf`, refuses any SHA other than this RC, keeps public Nginx on Emergent (`127.0.0.1:8080`), and requires card checkout / uploads / legacy import off. **Private Gate B executed 2026-10-17; public Nginx unchanged.**
 
 Frontend artifact (when staged later): Vite `frontend/build` from the same SHA with `REACT_APP_BACKEND_URL=https://nabitouch.com` â€” not staged to `/var/www/nabitouch-next` in this work.
 
@@ -244,24 +244,23 @@ CONFIRM_FRONTEND_STAGE=yes deploy/private-release/stage-frontend-static.sh \
 Reasons that remain blocking:
 
 1. Public hostname still serves Emergent (`health` = `db:up`; Stripe routes **404**).  
-2. `nabitouch_prod` encrypted backup + off-host copy not executed.  
-3. Emergent preservation dump not confirmed in this turn.  
-4. `POST_BUILD_DIGEST` for RC `0a0d8c7` still `UNSET` (private build not run).  
-5. Owner cutover / migration / PR approvals outstanding.  
-6. Dual-database nature requires explicit acceptance that Emergent is not a live parallel writer after cutover.
+2. Emergent preservation dump / Gate C–G owner steps still required before public cutover.  
+3. Owner cutover / migration / PR approvals outstanding.  
+4. Dual-database nature requires explicit acceptance that Emergent is not a live parallel writer after cutover.
 
 ### What is ready
 
 - Pinned RC + deploy script wired to `release-pin.conf`.  
-- Rollback path for Nginx and private API images documented.  
+- **Gate B PASS:** private `nt-next-api` on `:8011` at `POST_BUILD_DIGEST` `080185ce…` with health flags off.  
+- Rollback tags `9aca5eccdc3c` / `pre-gate-b-f6a73339` retained on `f6a73339…`.  
 - Schema incompatibility and migration matrix documented without exposing patient data.  
 - Card checkout remains gated off in deploy and health checks.
 
 ---
 
-## Explicit non-actions
+## Explicit non-actions (still)
 
 - Did not merge Draft PR #1  
-- Did not run `CONFIRM_PRIVATE_DEPLOY` / backup / restore / Nginx reload  
-- Did not modify production databases or copy patient documents  
+- Did not change public Nginx / cut over nabitouch.com  
 - Did not enable Stripe card checkout or register live webhooks  
+- Did not authorize Gates D–G  

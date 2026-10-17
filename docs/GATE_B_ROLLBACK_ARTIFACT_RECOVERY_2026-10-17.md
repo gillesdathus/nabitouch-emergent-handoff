@@ -2,9 +2,9 @@
 
 **Checkout:** `C:\Users\DG Solutions\nabitouch-emergent-handoff` @ `eed6b95`  
 **Application RC:** `0a0d8c74336299bce9958bd39ede2769201a4fd5` (`0a0d8c7`)  
-**Gate B deploy:** **not executed**  
+**Gate B deploy:** **PASS** (see `docs/GATE_B_PRIVATE_DEPLOY_RESULT_2026-10-17.md`)  
 **Public cutover / Nginx / PR merge / Stripe:** **NO-GO / not authorized**  
-**`nt-next-api:local`:** preserved (not overwritten, removed, rebuilt, or retagged)
+**Interim rollback:** owner-approved; additive tags `9aca5eccdc3c` + `pre-gate-b-f6a73339` on `f6a73339…`
 
 ## 1. Available image digests (VPS)
 
