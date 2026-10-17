@@ -12,7 +12,7 @@ export function StaffInvoiceActions({ invoice, onChange }) {
   const [tip, setTip] = useState({ amount: "", method: "cash", reference: "" });
   const run = (what, fn) => async () => { setBusy(what); try { await fn(); } catch (e) { toast.error(apiError(e)); } setBusy(""); };
   const makeLink = run("link", async () => {
-    const res = await api.invoiceCheckout(invoice.id, { amountCents: payableCents(invoice) });
+    const res = await api.invoiceCheckout(invoice.id, {});
     if (!res.url) { toast.message("Checkout session created in simulated mode. No shareable URL."); return; }
     setLink(res.url);
     await navigator.clipboard?.writeText(res.url);

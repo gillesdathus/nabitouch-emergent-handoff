@@ -180,9 +180,16 @@ def build_router(coll, add_audit, user_from):
     async def record_cash(aid: str, request: Request, body: dict = Body(...)):
         a = with_settle(await load(aid))
         body["actor"] = (await guard(request, a, "payments"))["name"]
-        amt = r2(min(float(body.get("amount") or a["settle"]["payable"]), a["settle"]["payable"]))
-        if amt <= 0:
-            raise HTTPException(409, "Nothing payable")
+        from money import to_cents
+        from payment_policy import manual_settlement_cents
+        received_cents = to_cents(a["settle"]["clientPaid"]) - to_cents(a["settle"]["refunded"])
+        raw = body.get("amount")
+        requested = None if raw in (None, "", 0) else to_cents(raw)
+        try:
+            cents = manual_settlement_cents(a, to_cents(a["settle"]["balance"]), max(0, received_cents), requested)
+        except ValueError as exc:
+            raise HTTPException(409 if "outstanding balance" in str(exc) else 400, str(exc)) from exc
+        amt = r2(cents / 100)
         a["payments"] = a.get("payments", []) + [{"id": f"pay-{uuid.uuid4().hex[:8]}", "provider": "cash", "amount": amt, "status": "succeeded",
                                                   "at": now_iso(), "receipt": f"RCPT-{uuid.uuid4().hex[:6].upper()}", "by": body.get("actor")}]
         return await save(a, body.get("actor", "staff"), f"cash payment recorded {amt:.2f}")

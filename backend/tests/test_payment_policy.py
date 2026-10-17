@@ -7,6 +7,7 @@ from payment_policy import (
     allowed_online_amounts,
     authorized_checkout_cents,
     gift_redemption_cents,
+    manual_settlement_cents,
     checkout_event_action,
     closed_policy,
     collection_status,
@@ -120,6 +121,26 @@ def test_gift_card_covers_only_the_deposit_then_leaves_the_invoice_balance():
     assert authorized_checkout_cents(visit, 9080, 1000) == 1520
     assert authorized_checkout_cents(visit, 7560, 2520) == 7560
     assert gift_redemption_cents(visit, 7560, 2520, 10000) == 7560
+
+
+def test_staff_etransfer_cannot_confirm_more_than_the_amount_still_due():
+    visit = _visit("deposit", 10080, 2520)
+    assert manual_settlement_cents(visit, 10080, 0) == 2520
+    assert manual_settlement_cents(visit, 10080, 0, 1000) == 1000
+    with pytest.raises(ValueError, match="more than the amount due"):
+        manual_settlement_cents(visit, 10080, 0, 10080)
+    assert manual_settlement_cents(visit, 9080, 1000) == 1520
+    with pytest.raises(ValueError, match="more than the amount due"):
+        manual_settlement_cents(visit, 9080, 1000, 2520)
+    assert manual_settlement_cents(visit, 7560, 2520) == 7560
+    full = _visit("full", 10080, 10080)
+    assert manual_settlement_cents(full, 10080, 0, 10080) == 10080
+    with pytest.raises(ValueError, match="outstanding balance"):
+        manual_settlement_cents(full, 7560, 2520, 10080)
+    with pytest.raises(ValueError, match="positive"):
+        manual_settlement_cents(full, 10080, 0, 0)
+    with pytest.raises(ValueError, match="positive"):
+        manual_settlement_cents(full, 10080, 0, -2520)
 
 
 def test_gift_card_on_a_full_payment_cannot_exceed_the_invoice():

@@ -144,6 +144,20 @@ def gift_redemption_cents(visit, balance_cents, received_cents, card_balance_cen
     return requested_cents
 
 
+def manual_settlement_cents(visit, balance_cents, received_cents, requested_cents=None):
+    """Staff-confirmed cash or e-Transfer. A partial amount is allowed. It cannot pass the amount still due."""
+    payable = authorized_checkout_cents(visit, balance_cents, received_cents)
+    if requested_cents is None:
+        return payable
+    if type(requested_cents) is not int or requested_cents <= 0:
+        raise ValueError("Amount must be a positive number of cents")
+    if requested_cents > int(balance_cents):
+        raise ValueError("That payment is more than the outstanding balance")
+    if requested_cents > payable:
+        raise ValueError("That amount is more than the amount due")
+    return requested_cents
+
+
 def allowed_online_amounts(balance_cents, policy, received_cents=0):
     """The customer pays the amount due, then later the remainder. Never more than the balance."""
     balance = int(balance_cents)

@@ -25,7 +25,7 @@ def require_giftcards():
         raise HTTPException(503, "Gift-card transactions are turned off")
 from fieldcrypto import open_bytes, seal_bytes
 from payment_policy import (
-    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status, gift_redemption_cents,
+    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status, gift_redemption_cents, manual_settlement_cents,
     due_after_payment, review_after_expiry,
 )
 from pymongo import ReturnDocument
@@ -727,18 +727,23 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(403, "Clients cannot confirm cash")
         if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
             raise HTTPException(403, "Not permitted to record this payment")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(400, "Amount must be a positive number of cents")
         if invoice["state"] == "draft":
             raise HTTPException(409, "Issue the invoice before recording a payment")
         if invoice["state"] == "voided":
             raise HTTPException(409, "A voided invoice cannot take a payment")
+        received_now, balance_now, _state_now, _overdue_now = project(invoice, await ledger_for(iid))
+        try:
+            amount = manual_settlement_cents(appt, balance_now, received_now, body.get("amountCents") if "amountCents" in body else None)
+        except ValueError as exc:
+            status = 409 if "outstanding balance" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
 
         def build(current, lines):
             received, balance, _state, _overdue = project(current, lines)
-            if amount > balance:
-                raise HTTPException(409, "That payment is more than the outstanding balance")
+            try:
+                manual_settlement_cents(appt, balance, received, amount)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
             return {"type": "client_payment", "method": "cash", "amountCents": amount, "reference": body.get("reference")}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
@@ -1556,17 +1561,25 @@ def build_billing_router(db, coll, add_audit, user_from):
         appt = await appointment(invoice["appointmentId"])
         if user["role"] == "client" or not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
             raise HTTPException(403, "Not permitted to confirm this transfer")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(400, "Amount must be a positive number of cents")
+        if invoice["state"] in ("draft", "voided"):
+            raise HTTPException(409, "Only an issued invoice can take a confirmed transfer")
+        received_now, balance_now, _state_now, _overdue_now = project(invoice, await ledger_for(iid))
+        try:
+            amount = manual_settlement_cents(appt, balance_now, received_now, body.get("amountCents") if "amountCents" in body else None)
+        except ValueError as exc:
+            status = 409 if "outstanding balance" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
 
         def build(current, lines):
-            _received, due, _state, _overdue = project(current, lines)
-            if amount > due:
-                raise HTTPException(409, "That payment is more than the outstanding balance")
+            received, balance, _state, _overdue = project(current, lines)
+            try:
+                manual_settlement_cents(appt, balance, received, amount)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
             return {"type": "client_payment", "method": "etransfer", "amountCents": amount, "reference": (body.get("reference") or "")[:80]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await sync_payment_due(saved)
         await notify_client(saved, "etransfer:" + str(body.get("idempotencyKey")))
         return await view_for(user, saved)
 
