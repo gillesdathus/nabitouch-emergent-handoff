@@ -1,8 +1,17 @@
 # Gate A — Off-host transfer procedure (not executed)
 
-**Status: BLOCKED** until the owner names and approves an existing trusted SSH destination.
+**Status: BLOCKED** until the owner authorizes `-ConfirmTransfer` (path approved).
 
-Do not create cloud accounts. Do not email archives. Do not treat `/root/nabitouch-next-backups` as off-host.
+**Owner-selected destination (2026-10-17):** Windows PC via **outbound** SSH/SCP pull (no inbound Windows SSH; no router changes). Requested `G:\Nabitouch-Backups`; on this PC `G:` is Google Drive so the writable path is `G:\My Drive\Nabitouch-Backups`. `D:` is not available.
+
+Primary runbook: `docs/GATE_A_WINDOWS_OFFHOST_PULL.md`  
+Script: `deploy/private-release/pull-gate-a-backups.ps1`
+
+Do not create cloud accounts. Do not email archives. Do not treat `/root/nabitouch-next-backups` alone as off-host.
+
+## VPS-push alternative (not selected)
+
+The Stage C `OFFHOST_DESTINATION=user@host:/dir` push pattern below remains documented for a future Linux backup host. It is **not** the active Windows-PC plan.
 
 ## Destination requirements
 
