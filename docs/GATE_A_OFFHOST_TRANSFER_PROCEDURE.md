@@ -1,6 +1,6 @@
 # Gate A — Off-host transfer procedure (not executed)
 
-**Status: BLOCKED** until the owner authorizes `-ConfirmTransfer` (path approved).
+**Status: PASS** for stamp `20261017T085834Z` (ciphertext + sha256 on `C:\Nabitouch-Backups`). Result: `docs/GATE_A_OFFHOST_TRANSFER_RESULT_2026-10-17.md`.
 
 **Owner-selected destination (2026-10-17):** Windows PC `C:\Nabitouch-Backups` via **outbound** SSH/SCP pull (no inbound Windows SSH; no router changes).
 

@@ -11,7 +11,7 @@
 | Local backup (A1–A3) | **PASS** | Ciphertexts + SHA-256 on VPS under `/root/nabitouch-next-backups/` |
 | Isolated restore | **PASS** | Temp DB `gate_a_restore_*` + temp uploads extract; cleaned after verify |
 | Passphrase recovery | **PENDING** | Owner must confirm password-manager retrieve; then shred temp file |
-| Off-host recovery | **BLOCKED** | Procedure ready; no transfer until `OFFHOST_DESTINATION` approved |
+| Off-host recovery | **PASS** | `C:\Nabitouch-Backups` stamp `20261017T085834Z`; see `GATE_A_OFFHOST_TRANSFER_RESULT_2026-10-17.md` |
 | Oplog-consistent backup | **NOT VERIFIED** | App user lacks `local.oplog.rs`; DB-scoped dump only |
 
 ## Archives (stamp `20261017T085834Z`)
@@ -83,7 +83,7 @@ Uses existing trusted SSH destination pattern; copies all three ciphertext famil
 
 1. **Passphrase:** Confirm retrieval from the approved password manager succeeds (without sharing the secret in chat). Reply that PM recovery is confirmed.  
 2. **Shred:** After (1), authorize removal of `GATE_A_PASSPHRASE_RECOVER_ONCE.txt` on the VPS.  
-3. **Off-host:** Name and approve `OFFHOST_DESTINATION=user@host:/absolute/dir` (existing trusted SSH host). Then authorize transfer of the three ciphertexts + helper.  
+3. **Off-host:** Completed to `C:\Nabitouch-Backups` (stamp `20261017T085834Z`).  
 4. **Optional / separate approval:** Mongo role for oplog-consistent backups (only if desired; not required to keep local+isolated PASS as documented).  
 
 Gates B–G, PR #1 merge, Nginx cutover, and Stripe remain out of scope for Gate A close.

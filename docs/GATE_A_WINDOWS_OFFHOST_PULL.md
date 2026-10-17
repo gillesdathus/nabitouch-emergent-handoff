@@ -1,6 +1,6 @@
 # Gate A — Windows PC off-host backup pull
 
-**Status:** Directory + script ready. **Production transfer BLOCKED** until the owner runs `-ConfirmTransfer`.
+**Status:** First off-host pull **PASS** (stamp `20261017T085834Z`). See `docs/GATE_A_OFFHOST_TRANSFER_RESULT_2026-10-17.md`.
 
 **Owner-approved destination:** `C:\Nabitouch-Backups`  
 (`D:` absent; `G:` Google Drive path retired for this workflow.)
