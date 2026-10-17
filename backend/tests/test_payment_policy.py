@@ -1,6 +1,6 @@
 import pytest
 
-from availability import clinic_is_bookable, public_clinic
+from availability import clinic_is_bookable, clinic_visit_address, public_clinic
 from insurers import catalog, invoke
 from payment_policy import (
     allowed_online_amounts,
@@ -143,6 +143,14 @@ def test_placeholder_clinic_is_hidden_and_not_bookable():
     saved = {"enabled": False, "address": "10150 104 St NW, Edmonton, AB", "mobileEnabled": True}
     assert clinic_is_bookable(saved) is False
     assert clinic_is_bookable({**saved, "enabled": True}) is True
+    booked = clinic_visit_address({**saved, "enabled": True}, "side door")
+    assert booked["line"] == saved["address"]
+    assert booked["notes"] == "side door"
+    assert "lat" not in booked and "lng" not in booked
+    pinned = clinic_visit_address({**saved, "enabled": True, "lat": 53.5225, "lng": -113.6235})
+    assert (pinned["lat"], pinned["lng"]) == (53.5225, -113.6235)
+    with pytest.raises(ValueError, match="not available"):
+        clinic_visit_address(saved)
 
 
 def test_insurer_catalog_is_inactive_and_operations_are_unavailable():

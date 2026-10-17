@@ -44,7 +44,7 @@ from math import radians, sin, cos, asin, sqrt
 from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
-    assert_public_slot, build_schedule_router, clinic_is_bookable, draft_schedule, note_cancellation, public_cancellation, public_clinic, validate_clinic,
+    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic,
     validate_policy, validate_scheduling, visible_to,
 )
 from payment_policy import resolve_payment_policy, settlement
@@ -893,8 +893,10 @@ def km_between(a, b):
 
 async def start_trip(appt, ts):
     p = await coll("practitioners").find_one({"id": appt.get("practitionerId")}, NO_ID) or {}
-    origin = p.get("base") or {"lat": 53.5461, "lng": -113.4938}
-    dest = {"lat": appt["address"]["lat"], "lng": appt["address"]["lng"]}
+    origin = point_of(p.get("base")) or {"lat": 53.5461, "lng": -113.4938}
+    dest = point_of((appt or {}).get("address"))
+    if not dest:
+        raise HTTPException(409, "This visit has no map coordinates yet.")
     km = round(km_between(origin, dest) * 1.3 + 0.8, 1)
     # Simulated GPS: the journey is replayed over ~2.5 real minutes; ETA shown in realistic drive minutes.
     return {"from": origin, "to": dest, "startedAt": ts, "demoSec": 150, "km": km, "driveMin": round(6 + km * 1.9),
@@ -1358,9 +1360,10 @@ async def resolve_booking(payload, user):
     zone, km = None, 0
     if location == "clinic":
         clinic = settings.get("clinic") or {}
-        if not clinic_is_bookable(clinic):
-            raise HTTPException(400, "In-clinic booking is not available")
-        address = {"line": clinic.get("address") or "", "lat": 53.5461, "lng": -113.4938, "zoneId": None, "notes": (address.get("notes") or "")[:240]}
+        try:
+            address = clinic_visit_address(clinic, address.get("notes"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     else:
         address, zone, km = await locate_visit(address, zones, settings)
     if (settings.get("clinic") or {}).get("mobileEnabled") is False and location != "clinic":

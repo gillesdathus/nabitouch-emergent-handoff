@@ -629,6 +629,21 @@ def clinic_is_bookable(clinic):
     return True
 
 
+def clinic_visit_address(clinic, notes=""):
+    """Keep the clinic street address. The service-area center is not a visit pin."""
+    if not clinic_is_bookable(clinic):
+        raise ValueError("In-clinic booking is not available")
+    address = {"line": str((clinic or {}).get("address") or "").strip(), "zoneId": None, "notes": str(notes or "")[:240]}
+    lat, lng = (clinic or {}).get("lat"), (clinic or {}).get("lng")
+    try:
+        if lat is not None and lng is not None and str(lat) != "" and str(lng) != "":
+            address["lat"] = float(lat)
+            address["lng"] = float(lng)
+    except (TypeError, ValueError):
+        pass
+    return address
+
+
 def public_clinic(clinic):
     """Public pages never receive a placeholder clinic address."""
     clinic = clinic if isinstance(clinic, dict) else {}
