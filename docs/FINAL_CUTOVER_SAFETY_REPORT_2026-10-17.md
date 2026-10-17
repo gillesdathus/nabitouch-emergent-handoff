@@ -12,6 +12,19 @@
 
 This report prepares safety gates only. No public traffic was changed. No production database was modified. Draft PR #1 stays unmerged.
 
+### Status addendum — Hostinger maintenance hold (2026-10-17)
+
+| Item | Status |
+| --- | --- |
+| Gate A encrypted backups + isolated restore | **PASS** |
+| Off-host copy `C:\Nabitouch-Backups` + SHA-256 | **PASS** |
+| Backup passphrase in owner password manager | **VERIFIED** |
+| VPS temp passphrase shred | **DEFERRED** (authorized; SSH unavailable) |
+| Gate B private loopback deploy | **HELD** (authorized; not executed — Hostinger emergency maintenance) |
+| Public cutover / Nginx / PR merge / Stripe | **NO-GO** — not authorized |
+
+Detail: `docs/GATE_A_BACKUP_EXECUTION_RESULT_2026-10-17.md`, `docs/FINAL_PRE_DEPLOYMENT_EXECUTION_PLAN_2026-10-17.md`.
+
 ---
 
 ## 1. Exact pinned application SHA and artifacts

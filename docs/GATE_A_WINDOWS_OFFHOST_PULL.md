@@ -1,6 +1,6 @@
 # Gate A — Windows PC off-host backup pull
 
-**Status:** First off-host pull **PASS** (stamp `20261017T085834Z`). See `docs/GATE_A_OFFHOST_TRANSFER_RESULT_2026-10-17.md`.
+**Status:** First off-host pull **PASS** (stamp `20261017T085834Z`). Password-manager passphrase retrieve **VERIFIED**. VPS passphrase shred and Gate B deploy **held** for Hostinger maintenance. See `docs/GATE_A_OFFHOST_TRANSFER_RESULT_2026-10-17.md`.
 
 **Owner-approved destination:** `C:\Nabitouch-Backups`  
 (`D:` absent; `G:` Google Drive path retired for this workflow.)

@@ -39,10 +39,13 @@ Operator log: `C:\Nabitouch-Backups\logs\transfer_20261017T085834Z.log`
 - Plaintext `nabitouch_prod-*.archive.gz` (2026-10-13)
 - `mongodump` / `mongorestore` / cleanup `.err` logs
 
-## Remaining Gate A owner items
+## Follow-up status (2026-10-17 maintenance hold)
 
-1. Confirm passphrase recovery in the password manager.  
-2. Authorize shred of VPS `GATE_A_PASSPHRASE_RECOVER_ONCE.txt`.  
-3. Oplog-consistent backup remains **NOT VERIFIED** (separate approval if desired).
+| Item | Status |
+| --- | --- |
+| Password-manager passphrase retrieve | **VERIFIED** |
+| VPS temp passphrase shred | **DEFERRED** (authorized; SSH down — Hostinger emergency maintenance) |
+| Gate B private deploy | **HELD** (authorized; not executed — same outage) |
+| Oplog-consistent backup | **NOT VERIFIED** (optional, separate approval) |
 
-PR #1 merge, Nginx cutover, and Stripe remain out of scope / **NO-GO**.
+PR #1 merge, Nginx cutover, and Stripe remain **unauthorized / NO-GO**.
