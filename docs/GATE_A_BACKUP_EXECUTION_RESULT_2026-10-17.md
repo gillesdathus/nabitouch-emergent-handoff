@@ -1,81 +1,89 @@
-# GATE A — Backup execution result (17 October 2026)
+# Gate A — Backup execution result (2026-10-17)
 
-**Authorization:** Gate A only (owner).  
-**Host:** `srv1393944`  
-**Stamp:** `20261017T085834Z`  
-**Public cutover / deploy / Nginx / Stripe / PR merge:** not performed.
+**Host:** `srv1393944` (`187.77.204.131`)  
+**Authority:** Stage C scripts from `/opt/nabitouch/app`; A2/A3 custom encrypt; passphrase recovery path documented below.  
+**Public deployment:** remains **NO-GO**. No deploy, merge, Nginx, production writes, or Stripe activation.
 
-## Summary
+## Status matrix (recovery finalization)
 
-| Item | Result |
+| Check | Status | Notes |
+| --- | --- | --- |
+| Local backup (A1–A3) | **PASS** | Ciphertexts + SHA-256 on VPS under `/root/nabitouch-next-backups/` |
+| Isolated restore | **PASS** | Temp DB `gate_a_restore_*` + temp uploads extract; cleaned after verify |
+| Passphrase recovery | **PENDING** | Owner must confirm password-manager retrieve; then shred temp file |
+| Off-host recovery | **BLOCKED** | Procedure ready; no transfer until `OFFHOST_DESTINATION` approved |
+| Oplog-consistent backup | **NOT VERIFIED** | App user lacks `local.oplog.rs`; DB-scoped dump only |
+
+## Archives (stamp `20261017T085834Z`)
+
+| Artifact | Path | Approx size |
+| --- | --- | --- |
+| Prod Mongo (DB-scoped) | `/root/nabitouch-next-backups/nabitouch_prod_20261017T085834Z.db.archive.gz.aesgcm` | ~10.7 KB |
+| Legacy Mongo | `/root/nabitouch-next-backups/nabi_touch_20261017T085834Z.archive.gz.aesgcm` | ~14 KB |
+| Legacy uploads | `/root/nabitouch-next-backups/nabi_touch_20261017T085834Z.uploads.tar.gz.aesgcm` | ~50.7 MB |
+
+Companions: `.sha256` for each; A1 `.manifest`; uploads `.uploads.manifest`.
+
+### Recovery inventory (both Mongo + uploads)
+
+Disaster recovery must restore **all three** families:
+
+1. `nabitouch_prod_*.db.archive.gz.aesgcm` — private release DB  
+2. `nabi_touch_*.archive.gz.aesgcm` — legacy Emergent DB  
+3. `nabi_touch_*.uploads.tar.gz.aesgcm` — legacy upload files  
+
+Missing any one family is an incomplete Gate A recovery set.
+
+## Encryption / decrypt helper (DR)
+
+| Item | Detail |
 | --- | --- |
-| A1 `nabitouch_prod` | **PASS** (encrypted DB-scoped dump + isolated restore) |
-| A2 `nabi_touch` | **PASS** |
-| A3 uploads volume | **PASS** (19/19 files) |
-| Stage C oplog path | **BLOCKED** — `ntnext` has `readWrite` on `nabitouch_prod` only; cannot read `local.oplog.rs` |
-| Host `openssl enc -aes-256-gcm` | **Unsupported** (OpenSSL 3.0.13 AEAD); used Python `NTA1GCM1` AES-GCM helper instead |
-| Off-host transfer | **BLOCKED** (no destination) |
-| Live DB overwrite | **None** — restores used throwaway `nt-restore-*` with remapped DB names; containers removed |
+| Format | `NTA1GCM1` (magic + salt + nonce + ciphertext+tag) |
+| KDF | PBKDF2-HMAC-SHA256, 200000 iterations |
+| Cipher | AES-256-GCM |
+| Helper (repo) | `deploy/private-release/gate_a_aesgcm.py` |
+| Dependency | `cryptography>=41` (Python 3) |
+| Why not OpenSSL CLI | Host OpenSSL 3.0.13 has no `enc -aes-256-gcm` |
 
-## Archives (preserved on VPS)
+Isolated decrypt smoke (no passphrase print): `deploy/private-release/gate_a_decrypt_smoke.sh`  
+**Executed on VPS 2026-10-17:** `SYNTHETIC_ROUNDTRIP=PASS`, `A1_DECRYPT_GZIP_MAGIC=PASS`, `GATE_A_DECRYPT_SMOKE=PASS` (A1 → 10702-byte gzip; plaintext shredded; passfile untouched).  
+Helper preserved at repo `deploy/private-release/gate_a_aesgcm.py` and VPS `/root/gate-a-work/gate_a_aesgcm.py`. Dependency: `cryptography>=41`.
 
-Directory: `/root/nabitouch-next-backups/` (mode `700`)
+## Passphrase handling
 
-| File | Size (bytes) | SHA-256 (file = actual) |
-| --- | ---: | --- |
-| `nabitouch_prod_20261017T085834Z.db.archive.gz.aesgcm` | 10 754 | `02084fa4cb0146ce6c5c944e1735db091f93acdd88a18bf9e01d5a1ac6f7430e` **PASS** |
-| `nabitouch_prod_20261017T085834Z.db.archive.gz.aesgcm.sha256` | 65 | — |
-| `nabitouch_prod_20261017T085834Z.db.archive.gz.aesgcm.manifest` | 371 | notes `consistency=database` |
-| `nabi_touch_20261017T085834Z.archive.gz.aesgcm` | 14 330 | `21c28f044c5dd4bdf40978404ec0e33b4851ebf0e3e17a08fe99f5d3dc8cfe40` **PASS** |
-| `nabi_touch_20261017T085834Z.archive.gz.aesgcm.sha256` | 65 | — |
-| `nabi_touch_20261017T085834Z.uploads.tar.gz.aesgcm` | 50 677 595 | `0bc24c0f96f2b28a420cb7bb262ccce943f63c4c63b455bca96e617fc80c362f` **PASS** |
-| `nabi_touch_20261017T085834Z.uploads.tar.gz.aesgcm.sha256` | 65 | — |
-| `nabi_touch_20261017T085834Z.uploads.manifest` | 88 | `pre_upload_files=19` |
-| `GATE_A_REPORT_20261017T085834Z.txt` | — | operator log (no secrets) |
-| `GATE_A_PASSPHRASE_RECOVER_ONCE.txt` | 45 | **Owner must copy to password manager then `shred -u`** |
-
-Decrypt helper on host: `/root/gate-a-work/gate_a_aesgcm.py` (magic `NTA1GCM1`).
-
-## Restore verification
-
-### A1 `nabitouch_prod`
-Isolated container restored to **`nabitouch_prod_restore_check`** (not live name on live mongo):
-
-- collections: **44**
-- `nt_services`: **10**
-- `nt_media` / invoices / appointments / clients: **0** (matches empty operational data on this private DB)
-
-Throwaway container/volume removed. No `nt-restore-*` left running.
-
-### A2 `nabi_touch`
-Restored to **`nabi_touch_restore_check`** on throwaway:
-
-- patients **17**, media_assets **18**, soap_notes **0**, users **1**, services **11**, faqs **6**
-- collections **12**
-
-Cleanup done.
-
-### A3 uploads
-- Pre-count **19** → post-extract **19** **PASS**
-- Volume: `nabitouch-rmt_uploads`
-
-## Encryption / key recovery (no secret values)
-
-| Item | Status |
+| Location | Status |
 | --- | --- |
-| Backup passphrase | Generated once; stored only in `GATE_A_PASSPHRASE_RECOVER_ONCE.txt` (mode `600`) until owner moves it to a password manager and shreds the file |
-| `FIELD_ENCRYPTION_KEY` | Present in `/etc/nabitouch-next.env` (len 44); `/etc/nabitouch-next.recovery-confirmed` **attested** — required to read sealed fields inside a restored `nabitouch_prod` |
-| Cipher | AES-256-GCM via Python cryptography, PBKDF2-HMAC-SHA256 200 000 iterations |
+| Temp file `/root/nabitouch-next-backups/GATE_A_PASSPHRASE_RECOVER_ONCE.txt` | **Still present** until owner confirms PM recovery |
+| Password manager | **Owner action** — transfer + retrieve verify (do not paste into chat) |
+| After owner confirms | `shred -u` (or `rm` after overwrite) the temp file; never commit |
 
-## Known deviations / remaining blockers
+## DB-scoped / oplog limitation (do not escalate without approval)
 
-1. **Stage C oplog backup still BLOCKED** until a MongoDB backup-capable role (e.g. `backup` / read on `local`) is authorized for user `ntnext` or a dedicated backup user. Current roles: `readWrite@nabitouch_prod` only.
-2. **Host OpenSSL cannot `enc -aes-256-gcm`** — Gate A used `gate_a_aesgcm.py` instead of `backup-encrypted.sh`’s openssl pipeline.
-3. **Off-host transfer BLOCKED** until `OFFHOST_DESTINATION` is configured and separately approved.
-4. Owner must **recover the passphrase file** before it is lost/shredded.
+`ntnext` (app Mongo user) has `readWrite` on `nabitouch_prod` only. Stage C oplog-consistent backup requires read on `local.oplog.rs`, which this principal **does not** have.
 
-## Explicit non-actions
+| Consequence | Detail |
+| --- | --- |
+| Consistency mode | `consistency=database` (manifest), not `oplog` |
+| Point-in-time | **NOT VERIFIED** for oplog-aligned restore |
+| Privilege change | **Do not** grant broader MongoDB roles without explicit owner approval |
 
-- No Nginx change, no public cutover, no deploy, no PR merge, no Stripe activation  
-- No off-host copy  
-- No modification of live `nabitouch_prod` or `nabi_touch` document contents  
+## Off-host transfer
+
+Procedure (not executed): `docs/GATE_A_OFFHOST_TRANSFER_PROCEDURE.md`  
+Uses existing trusted SSH destination pattern; copies all three ciphertext families + decrypt helper; **never** the passphrase file.
+
+## Deviations from Stage C ideal
+
+1. Oplog backup refused → DB-scoped dump.  
+2. OpenSSL AEAD unavailable → Python `gate_a_aesgcm.py`.  
+3. Off-host not run (policy).  
+4. Passphrase temp file retained pending owner PM confirmation.
+
+## Owner actions remaining to close Gate A
+
+1. **Passphrase:** Confirm retrieval from the approved password manager succeeds (without sharing the secret in chat). Reply that PM recovery is confirmed.  
+2. **Shred:** After (1), authorize removal of `GATE_A_PASSPHRASE_RECOVER_ONCE.txt` on the VPS.  
+3. **Off-host:** Name and approve `OFFHOST_DESTINATION=user@host:/absolute/dir` (existing trusted SSH host). Then authorize transfer of the three ciphertexts + helper.  
+4. **Optional / separate approval:** Mongo role for oplog-consistent backups (only if desired; not required to keep local+isolated PASS as documented).  
+
+Gates B–G, PR #1 merge, Nginx cutover, and Stripe remain out of scope for Gate A close.
