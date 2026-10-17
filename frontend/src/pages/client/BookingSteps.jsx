@@ -19,7 +19,7 @@ export function StepWhere() {
   const clinic = idx.settings.clinic;
   return (
     <div>
-      <H t="Where should we meet you?" s={clinicBookable(clinic) ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton. In-clinic booking is turned off."} />
+      <H t="Where should we meet you?" s={clinicBookable(clinic) ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton."} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicBookable(clinic)).map((l) => { const I = LOC_ICON[l.id]; return (
           <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>

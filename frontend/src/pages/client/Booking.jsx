@@ -93,6 +93,15 @@ export default function Booking() {
     next.delete("serviceId");
     setParams(next, { replace: true });
   }, [service?.id, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // In-clinic stays off until owner activates it; never leave a stale clinic draft selected.
+  useEffect(() => {
+    if (!idx?.settings) return;
+    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic)) {
+      patchDraft({ locationType: "home" });
+    }
+  }, [idx?.settings, draft.locationType]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const zr = draft.locationType !== "clinic" && draft.address ? zoneFor(draft.address, state.zones) : null;
   const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx?.settings, locationType: draft.locationType });
   const shown = step === 5 && serverQuote ? serverQuote : q;
