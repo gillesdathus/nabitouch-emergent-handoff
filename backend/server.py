@@ -44,7 +44,7 @@ from math import radians, sin, cos, asin, sqrt
 from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
-    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic,
+    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
     validate_policy, validate_scheduling, visible_to,
 )
 from payment_policy import resolve_payment_policy, settlement
@@ -917,7 +917,7 @@ def km_between(a, b):
 async def start_trip(appt, ts):
     p = await coll("practitioners").find_one({"id": appt.get("practitionerId")}, NO_ID) or {}
     origin = point_of(p.get("base")) or {"lat": 53.5461, "lng": -113.4938}
-    dest = point_of((appt or {}).get("address"))
+    dest = visit_navigation_point((appt or {}).get("address"), (appt or {}).get("locationType"))
     if not dest:
         raise HTTPException(409, "This visit has no map coordinates yet.")
     km = round(km_between(origin, dest) * 1.3 + 0.8, 1)

@@ -1,6 +1,6 @@
 import pytest
 
-from availability import clinic_is_bookable, clinic_visit_address, merge_clinic, public_clinic
+from availability import clinic_is_bookable, clinic_visit_address, merge_clinic, public_clinic, visit_navigation_point
 from insurers import catalog, invoke
 from payment_policy import (
     allowed_online_amounts,
@@ -207,6 +207,51 @@ def test_unchanged_verified_clinic_keeps_its_pin_when_other_settings_change():
     saved = merge_clinic(current, {"mobileEnabled": False, "lat": 53.5461, "lng": -113.4938})
     assert (saved["lat"], saved["lng"]) == (53.5435, -113.499)
     assert saved["navigation"] == "ready"
+
+
+def test_trip_start_refuses_an_unverified_clinic_without_inventing_a_pin():
+    import asyncio
+    import server
+    from fastapi import HTTPException
+
+    class _Coll:
+        async def find_one(self, *_args, **_kwargs):
+            return {"id": "p-1", "base": {"lat": 53.5, "lng": -113.4}}
+
+    original = server.coll
+    server.coll = lambda _name: _Coll()
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(server.start_trip({
+                "practitionerId": "p-1",
+                "locationType": "clinic",
+                "address": {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5461, "lng": -113.4938, "navigation": "unavailable"},
+            }, "2026-10-16T00:00:00Z"))
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "This visit has no map coordinates yet."
+        ready = asyncio.run(server.start_trip({
+            "practitionerId": "p-1",
+            "locationType": "clinic",
+            "address": {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5225, "lng": -113.6235, "navigation": "ready"},
+        }, "2026-10-16T00:00:00Z"))
+        assert ready["to"] == {"lat": 53.5225, "lng": -113.6235}
+    finally:
+        server.coll = original
+
+
+def test_visit_navigation_uses_only_verified_coordinates():
+    verified = clinic_visit_address(
+        {"enabled": True, "address": "8882 170 St NW, Edmonton, AB", "lat": 53.5225, "lng": -113.6235, "coordinatesVerified": True},
+    )
+    assert visit_navigation_point(verified, "clinic") == {"lat": 53.5225, "lng": -113.6235}
+    stale = {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5461, "lng": -113.4938, "navigation": "unavailable"}
+    assert visit_navigation_point(stale, "clinic") is None
+    missing = clinic_visit_address({"enabled": True, "address": "10150 104 St NW, Edmonton, AB"})
+    assert visit_navigation_point(missing, "clinic") is None
+    assert visit_navigation_point({"line": "client home", "lat": "nope", "lng": None}, "home") is None
+    assert visit_navigation_point({"line": "client home", "lat": 53.6, "lng": -113.5, "arrival": {"lat": 91, "lng": 0}}, "home") == {"lat": 53.6, "lng": -113.5}
+    mobile = {"line": "client home", "lat": 53.54, "lng": -113.5, "arrival": {"lat": 53.55, "lng": -113.51}}
+    assert visit_navigation_point(mobile, "home") == {"lat": 53.55, "lng": -113.51}
 
 
 def test_insurer_catalog_is_inactive_and_operations_are_unavailable():

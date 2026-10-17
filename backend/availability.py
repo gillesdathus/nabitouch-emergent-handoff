@@ -256,6 +256,31 @@ def point_of(address):
     return {"lat": float(address["lat"]), "lng": float(address["lng"])}
 
 
+def _finite_point(lat, lng):
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if lat != lat or lng != lng or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return {"lat": lat, "lng": lng}
+
+
+def visit_navigation_point(address, location_type="home"):
+    """Coordinates for an external maps handoff. A clinic pin is used only after that address was verified."""
+    address = address or {}
+    if location_type == "clinic":
+        if address.get("navigation") != "ready":
+            return None
+        return _finite_point(address.get("lat"), address.get("lng"))
+    arrival = address.get("arrival") if isinstance(address.get("arrival"), dict) else None
+    if arrival:
+        point = _finite_point(arrival.get("lat"), arrival.get("lng"))
+        if point:
+            return point
+    return _finite_point(address.get("lat"), address.get("lng"))
+
+
 def conservative_drive(origin, dest):
     """Never report zero travel when the two stops differ or either stop is unknown."""
     if not origin or not dest:
@@ -1234,7 +1259,11 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
     for index, row in enumerate(appointments):
         leg = None
         if index:
-            drive, provider = await mapbox_drive(point_of(appointments[index - 1].get("address")), point_of(row.get("address")))
+            previous = appointments[index - 1]
+            drive, provider = await mapbox_drive(
+                visit_navigation_point(previous.get("address"), previous.get("locationType") or "home"),
+                visit_navigation_point(row.get("address"), row.get("locationType") or "home"),
+            )
             travel_total += drive
             prev_end = minutes(appointments[index - 1]["time"]) + int(appointments[index - 1]["duration"])
             depart = prev_end + int(rules["cleanupMin"])
@@ -1244,9 +1273,10 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
             leg = {"minutes": drive, "provider": provider, "depart": hhmm(depart), "arrive": hhmm(arrive)}
         address = row.get("address") or {}
         stop = {"id": row["id"], "ref": row.get("ref"), "time": row["time"], "duration": int(row["duration"]), "area": address.get("zoneName") or ""}
-        if show_address and address.get("lat") is not None:
-            stop["position"] = {"lat": address["lat"], "lng": address["lng"]}
-            stop["maps"] = f"https://www.google.com/maps/dir/?api=1&destination={address['lat']},{address['lng']}"
+        point = visit_navigation_point(address, row.get("locationType") or "home") if show_address else None
+        if point:
+            stop["position"] = point
+            stop["maps"] = f"https://www.google.com/maps/dir/?api=1&destination={point['lat']},{point['lng']}"
         stops.append({"stop": stop, "leg": leg})
     gaps = gap_suggestions(schedule, person, day, appointments, rules, conservative_drive)
     proposal = propose_order(appointments, conservative_drive)

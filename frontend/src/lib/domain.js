@@ -238,6 +238,32 @@ export function staffActor(user) {
   return user?.name || user?.email || "Staff";
 }
 
+function finitePoint(lat, lng) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { lat: latitude, lng: longitude };
+}
+
+export function visitNavigationPoint(appt) {
+  const address = appt?.address || {};
+  if (appt?.locationType === "clinic") {
+    if (address.navigation !== "ready") return null;
+    return finitePoint(address.lat, address.lng);
+  }
+  const arrival = address.arrival && typeof address.arrival === "object" ? finitePoint(address.arrival.lat, address.arrival.lng) : null;
+  return arrival || finitePoint(address.lat, address.lng);
+}
+
+export function navigationHref(app, point) {
+  if (!point) return "";
+  const { lat, lng } = point;
+  if (app === "apple") return `https://maps.apple.com/?daddr=${lat},${lng}`;
+  if (app === "waze") return `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+}
+
 export function clinicSavePayload(clinic, query, pick) {
   const confirmed = pick?.clientConfirmed && pick.mapboxId ? pick : null;
   const line = String(confirmed?.line || query || "").trim();

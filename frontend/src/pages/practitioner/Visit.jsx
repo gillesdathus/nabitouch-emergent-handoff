@@ -7,7 +7,7 @@ import { PaymentPanel } from "@/components/PaymentPanel";
 import { LiveMap } from "@/components/LiveMap";
 import { useDemo } from "@/store/DemoStore";
 import { ReadinessBadge } from "@/components/PrepareCard";
-import { ACTIONS, sessionElapsed, fmtClock, fmtTime, fmtDate } from "@/lib/domain";
+import { ACTIONS, sessionElapsed, fmtClock, fmtTime, fmtDate, navigationHref, visitNavigationPoint } from "@/lib/domain";
 import { useTrackingPublisher } from "@/lib/tracking/useTrackingPublisher";
 import { isLiveTrial, useLiveSession, shouldShowPosition } from "@/lib/tracking/live";
 import { etaCopy } from "@/lib/tracking/providers";
@@ -67,27 +67,29 @@ function SharingIndicator({ appt, me }) {
 }
 
 const NAV_APPS = [
-  ["google", "Google Maps", (lat, lng, line) => (lat ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}` : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(line)}`)],
-  ["apple", "Apple Maps", (lat, lng, line) => (lat ? `https://maps.apple.com/?daddr=${lat},${lng}` : `https://maps.apple.com/?daddr=${encodeURIComponent(line)}`)],
-  ["waze", "Waze", (lat, lng, line) => (lat ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes` : `https://waze.com/ul?q=${encodeURIComponent(line)}&navigate=yes`)],
+  ["google", "Google Maps"],
+  ["apple", "Apple Maps"],
+  ["waze", "Waze"],
 ];
 
-function NavHandoff({ appt, mapsUrl }) {
+export function NavHandoff({ appt }) {
   const { idx, practitionerId, api: store } = useDemo();
   const me = idx.practitioners[practitionerId];
   const [app, setApp] = useState(me?.preferredNavApp || "google");
   const choose = (key) => { setApp(key); if (me?.id) store.patch("practitioners", me.id, { preferredNavApp: key }).catch(() => {}); };
-  const lat = appt.address?.arrival?.lat;
-  const lng = appt.address?.arrival?.lng;
-  const line = appt.address?.line || "";
+  const point = visitNavigationPoint(appt);
   const chosen = NAV_APPS.find((row) => row[0] === app) || NAV_APPS[0];
-  const href = chosen[2](lat, lng, line) || mapsUrl;
+  if (!point) {
+    if (appt?.locationType !== "clinic") return null;
+    return <p className="text-sm text-amber-800" data-testid="visit-navigation-unavailable">Navigation unavailable — clinic address needs verification.</p>;
+  }
+  const href = navigationHref(app, point);
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
+    <div className="flex min-w-0 flex-1 flex-col gap-2" data-testid="visit-navigation">
       <div className="flex flex-wrap gap-1">
         {NAV_APPS.map(([key, label]) => <button key={key} type="button" data-testid={`nav-app-${key}`} onClick={() => choose(key)} className={app === key ? "nb-chip-on h-8 text-xs" : "nb-chip-off h-8 text-xs"}>{label}</button>)}
       </div>
-      <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (window.Capacitor?.isNativePlatform?.()) { e.preventDefault(); openNavigation(app, lat, lng, line, href); } }} data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
+      <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (window.Capacitor?.isNativePlatform?.()) { e.preventDefault(); openNavigation(app, point.lat, point.lng, href); } }} data-testid="lifecycle-open-navigation-btn" className="nb-btn-ghost h-12"><Navigation className="h-4 w-4" />Open {chosen[1]}</a>
     </div>
   );
 }
@@ -126,10 +128,6 @@ export default function Visit() {
   const primary = actions.find((x) => !x.secondary) || actions[0];
   const actor = me?.name || "Practitioner";
   const lastNote = state.soap.filter((n) => n.clientId === appt.clientId && n.status === "signed" && n.appointmentId !== appt.id).slice(-1)[0];
-  const mapsUrl = appt.address?.arrival?.lat
-    ? `https://www.google.com/maps/dir/?api=1&destination=${appt.address.arrival.lat},${appt.address.arrival.lng}`
-    : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(appt.address.line)}`;
-
   const gated = !training && ((primary?.to === "in_session" && !readiness?.ready) || queued.length > 0);
   const doIt = async (a) => {
     if (a.nav) return nav(`/pro/soap/${appt.id}`);
@@ -194,7 +192,7 @@ export default function Visit() {
       </div>
       <div className="space-y-3">
         {["assigned", "confirmed", "preparing", "en_route", "arrived"].includes(appt.status) && <div className="flex flex-wrap gap-2"><ReadinessBadge readiness={appt.readiness} /></div>}
-        {["assigned", "confirmed", "preparing", "en_route"].includes(appt.status) && <NavHandoff appt={appt} mapsUrl={mapsUrl} />}
+        {["assigned", "confirmed", "preparing", "en_route"].includes(appt.status) && <NavHandoff appt={appt} />}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {actions.filter((x) => x !== primary).map((a) => <button key={a.label} disabled={pending} onClick={() => tap(a)} data-testid={`lifecycle-${a.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className="nb-btn-ghost h-12 flex-1">{a.label}</button>)}
           {["en_route", "preparing", "assigned"].includes(appt.status) && <button type="button" onClick={() => setLate(true)} data-testid="lifecycle-running-late-btn" className="nb-btn-ghost h-12 flex-1"><Clock className="h-4 w-4" />Running late</button>}
