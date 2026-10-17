@@ -407,7 +407,11 @@ def build_auth(db, coll, add_audit):
         if preview_local_reset():
             return {"ok": True, "message": "Choose a new password for this preview account.", "previewResetToken": raw}
         link = f"{os.environ['APP_URL'].rstrip('/')}/reset-password?token={raw}"
-        await send_email(to=email, subject=f"Reset your {os.environ['EMAIL_FROM_NAME']} password", html=reset_email_html(u.get("name") or "there", link))
+        try:
+            await send_email(to=email, subject=f"Reset your {os.environ['EMAIL_FROM_NAME']} password", html=reset_email_html(u.get("name") or "there", link))
+        except HTTPException:
+            # Never reveal account existence when the mail provider rejects delivery.
+            return ok
         return ok
 
     @r.post("/reset-password")
