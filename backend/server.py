@@ -44,7 +44,7 @@ from math import radians, sin, cos, asin, sqrt
 from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
-    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic,
+    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic,
     validate_policy, validate_scheduling, visible_to,
 )
 from payment_policy import resolve_payment_policy, settlement
@@ -802,6 +802,29 @@ def _verdict(hit, zones, settings):
             "That address is outside the mobile service area. You can still book an in-clinic visit."
         ),
     }
+
+
+@api.post("/geo/clinic-confirm")
+async def geo_clinic_confirm(request: Request, body: dict = Body(...)):
+    """Confirm a selected clinic suggestion. Free text is not geocoded, and the service-area center is not a pin."""
+    await require(request, "owner")
+    if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
+        raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
+    if not str(body.get("mapboxId") or "").strip():
+        raise HTTPException(400, "Choose an address suggestion before confirming the clinic.")
+    try:
+        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None)
+    except GeocodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    assessed = classify(hit, body.get("line") or "", body.get("postal") or "", None)
+    accepted = body.get("clientConfirmed") is True and assessed["confidence"] == "address" and not assessed["arrivalDiscrepancy"]
+    result = {"accepted": accepted, "line": hit.get("line") or "", "mapboxId": hit.get("id") or "", "confidence": assessed["confidence"], "navigation": "ready" if accepted else "unavailable"}
+    if accepted:
+        result["lat"] = hit["lat"]
+        result["lng"] = hit["lng"]
+    return result
 
 
 @api.post("/geo/confirm")
@@ -2146,8 +2169,22 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             phone = "".join(ch for ch in str(wa.get("phone") or "") if ch.isdigit() or ch == "+")[:16]
             doc["whatsapp"] = {"pages": pages, "phone": phone or "+17802356508"}
         if "clinic" in doc:
+            incoming = doc["clinic"] if isinstance(doc["clinic"], dict) else {}
+            confirmation = incoming.get("confirmation") if isinstance(incoming.get("confirmation"), dict) else {}
+            resolved = None
+            provider_down = False
+            if confirmation.get("clientConfirmed") is True and confirmation.get("mapboxId"):
+                try:
+                    hit = await GEO.resolve(line=confirmation.get("line") or incoming.get("address") or "", mapbox_id=confirmation.get("mapboxId"), point=None)
+                except GeocodeError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                except ProviderError:
+                    provider_down = True
+                else:
+                    assessed = classify(hit, confirmation.get("line") or "", confirmation.get("postal") or "", None)
+                    resolved = {"line": hit.get("line") or "", "lat": hit.get("lat"), "lng": hit.get("lng"), "mapboxId": hit.get("id") or "", "confidence": assessed["confidence"]}
             try:
-                doc["clinic"] = validate_clinic({**(target.get("clinic") or {}), **doc["clinic"]})
+                doc["clinic"] = validate_clinic(merge_clinic(target.get("clinic"), incoming, resolved, provider_down))
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         if "paymentPolicy" in doc:

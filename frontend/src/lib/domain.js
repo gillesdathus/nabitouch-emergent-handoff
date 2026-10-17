@@ -238,6 +238,22 @@ export function staffActor(user) {
   return user?.name || user?.email || "Staff";
 }
 
+export function clinicSavePayload(clinic, query, pick) {
+  const confirmed = pick?.clientConfirmed && pick.mapboxId ? pick : null;
+  const line = String(confirmed?.line || query || "").trim();
+  const next = { ...(clinic || {}), address: line, enabled: false };
+  delete next.lat;
+  delete next.lng;
+  delete next.mapboxId;
+  delete next.coordinatesVerified;
+  delete next.navigation;
+  delete next.confirmation;
+  if (confirmed) {
+    next.confirmation = { mapboxId: confirmed.mapboxId, line: confirmed.line, postal: confirmed.postal || "", clientConfirmed: true };
+  }
+  return next;
+}
+
 const birthdayMonth = (c) => c?.dob && Number(c.dob.split('-')[1]) === new Date().getMonth() + 1;
 
 export function welcomeOfferListed(promo) {

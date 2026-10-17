@@ -630,18 +630,61 @@ def clinic_is_bookable(clinic):
 
 
 def clinic_visit_address(clinic, notes=""):
-    """Keep the clinic street address. The service-area center is not a visit pin."""
+    """Keep the clinic street address. Coordinates are used only after that same address was confirmed."""
     if not clinic_is_bookable(clinic):
         raise ValueError("In-clinic booking is not available")
-    address = {"line": str((clinic or {}).get("address") or "").strip(), "zoneId": None, "notes": str(notes or "")[:240]}
+    address = {"line": str((clinic or {}).get("address") or "").strip(), "zoneId": None, "notes": str(notes or "")[:240], "navigation": "unavailable"}
+    if (clinic or {}).get("coordinatesVerified") is not True:
+        return address
     lat, lng = (clinic or {}).get("lat"), (clinic or {}).get("lng")
     try:
         if lat is not None and lng is not None and str(lat) != "" and str(lng) != "":
             address["lat"] = float(lat)
             address["lng"] = float(lng)
+            address["navigation"] = "ready"
     except (TypeError, ValueError):
         pass
     return address
+
+
+def _clinic_line(value):
+    return " ".join(str(value or "").split())
+
+
+def merge_clinic(current, incoming, resolved=None, provider_down=False):
+    """Apply an owner clinic edit. Client coordinates are ignored. A new street drops the old pin."""
+    current = dict(current or {})
+    incoming = dict(incoming or {})
+    confirmation = incoming.get("confirmation") if isinstance(incoming.get("confirmation"), dict) else {}
+    line = _clinic_line(incoming.get("address", current.get("address")))
+    previous = _clinic_line(current.get("address"))
+    kept = {key: value for key, value in incoming.items() if key not in ("lat", "lng", "mapboxId", "coordinatesVerified", "navigation", "confirmation")}
+    clinic = {**current, **kept, "address": line}
+    clinic.pop("lat", None)
+    clinic.pop("lng", None)
+    clinic.pop("mapboxId", None)
+    clinic["coordinatesVerified"] = False
+    clinic["navigation"] = "unavailable"
+    same_street = line == previous and current.get("coordinatesVerified") is True
+    if same_street and not confirmation and not provider_down:
+        if current.get("lat") is not None and current.get("lng") is not None:
+            clinic["lat"] = float(current["lat"])
+            clinic["lng"] = float(current["lng"])
+            clinic["mapboxId"] = current.get("mapboxId") or ""
+            clinic["coordinatesVerified"] = True
+            clinic["navigation"] = "ready"
+        return clinic
+    if provider_down or not resolved or confirmation.get("clientConfirmed") is not True:
+        return clinic
+    if resolved.get("confidence") != "address":
+        raise ValueError("This address needs review before the clinic location can be saved.")
+    clinic["address"] = _clinic_line(resolved.get("line") or line)
+    clinic["lat"] = float(resolved["lat"])
+    clinic["lng"] = float(resolved["lng"])
+    clinic["mapboxId"] = resolved.get("mapboxId") or ""
+    clinic["coordinatesVerified"] = True
+    clinic["navigation"] = "ready"
+    return clinic
 
 
 def public_clinic(clinic):

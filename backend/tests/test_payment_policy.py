@@ -1,6 +1,6 @@
 import pytest
 
-from availability import clinic_is_bookable, clinic_visit_address, public_clinic
+from availability import clinic_is_bookable, clinic_visit_address, merge_clinic, public_clinic
 from insurers import catalog, invoke
 from payment_policy import (
     allowed_online_amounts,
@@ -146,11 +146,67 @@ def test_placeholder_clinic_is_hidden_and_not_bookable():
     booked = clinic_visit_address({**saved, "enabled": True}, "side door")
     assert booked["line"] == saved["address"]
     assert booked["notes"] == "side door"
+    assert booked["navigation"] == "unavailable"
     assert "lat" not in booked and "lng" not in booked
-    pinned = clinic_visit_address({**saved, "enabled": True, "lat": 53.5225, "lng": -113.6235})
+    stale = clinic_visit_address({**saved, "enabled": True, "lat": 53.5461, "lng": -113.4938})
+    assert "lat" not in stale
+    pinned = clinic_visit_address({**saved, "enabled": True, "lat": 53.5225, "lng": -113.6235, "coordinatesVerified": True})
     assert (pinned["lat"], pinned["lng"]) == (53.5225, -113.6235)
+    assert pinned["navigation"] == "ready"
     with pytest.raises(ValueError, match="not available"):
         clinic_visit_address(saved)
+
+
+def test_clinic_street_change_drops_the_previous_pin():
+    current = {"enabled": True, "address": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "mapboxId": "local-downtown", "coordinatesVerified": True}
+    changed = merge_clinic(current, {"address": "8882 170 St NW, Edmonton, AB", "lat": 53.5461, "lng": -113.4938})
+    assert changed["address"] == "8882 170 St NW, Edmonton, AB"
+    assert "lat" not in changed and "lng" not in changed
+    assert changed["coordinatesVerified"] is False
+    assert changed["navigation"] == "unavailable"
+
+
+def test_confirmed_clinic_resolution_stores_provider_coordinates():
+    saved = merge_clinic(
+        {"enabled": False, "address": "", "mobileEnabled": True},
+        {"address": "typed downtown", "lat": 53.5461, "lng": -113.4938, "confirmation": {"clientConfirmed": True, "mapboxId": "local-west"}},
+        {"line": "8882 170 St NW, Edmonton, AB", "lat": 53.5225, "lng": -113.6235, "mapboxId": "local-west", "confidence": "address"},
+    )
+    assert (saved["lat"], saved["lng"]) == (53.5225, -113.6235)
+    assert saved["address"] == "8882 170 St NW, Edmonton, AB"
+    assert saved["coordinatesVerified"] is True
+    visit = clinic_visit_address({**saved, "enabled": True})
+    assert (visit["lat"], visit["lng"]) == (53.5225, -113.6235)
+
+
+def test_ambiguous_clinic_confirmation_does_not_save_coordinates():
+    with pytest.raises(ValueError, match="needs review"):
+        merge_clinic(
+            {"address": "10150 104 St NW, Edmonton, AB"},
+            {"address": "somewhere", "confirmation": {"clientConfirmed": True, "mapboxId": "ambiguous"}},
+            {"line": "somewhere", "lat": 53.5461, "lng": -113.4938, "mapboxId": "ambiguous", "confidence": "review"},
+        )
+
+
+def test_mapbox_outage_keeps_the_street_and_clears_navigation():
+    saved = merge_clinic(
+        {"address": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "coordinatesVerified": True},
+        {"address": "8882 170 St NW, Edmonton, AB", "confirmation": {"clientConfirmed": True, "mapboxId": "local-west"}},
+        provider_down=True,
+    )
+    assert saved["address"] == "8882 170 St NW, Edmonton, AB"
+    assert "lat" not in saved
+    assert saved["navigation"] == "unavailable"
+    visit = clinic_visit_address({**saved, "enabled": True})
+    assert visit["navigation"] == "unavailable"
+    assert "lat" not in visit
+
+
+def test_unchanged_verified_clinic_keeps_its_pin_when_other_settings_change():
+    current = {"address": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "mapboxId": "local-downtown", "coordinatesVerified": True, "mobileEnabled": True}
+    saved = merge_clinic(current, {"mobileEnabled": False, "lat": 53.5461, "lng": -113.4938})
+    assert (saved["lat"], saved["lng"]) == (53.5435, -113.499)
+    assert saved["navigation"] == "ready"
 
 
 def test_insurer_catalog_is_inactive_and_operations_are_unavailable():

@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { ZoneMap, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
-import { clinicBookable, staffActor } from "@/lib/domain";
+import { AddressPicker } from "@/components/AddressPicker";
+import { clinicBookable, clinicSavePayload, staffActor } from "@/lib/domain";
 import { dollarsToCents } from "@/lib/billing";
 
 function ZoneRow({ z }) {
@@ -43,6 +44,8 @@ export default function Zones() {
   const shownAddress = clinicBookable(clinic) || (clinic.address && !String(clinic.address).includes("[")) ? clinic.address : "";
   const [gst, setGst] = useState(st.gst * 100);
   const [address, setAddress] = useState(shownAddress);
+  const [clinicQuery, setClinicQuery] = useState(shownAddress);
+  const [clinicPick, setClinicPick] = useState(null);
   const [mode, setMode] = useState(policy.mode);
   const [depositType, setDepositType] = useState(policy.depositType || "percent");
   const [depositPercent, setDepositPercent] = useState(policy.depositPercent ?? 25);
@@ -52,7 +55,7 @@ export default function Zones() {
   const save = (patch, msg) => run(() => api.patch("settings", "app", { ...patch, _audit: msg, _actor: staffActor(user) }), "Settings saved");
   const finish = (patch, msg) => save(patch, msg).then(() => setEditing(""));
   useEffect(() => { api.insurers().then((body) => setInsurers(body.providers || [])).catch(() => setInsurers([])); }, [api]);
-  const saveAddress = () => finish({ clinic: { ...clinic, address: address.trim(), enabled: false } }, "Clinic address saved without enabling bookings");
+  const saveAddress = () => finish({ clinic: clinicSavePayload(clinic, clinicQuery || address, clinicPick) }, "Clinic address saved without enabling bookings");
   const savePolicy = () => {
     const fixed = dollarsToCents(depositAmount);
     finish({
@@ -77,19 +80,20 @@ export default function Zones() {
         </div>
         <div className="nb-card space-y-3 p-4 text-sm md:col-span-2">
           <b>In-clinic address</b>
-          <p className="text-xs text-nb-mute">Saving an address does not turn clinic booking on.</p>
+          <p className="text-xs text-nb-mute">Saving an address does not turn clinic booking on. Choose a suggestion and confirm it before navigation coordinates are saved.</p>
+          <p className="text-xs text-nb-mute" data-testid="settings-clinic-navigation">{clinic.coordinatesVerified ? "Navigation coordinates verified for this address." : shownAddress ? "Navigation is unavailable until this address is confirmed." : "No street address saved"}</p>
           {editing === "address" ? (
             <>
-              <input value={address} onChange={(e) => setAddress(e.target.value)} className="nb-input" placeholder="Street address" data-testid="settings-clinic-address" />
+              <AddressPicker purpose="clinic" value={clinicPick} onChange={setClinicPick} query={clinicQuery} onQuery={setClinicQuery} testid="settings-clinic-address" />
               <div className="flex gap-2">
-                <button type="button" onClick={() => { setAddress(shownAddress); setEditing(""); }} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button>
+                <button type="button" onClick={() => { setAddress(shownAddress); setClinicQuery(shownAddress); setClinicPick(null); setEditing(""); }} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button>
                 <button type="button" onClick={saveAddress} data-testid="settings-clinic-address-save" className="nb-btn-ghost h-9 px-4 text-xs">Save address</button>
               </div>
             </>
           ) : (
             <div className="flex items-center justify-between gap-3">
               <p data-testid="settings-clinic-address">{shownAddress || "No street address saved"}</p>
-              <button type="button" onClick={() => { setAddress(shownAddress); setEditing("address"); }} className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-clinic-address-edit">Edit</button>
+              <button type="button" onClick={() => { setAddress(shownAddress); setClinicQuery(shownAddress); setClinicPick(null); setEditing("address"); }} className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-clinic-address-edit">Edit</button>
             </div>
           )}
         </div>

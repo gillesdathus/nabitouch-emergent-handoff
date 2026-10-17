@@ -182,6 +182,7 @@ export const api = {
   geoSuggest: (q) => http.get('/geo/suggest', { params: { q } }).then(data),
   geoCheck: (body) => http.post('/geo/check', body).then(data),
   geoConfirm: (body) => http.post('/geo/confirm', body).then(data),
+  geoClinicConfirm: (body) => http.post('/geo/clinic-confirm', body).then(data),
   mailOps: () => http.get('/notifications/operations').then(data),
   legacySchema: () => http.get('/legacy/schema').then(data),
   legacySummary: () => http.get('/legacy/summary').then(data),

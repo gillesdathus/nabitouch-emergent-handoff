@@ -1,4 +1,17 @@
-import { clinicBookable, paymentChoice, paymentQueues } from "./domain";
+import { clinicBookable, clinicSavePayload, paymentChoice, paymentQueues } from "./domain";
+
+test("an edited clinic address does not keep the old coordinates", () => {
+  const clinic = { enabled: true, address: "10150 104 St NW, Edmonton, AB", lat: 53.5461, lng: -113.4938, coordinatesVerified: true, mobileEnabled: true };
+  const changed = clinicSavePayload(clinic, "8882 170 St NW, Edmonton, AB", null);
+  expect(changed.address).toBe("8882 170 St NW, Edmonton, AB");
+  expect(changed.lat).toBeUndefined();
+  expect(changed.lng).toBeUndefined();
+  expect(changed.confirmation).toBeUndefined();
+  expect(changed.enabled).toBe(false);
+  const confirmed = clinicSavePayload(clinic, "typed", { clientConfirmed: true, mapboxId: "local-west", line: "8882 170 St NW, Edmonton, AB", postal: "T5T 4J2" });
+  expect(confirmed.confirmation).toEqual({ mapboxId: "local-west", line: "8882 170 St NW, Edmonton, AB", postal: "T5T 4J2", clientConfirmed: true });
+  expect(confirmed.lat).toBeUndefined();
+});
 
 test("a placeholder clinic address is not offered", () => {
   expect(clinicBookable({ enabled: true, address: "[Clinic address — to be supplied]" })).toBe(false);
