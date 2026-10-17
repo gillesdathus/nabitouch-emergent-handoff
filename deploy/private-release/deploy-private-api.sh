@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # Exits 2 unless CONFIRM_PRIVATE_DEPLOY=yes. Does not change Nginx, DNS, or business data.
 # Reads deploy/private-release/release-pin.conf for the frozen application SHA and image digests.
 set -euo pipefail
@@ -148,16 +148,23 @@ rollback_api() {
   docker compose -f deploy/docker-compose.hostinger.yml up -d --no-deps api
 }
 
-body="$(curl -fsS -m 10 http://127.0.0.1:8011/api/health || true)"
-if ! python3 - "$body" <<'PY'
+health_ok=0
+for _try in $(seq 1 30); do
+  body="$(curl -fsS -m 5 http://127.0.0.1:8011/api/health || true)"
+  if python3 - "$body" <<'PY'
 import json, sys
 data = json.loads(sys.argv[1] or "{}")
 ok = data.get("mongo") == "ok" and data.get("redis") == "ok" and data.get("documentUploads") is False and data.get("cardCheckout") is False
-if not ok:
-    raise SystemExit(1)
-print("health-ok")
+raise SystemExit(0 if ok else 1)
 PY
-then
+  then
+    echo "health-ok"
+    health_ok=1
+    break
+  fi
+  sleep 3
+done
+if [ "$health_ok" -ne 1 ]; then
   rollback_api
   unset REDIS_PASSWORD
   echo "Health check failed. Previous API image restored."
