@@ -25,7 +25,7 @@ def require_giftcards():
         raise HTTPException(503, "Gift-card transactions are turned off")
 from fieldcrypto import open_bytes, seal_bytes
 from payment_policy import (
-    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status,
+    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status, gift_redemption_cents,
     due_after_payment, review_after_expiry,
 )
 from pymongo import ReturnDocument
@@ -652,9 +652,17 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(403, "Not permitted to apply a gift card")
         if invoice["state"] not in ("issued", "partially_paid"):
             raise HTTPException(409, "Only an issued invoice with a balance can take a gift card")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0 or amount > view["balance"]["cents"]:
-            raise HTTPException(400, "Amount must be positive and no more than the balance")
+        visit = await appointment(invoice["appointmentId"]) if invoice.get("appointmentId") else {}
+        card = await db.nt_giftcards.find_one({"code": norm_code(body.get("code"))}, {"_id": 0, "status": 1, "balanceCents": 1})
+        if not card or card.get("status") != "active":
+            raise HTTPException(404, "Gift card not found or not active")
+        try:
+            amount = gift_redemption_cents(
+                visit, view["balance"]["cents"], view["received"]["cents"], card.get("balanceCents") or 0,
+                body.get("amountCents") if "amountCents" in body else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         key = str(body.get("idempotencyKey") or "")
         if not 8 <= len(key) <= 80:
             raise HTTPException(400, "Idempotency key is required")

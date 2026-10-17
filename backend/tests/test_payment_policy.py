@@ -6,6 +6,7 @@ from billing import lines_from_pricing
 from payment_policy import (
     allowed_online_amounts,
     authorized_checkout_cents,
+    gift_redemption_cents,
     checkout_event_action,
     closed_policy,
     collection_status,
@@ -108,6 +109,25 @@ def test_checkout_uses_the_saved_deposit_not_the_invoice_balance():
     full = _visit("full", 10080, 10080)
     assert authorized_checkout_cents(full, 10080, 0) == 10080
     assert authorized_checkout_cents(full, 10080, 0, 10080) == 10080
+
+
+def test_gift_card_covers_only_the_deposit_then_leaves_the_invoice_balance():
+    visit = _visit("deposit", 10080, 2520)
+    assert gift_redemption_cents(visit, 10080, 0, 5000) == 2520
+    with pytest.raises(ValueError, match="gift-card balance"):
+        gift_redemption_cents(visit, 10080, 0, 5000, 10080)
+    assert gift_redemption_cents(visit, 10080, 0, 1000) == 1000
+    assert authorized_checkout_cents(visit, 9080, 1000) == 1520
+    assert authorized_checkout_cents(visit, 7560, 2520) == 7560
+    assert gift_redemption_cents(visit, 7560, 2520, 10000) == 7560
+
+
+def test_gift_card_on_a_full_payment_cannot_exceed_the_invoice():
+    visit = _visit("full", 10080, 10080)
+    assert gift_redemption_cents(visit, 10080, 0, 20000) == 10080
+    assert gift_redemption_cents(visit, 10080, 0, 4000, 4000) == 4000
+    with pytest.raises(ValueError):
+        gift_redemption_cents(visit, 10080, 0, 0)
 
 
 def test_checkout_after_a_deposit_collects_only_the_remaining_balance():

@@ -29,7 +29,8 @@ test("expected coverage is drawn apart from money received", () => {
 test("the displayed card amount is the saved deposit, then the remaining balance", () => {
   const invoice = { balance: { cents: 10080 }, received: { cents: 0 }, payableNow: { cents: 2520 } };
   expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, invoice)).toBe(2520);
-  expect(payableNowCents({ payNow: "deposit" }, { balance: { cents: 7560 }, received: { cents: 2520 } })).toBe(7560);
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, { balance: { cents: 9080 }, received: { cents: 1000 } })).toBe(1520);
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, { balance: { cents: 7560 }, received: { cents: 2520 } })).toBe(7560);
   expect(payableNowCents({ payNow: "full", paymentDue: { dueNowCents: 10080 } }, { balance: { cents: 10080 }, received: { cents: 0 } })).toBe(10080);
 });
 

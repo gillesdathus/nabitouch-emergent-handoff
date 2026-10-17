@@ -112,10 +112,9 @@ def authorized_checkout_cents(visit, balance_cents, received_cents=0, requested_
     due = visit.get("paymentDue") if isinstance(visit.get("paymentDue"), dict) else {}
     pay_now = visit.get("payNow")
     stored = due.get("dueNowCents")
-    if received > 0:
-        authorized = balance
-    elif pay_now in ("full", "deposit") and type(stored) is int and 0 < stored <= balance:
-        authorized = stored
+    if pay_now in ("full", "deposit") and type(stored) is int and stored > 0:
+        still_due = stored - received
+        authorized = min(balance, still_due) if still_due > 0 else balance
     elif pay_now == "deposit":
         raise ValueError("This visit has no saved deposit amount")
     elif requested_cents is None:
@@ -127,6 +126,22 @@ def authorized_checkout_cents(visit, balance_cents, received_cents=0, requested_
     if requested_cents is not None and pay_now in ("full", "deposit") and requested_cents != authorized:
         raise ValueError("That amount is not the amount due")
     return authorized
+
+
+def gift_redemption_cents(visit, balance_cents, received_cents, card_balance_cents, requested_cents=None):
+    """Gift-card amount for this attempt. The cap is the amount still due, the card balance, and the invoice balance."""
+    payable = authorized_checkout_cents(visit, balance_cents, received_cents)
+    available = int(card_balance_cents)
+    if available <= 0:
+        raise ValueError("This gift card has no balance")
+    maximum = min(payable, available, int(balance_cents))
+    if maximum <= 0:
+        raise ValueError("Nothing is payable on this invoice")
+    if requested_cents is None:
+        return maximum
+    if type(requested_cents) is not int or requested_cents <= 0 or requested_cents > maximum:
+        raise ValueError("Amount must be within the amount due and the gift-card balance")
+    return requested_cents
 
 
 def allowed_online_amounts(balance_cents, policy, received_cents=0):
