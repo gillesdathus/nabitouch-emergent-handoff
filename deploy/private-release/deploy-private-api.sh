@@ -1,28 +1,65 @@
 #!/bin/bash
 # Exits 2 unless CONFIRM_PRIVATE_DEPLOY=yes. Does not change Nginx, DNS, or business data.
+# Reads deploy/private-release/release-pin.env for the frozen application SHA and image digests.
 set -euo pipefail
 umask 077
 
 if [ "${CONFIRM_PRIVATE_DEPLOY:-}" != "yes" ]; then
-  echo "Refusing to run. Set CONFIRM_PRIVATE_DEPLOY=yes from a checkout of the frozen source."
+  echo "Refusing to run. Set CONFIRM_PRIVATE_DEPLOY=yes from a checkout of the pinned source."
   exit 2
 fi
 
-frozen="6f67bcd23767d366942b2d3848a1f336f1fd06a8"
-expected_current="sha256:f6a7333986f70d24d22af50d7d886a9c4f080bef8b9484b2154614a8845d7465"
-expected_rollback="sha256:0081eac25d1edc251fb45d46ac8351008fffad0afbe5fe87eb9882f59745f7b6"
 root="$(git rev-parse --show-toplevel)"
 case "$root" in
   /opt/nt-next|/opt/nt-next/*) echo "Refusing to build from /opt/nt-next."; exit 2 ;;
 esac
 cd "$root"
+
+pin="$root/deploy/private-release/release-pin.env"
+if [ ! -f "$pin" ]; then
+  echo "Refusing: missing release-pin.env."
+  exit 2
+fi
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    ''|\#*) continue ;;
+  esac
+  case "$line" in
+    [A-Z0-9_]*=*)
+      key="${line%%=*}"
+      value="${line#*=}"
+      printf -v "$key" '%s' "$value"
+      export "$key"
+      ;;
+  esac
+done < "$pin"
+
+frozen="${APPLICATION_SHA:?missing APPLICATION_SHA in release-pin.env}"
+short="${APPLICATION_SHORT:?missing APPLICATION_SHORT in release-pin.env}"
+expected_current="${PRE_DEPLOY_LOCAL_DIGEST:?missing PRE_DEPLOY_LOCAL_DIGEST in release-pin.env}"
+expected_rollback="${ROLLBACK_DIGEST:?missing ROLLBACK_DIGEST in release-pin.env}"
+previous_tag="${PREVIOUS_GOOD_TAG:?missing PREVIOUS_GOOD_TAG in release-pin.env}"
+rollback_tag="${ROLLBACK_TAG:?missing ROLLBACK_TAG in release-pin.env}"
+
+case "$frozen" in
+  0a0d8c74336299bce9958bd39ede2769201a4fd5) ;;
+  *)
+    echo "Refusing: APPLICATION_SHA in release-pin.env is not the reviewed RC 0a0d8c7."
+    exit 2
+    ;;
+esac
+if [ "$short" != "0a0d8c7" ]; then
+  echo "Refusing: APPLICATION_SHORT must be 0a0d8c7 for this pin."
+  exit 2
+fi
+
 if [ "$(git rev-parse HEAD)" != "$frozen" ]; then
   git diff --quiet "$frozen" -- backend frontend \
-    || { echo "Refusing: backend or frontend differs from the frozen checkout."; exit 2; }
+    || { echo "Refusing: backend or frontend differs from the pinned checkout $frozen."; exit 2; }
 fi
 
 current="$(docker image inspect nt-next-api:local --format '{{.Id}}')"
-rollback="$(docker image inspect nt-next-api:rollback-0081eac25d1e --format '{{.Id}}')"
+rollback="$(docker image inspect "$rollback_tag" --format '{{.Id}}')"
 running="$(docker inspect nt-next-api --format '{{.Image}}')"
 [ "$current" = "$expected_current" ]
 [ "$rollback" = "$expected_rollback" ]
@@ -95,10 +132,11 @@ print("index-preflight-ok", missing)
 PY
 unset MONGO_URL
 
-docker build -f deploy/Dockerfile.api -t nt-next-api:src-6f67bcd23767 .
-docker tag nt-next-api:src-6f67bcd23767 nt-next-api:local
+src_tag="nt-next-api:src-${short}"
+docker build -f deploy/Dockerfile.api -t "$src_tag" .
+docker tag "$src_tag" nt-next-api:local
 if ! docker compose -f deploy/docker-compose.hostinger.yml up -d --no-deps api; then
-  docker tag nt-next-api:9aca5eccdc3c nt-next-api:local
+  docker tag "$previous_tag" nt-next-api:local
   docker compose -f deploy/docker-compose.hostinger.yml up -d --no-deps api
   unset REDIS_PASSWORD
   echo "Compose failed. Previous API image restored."
@@ -106,7 +144,7 @@ if ! docker compose -f deploy/docker-compose.hostinger.yml up -d --no-deps api; 
 fi
 
 rollback_api() {
-  docker tag nt-next-api:9aca5eccdc3c nt-next-api:local
+  docker tag "$previous_tag" nt-next-api:local
   docker compose -f deploy/docker-compose.hostinger.yml up -d --no-deps api
 }
 
@@ -133,4 +171,7 @@ text = subprocess.check_output(["nginx", "-T"], stderr=subprocess.DEVNULL, text=
 if "proxy_pass http://127.0.0.1:8080;" not in text:
     raise SystemExit("Public proxy changed.")
 PY
-echo "Private API restarted from nt-next-api:src-6f67bcd23767. Public Nginx was not changed."
+
+new_id="$(docker image inspect nt-next-api:local --format '{{.Id}}')"
+echo "Private API restarted from ${src_tag}. Public Nginx was not changed."
+echo "Record POST_BUILD_DIGEST=${new_id} in deploy/private-release/release-pin.env after owner review."
