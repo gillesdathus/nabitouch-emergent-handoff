@@ -2,7 +2,7 @@
 
 **Status: BLOCKED** until the owner authorizes `-ConfirmTransfer` (path approved).
 
-**Owner-selected destination (2026-10-17):** Windows PC via **outbound** SSH/SCP pull (no inbound Windows SSH; no router changes). Requested `G:\Nabitouch-Backups`; on this PC `G:` is Google Drive so the writable path is `G:\My Drive\Nabitouch-Backups`. `D:` is not available.
+**Owner-selected destination (2026-10-17):** Windows PC `C:\Nabitouch-Backups` via **outbound** SSH/SCP pull (no inbound Windows SSH; no router changes).
 
 Primary runbook: `docs/GATE_A_WINDOWS_OFFHOST_PULL.md`  
 Script: `deploy/private-release/pull-gate-a-backups.ps1`

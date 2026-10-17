@@ -12,10 +12,9 @@
   Does NOT open inbound SSH on Windows. Does NOT change router/firewall for inbound.
 
 .PARAMETER LocalRoot
-  Local backup directory. On this PC G: is Google Drive; the writable owner path is
-  G:\My Drive\Nabitouch-Backups (G:\Nabitouch-Backups at volume root is not writable).
-  Resolution: -LocalRoot / NABITOUCH_OFFHOST_ROOT, else D:\Nabitouch-Backups if D: exists,
-  else G:\My Drive\Nabitouch-Backups if that Google Drive path exists.
+  Local backup directory. Owner path on this PC: C:\Nabitouch-Backups.
+  Resolution: -LocalRoot / NABITOUCH_OFFHOST_ROOT, else C:\Nabitouch-Backups,
+  else D:\Nabitouch-Backups if D: exists.
 
 .PARAMETER DryRun
   List/validate remote candidates and local plan; transfer nothing.
@@ -49,15 +48,13 @@ function Resolve-LocalRoot {
   if (-not [string]::IsNullOrWhiteSpace($Requested)) {
     return [System.IO.Path]::GetFullPath($Requested)
   }
+  if (Test-Path -LiteralPath 'C:\') {
+    return 'C:\Nabitouch-Backups'
+  }
   if (Test-Path -LiteralPath 'D:\') {
     return 'D:\Nabitouch-Backups'
   }
-  $gDrive = 'G:\My Drive\Nabitouch-Backups'
-  if (Test-Path -LiteralPath 'G:\My Drive') {
-    return $gDrive
-  }
-  $hint = Join-Path $env:USERPROFILE 'Nabitouch-Backups'
-  throw ("LocalRoot is required. Set -LocalRoot or NABITOUCH_OFFHOST_ROOT (on this PC use: {0} or {1})." -f $gDrive, $hint)
+  throw 'LocalRoot is required. Set -LocalRoot or NABITOUCH_OFFHOST_ROOT (owner path: C:\Nabitouch-Backups).'
 }
 
 function Test-AllowedCipherName {
@@ -140,12 +137,8 @@ function Invoke-SelfTest {
 if ($SelfTest) {
   $root = if ($LocalRoot) {
     Resolve-LocalRoot $LocalRoot
-  } elseif (Test-Path 'D:\') {
-    'D:\Nabitouch-Backups'
-  } elseif (Test-Path -LiteralPath 'G:\My Drive') {
-    'G:\My Drive\Nabitouch-Backups'
   } else {
-    Join-Path $env:TEMP 'Nabitouch-Backups-SelfTest'
+    Resolve-LocalRoot -Requested ''
   }
   New-Item -ItemType Directory -Force -Path $root | Out-Null
   Invoke-SelfTest -Root $root

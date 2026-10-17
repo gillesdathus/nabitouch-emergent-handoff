@@ -2,15 +2,8 @@
 
 **Status:** Directory + script ready. **Production transfer BLOCKED** until the owner runs `-ConfirmTransfer`.
 
-## Destination (owner decision + filesystem fact)
-
-| Requested | `G:\Nabitouch-Backups` |
-| --- | --- |
-| Drive `G:` | Google Drive virtual volume (not a local NTFS disk; `D:` absent) |
-| Writable path | **`G:\My Drive\Nabitouch-Backups`** |
-| Why | Google Drive only allows writes under `G:\My Drive\...`. Creating `G:\Nabitouch-Backups` at volume root fails. |
-
-Treat `G:\My Drive\Nabitouch-Backups` as the approved implementation of the owner’s `G:\Nabitouch-Backups` decision unless the owner names a different local disk later.
+**Owner-approved destination:** `C:\Nabitouch-Backups`  
+(`D:` absent; `G:` Google Drive path retired for this workflow.)
 
 **Method:** Outbound SSH/SCP from Windows to `root@187.77.204.131` using `%USERPROFILE%\.ssh\id_ed25519`. No inbound Windows SSH; no router changes.
 
@@ -22,8 +15,8 @@ Treat `G:\My Drive\Nabitouch-Backups` as the approved implementation of the owne
 
 | Mode | Command |
 | --- | --- |
-| Synthetic self-test | `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\private-release\pull-gate-a-backups.ps1 -SelfTest -LocalRoot "G:\My Drive\Nabitouch-Backups"` |
-| Dry-run | `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\private-release\pull-gate-a-backups.ps1 -LocalRoot "G:\My Drive\Nabitouch-Backups" -Stamp 20261017T085834Z -DryRun` |
+| Synthetic self-test | `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\private-release\pull-gate-a-backups.ps1 -SelfTest -LocalRoot C:\Nabitouch-Backups` |
+| Dry-run | `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\private-release\pull-gate-a-backups.ps1 -LocalRoot C:\Nabitouch-Backups -Stamp 20261017T085834Z -DryRun` |
 | Owner-approved transfer | See command below |
 
 ### Behavior
@@ -41,27 +34,32 @@ Logs: filenames + checksum hex only.
 ## Directory layout
 
 ```
-G:\My Drive\Nabitouch-Backups\
-G:\My Drive\Nabitouch-Backups\logs\
+C:\Nabitouch-Backups\
+C:\Nabitouch-Backups\logs\
 ```
 
-## Windows / Google Drive notes
+## Windows permissions
 
-- Full NTFS `icacls` lockdown may be limited on the Google Drive filesystem; keep the Windows user account locked and do not share the folder broadly in Drive UI.
-- Prefer Drive sync as already-off-host storage for **ciphertext only**.
-- Never place the SSH private key or backup passphrase in this folder.
-- Passphrase: password manager only.
+```powershell
+New-Item -ItemType Directory -Force -Path 'C:\Nabitouch-Backups','C:\Nabitouch-Backups\logs' | Out-Null
+icacls 'C:\Nabitouch-Backups' /inheritance:r
+icacls 'C:\Nabitouch-Backups' /grant:r "$env:USERNAME:(OI)(CI)F"
+icacls 'C:\Nabitouch-Backups' /grant:r 'SYSTEM:(OI)(CI)F'
+```
 
-## Access check (completed)
+Keep the SSH private key in `%USERPROFILE%\.ssh\` — never copy it into the backup folder.  
+Passphrase: password manager only.
 
-Existing `root@187.77.204.131` identity can list and read `/root/nabitouch-next-backups/` (`REMOTE_READ_OK`). No permission broadening required.
+## Access check
+
+Existing `root@187.77.204.131` identity can read `/root/nabitouch-next-backups/`. No permission broadening required.
 
 ## Owner-approved transfer command (do not run until authorized)
 
 ```powershell
 cd "C:\Users\DG Solutions\nabitouch-emergent-handoff"
 powershell -NoProfile -ExecutionPolicy Bypass -File deploy\private-release\pull-gate-a-backups.ps1 `
-  -LocalRoot "G:\My Drive\Nabitouch-Backups" `
+  -LocalRoot "C:\Nabitouch-Backups" `
   -Stamp 20261017T085834Z `
   -ConfirmTransfer
 ```
