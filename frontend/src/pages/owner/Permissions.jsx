@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { ShieldAlert, ShieldCheck, UserRound } from "lucide-react";
@@ -39,6 +40,7 @@ function AuthenticatorCard() {
           error={err}
         />
       )}
+      <p className="text-sm text-nb-mute">To replace an enrolled authenticator or regenerate recovery codes, use <Link to="/account/security" className="font-semibold text-nb-blue" data-testid="permissions-security-link">Account &amp; security</Link>.</p>
       <label className="flex items-center gap-3 text-sm">
         <span className="flex-1">Require authenticator for staff</span>
         <Switch checked={!!idx.settings.mfaEnforcePrivileged} onCheckedChange={(value) => run(() => api.patch("settings", "app", { mfaEnforcePrivileged: value }))} data-testid="mfa-enforce-switch" />

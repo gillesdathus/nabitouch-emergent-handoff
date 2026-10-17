@@ -167,6 +167,7 @@ export function AccountMenu() {
           {spaces.map((role) => <option key={role} value={role}>{WORKSPACES[role].label}</option>)}
         </select>
       )}
+      <Link to="/account/security" data-testid="account-security-link" className="nb-btn-ghost inline-flex h-10 px-3 text-sm" aria-label="Account and security"><ShieldCheck className="h-4 w-4" /><span className="hidden sm:inline">Security</span></Link>
       <button type="button" onClick={signOut} data-testid="account-sign-out" aria-label="Sign out" className="nb-btn-ghost h-10 shrink-0 px-3 text-sm"><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Sign out</span></button>
     </div>
   );

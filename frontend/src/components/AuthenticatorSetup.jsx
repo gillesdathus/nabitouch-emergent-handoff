@@ -32,11 +32,13 @@ export function AuthenticatorSetup({ otpauth, secret, recoveryCodes, code, onCod
         <summary className="cursor-pointer text-sm font-semibold text-nb-blue">Enter setup key manually</summary>
         <p className="mt-2 break-all font-mono text-sm" data-testid="login-mfa-secret">{secret}</p>
       </details>
-      <div>
-        <p className="nb-label">Recovery codes</p>
-        <p className="text-xs text-nb-mute">Store these somewhere you can open if the phone is lost. Each code works once. They will not be shown again.</p>
-        <ul className="mt-2 font-mono text-xs" data-testid="login-mfa-recovery">{recoveryCodes.map((item) => <li key={item}>{item}</li>)}</ul>
-      </div>
+      {recoveryCodes?.length > 0 && (
+        <div>
+          <p className="nb-label">Recovery codes</p>
+          <p className="text-xs text-nb-mute">Store these somewhere you can open if the phone is lost. Each code works once. They will not be shown again.</p>
+          <ul className="mt-2 font-mono text-xs" data-testid="login-mfa-recovery">{recoveryCodes.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
       <label className="block"><span className="nb-label">Authenticator code</span><input inputMode="numeric" autoComplete="one-time-code" maxLength={6} required className="nb-input" value={code} onChange={(e) => onCode(e.target.value)} data-testid="login-mfa-enroll-code" /></label>
       {error && <p className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700" data-testid="login-error">{error}</p>}
       <button disabled={busy} className="nb-btn-primary w-full" data-testid="login-mfa-enroll-submit">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}Verify and continue</button>

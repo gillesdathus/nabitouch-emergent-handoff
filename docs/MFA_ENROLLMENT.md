@@ -4,9 +4,9 @@
 
 Do this only after an approved deployment has created the fresh database. Configuration preparation does not create the account.
 
-1. Generate `OWNER_PASSWORD` on the server and store it in `/etc/nabitouch-next.env` with mode `600`. Do not put that password in git or in a chat log.
+1. Generate `OWNER_PASSWORD` on the server and store it in `/etc/nabitouch-next.env` with mode `600`. Do not put that password in git or in a chat log. It is bootstrap-only: after the owner changes or resets the live password, leave the env value alone and do not sync the current password into the file.
 2. The first API start creates one owner for `OWNER_EMAIL=info@nabitouch.com` when that address is absent. The display name is Nabitouch Owner. Enforcement stays off. The isolated production account already exists and keeps its original id, role, and password when the login email changes.
-3. Sign in with that password over HTTPS.
+3. Sign in with that bootstrap password over HTTPS (or the current live password if it already differs).
 4. Enroll TOTP with the steps below. Write the eight recovery codes on paper or into a password manager that is not on the VPS. The application shows them once.
 5. Sign out and sign in again. Confirm the password step returns a challenge and that one recovery code works a single time.
 6. From that authenticator session, turn on **Require authenticator for staff**.
@@ -46,6 +46,22 @@ Turning the setting off, or turning an authenticator off, requires a current aut
 
 Five wrong authenticator attempts lock that account's authenticator check for 15 minutes. Password failures have their own 15-minute lock.
 
+## Replace authenticator (Account & security)
+
+Staff manage password, authenticator replacement, and recovery codes from **Account & security** (`/account/security`).
+
+1. Sign in with password and the current authenticator (or a recovery code) so the session is MFA-marked.
+2. Choose **Replace authenticator** and enter a current TOTP or recovery code.
+3. Scan the new QR (or enter the setup key). Save the new recovery codes — they are shown once.
+4. Confirm with a code from the **new** authenticator. The old secret and old recovery codes stay valid until that confirm succeeds; then they are replaced atomically.
+5. Cancel or let a started replacement expire (15 minutes) to keep the previous authenticator.
+
+While `mfaEnforcePrivileged` is on, `POST /api/auth/mfa/disable` returns 409. Replace instead of turning MFA off.
+
+## Regenerate recovery codes
+
+From Account & security, enter a current authenticator or recovery code. Previous recovery codes are invalidated immediately. New codes are returned once and are never logged.
+
 ## If the owner loses the phone
 
-Use a recovery code at the authenticator prompt. Then enroll a new device from the signed-in session and retire the old one with **Turn authenticator off**, which also requires a code. If every recovery code is gone, an operator with database access has to remove that account's `nt_mfa` row and then enroll again. Do that only on a database you are allowed to change, and turn enforcement off first so the owner can sign in to enroll.
+Use a recovery code at the authenticator prompt. Then open **Account & security** and replace the authenticator (preferred while staff MFA is required). Turning authenticator off is refused when enforcement is on. If every recovery code is gone, an operator with database access has to remove that account's `nt_mfa` row and then enroll again. Do that only on a database you are allowed to change, and turn enforcement off first so the owner can sign in to enroll.

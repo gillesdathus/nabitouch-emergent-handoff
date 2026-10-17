@@ -13,6 +13,7 @@ const PaymentResult = lazy(() => import("@/pages/client/PaymentResult"));
 const Join = lazy(() => import("@/pages/Join"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
+const AccountSecurity = lazy(() => import("@/pages/AccountSecurity"));
 const Home = lazy(() => import("@/pages/client/Home"));
 const Services = lazy(() => import("@/pages/client/Services"));
 const Practitioners = lazy(() => import("@/pages/client/Practitioners"));
@@ -96,6 +97,7 @@ export default function App() {
                   <Route path="/join" element={<Join />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/account/security" element={<AccountSecurity />} />
                   <Route path="/services" element={<Services />} />
                   <Route path="/practitioners" element={<Practitioners />} />
                   <Route path="/practitioners/:slug" element={<PractitionerProfile />} />

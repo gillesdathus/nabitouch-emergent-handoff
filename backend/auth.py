@@ -27,6 +27,7 @@ ACCESS_MIN, REFRESH_DAYS, MAX_FAILS, LOCK_MIN = 15, 7, 5, 15
 NATIVE_REFRESH_DAYS = 30
 NATIVE_HEADER = "x-nabitouch-client"
 RESET_MIN, RESET_MAX_PER_WINDOW = 30, 3
+MFA_REPLACE_PENDING_MIN = 15
 
 
 def hash_pw(p):
@@ -611,6 +612,188 @@ def build_auth(db, coll, add_audit):
         await attempts.delete_one({"identifier": ident})
         return user
 
+    def _pending_replace_active(row):
+        if not row or not row.get("pendingSecret"):
+            return False
+        created = row.get("pendingCreatedAt") or ""
+        if not created:
+            return False
+        try:
+            started = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return started + timedelta(minutes=MFA_REPLACE_PENDING_MIN) > datetime.now(timezone.utc)
+
+    async def _session_row(user):
+        return await live_session(user.get("sid")) if user.get("sid") else None
+
+    async def _require_staff_mfa_session(request: Request):
+        """Privileged actions that change authenticators need an MFA-marked session when enforcement is on."""
+        user = await require(request, "owner", "practitioner", "desk")
+        row = await _session_row(user)
+        if await mfa_enforcement() and not (row and row.get("mfaAt")):
+            raise HTTPException(403, "Confirm your authenticator before this action")
+        return user, row
+
+    async def _consume_current_mfa_code(user, row, code):
+        from totp import matching_counter
+        cleaned = str(code or "").strip()
+        ident, rec = await _mfa_locked(user["id"])
+        counter = matching_counter(row["secret"], cleaned)
+        recovery = _recovery_hash(cleaned)
+        used_recovery = recovery in (row.get("recoveryHashes") or [])
+        if counter is None and not used_recovery:
+            await _mfa_fail(ident, rec)
+            raise HTTPException(401, "That authenticator code was not accepted")
+        if counter is not None and counter <= int(row.get("lastCounter") or -1):
+            await _mfa_fail(ident, rec)
+            raise HTTPException(401, "That authenticator code was already used")
+        update = {"$set": {"lastCounter": counter if counter is not None else row.get("lastCounter", -1)}}
+        if used_recovery:
+            update["$pull"] = {"recoveryHashes": recovery}
+        await db["nt_mfa"].update_one({"userId": user["id"]}, update)
+        await attempts.delete_one({"identifier": ident})
+        return await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
+
+    def _no_store(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+    @r.get("/security")
+    async def security_status(request: Request):
+        user = await require(request)
+        session = await _session_row(user)
+        mfa = await db["nt_mfa"].find_one({"userId": user["id"]}, {"_id": 0})
+        enabled = bool(mfa and mfa.get("enabled"))
+        pending = _pending_replace_active(mfa) if mfa else False
+        if mfa and mfa.get("pendingSecret") and not pending:
+            await db["nt_mfa"].update_one(
+                {"userId": user["id"]},
+                {"$unset": {"pendingSecret": "", "pendingRecoveryHashes": "", "pendingCreatedAt": ""}},
+            )
+        active = await sessions.count_documents({"userId": user["id"], "revoked": False})
+        return {
+            "email": user.get("email"),
+            "role": user.get("role"),
+            "mfaEnabled": enabled,
+            "mfaEnforced": await mfa_enforcement() if user.get("role") in ("owner", "practitioner", "desk") else False,
+            "recoveryCodesRemaining": len((mfa or {}).get("recoveryHashes") or []) if enabled else 0,
+            "replacePending": pending,
+            "sessionMfaVerified": bool(session and session.get("mfaAt")),
+            "activeSessions": active,
+            "passwordResetPath": "/forgot-password",
+        }
+
+    @r.post("/change-password")
+    async def change_password(request: Request, body: dict = Body(...)):
+        user = await require(request)
+        if user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+            session = await _session_row(user)
+            if not (session and session.get("mfaAt")):
+                raise HTTPException(403, "Confirm your authenticator before this action")
+        current = str(body.get("currentPassword") or "")
+        new = str(body.get("newPassword") or "")
+        if len(new) < 8:
+            raise HTTPException(400, "Choose a password with at least 8 characters")
+        account = await users.find_one({"id": user["id"]})
+        if not account or not check_pw(current, account.get("password_hash") or ""):
+            raise HTTPException(401, "Current password was not accepted")
+        await users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_pw(new)}})
+        await sessions.update_many(
+            {"userId": user["id"], "revoked": False, "sid": {"$ne": user.get("sid")}},
+            {"$set": {"revoked": True, "revokedReason": "password_changed"}},
+        )
+        await revoke_devices(db, "password_changed", user_id=user["id"])
+        await add_audit(user.get("name") or user["email"], "Password changed", None)
+        return {"ok": True}
+
+    @r.post("/sessions/revoke-others")
+    async def revoke_other_sessions(request: Request):
+        user = await require(request)
+        if user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+            session = await _session_row(user)
+            if not (session and session.get("mfaAt")):
+                raise HTTPException(403, "Confirm your authenticator before this action")
+        result = await sessions.update_many(
+            {"userId": user["id"], "revoked": False, "sid": {"$ne": user.get("sid")}},
+            {"$set": {"revoked": True, "revokedReason": "signed_out_elsewhere"}},
+        )
+        await add_audit(user.get("name") or user["email"], "Other sessions revoked", None)
+        return {"ok": True, "revoked": int(result.modified_count)}
+
+    @r.post("/mfa/replace/start")
+    async def mfa_replace_start(request: Request, response: Response, body: dict = Body(...)):
+        """Begin authenticator replacement. Current MFA stays active until confirm."""
+        user, _session = await _require_staff_mfa_session(request)
+        row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
+        if not row:
+            raise HTTPException(400, "Turn on an authenticator before replacing it")
+        row = await _consume_current_mfa_code(user, row, body.get("code"))
+        secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+        codes = [secrets.token_hex(4) for _ in range(8)]
+        await db["nt_mfa"].update_one({"userId": user["id"]}, {"$set": {
+            "pendingSecret": secret,
+            "pendingRecoveryHashes": [_recovery_hash(code) for code in codes],
+            "pendingCreatedAt": datetime.now(timezone.utc).isoformat(),
+        }})
+        await add_audit(user.get("name") or user["role"], "Authenticator replacement started", None)
+        _no_store(response)
+        return {"secret": secret, "otpauth": provisioning_uri(user["email"], secret), "recoveryCodes": codes}
+
+    @r.post("/mfa/replace/confirm")
+    async def mfa_replace_confirm(request: Request, response: Response, body: dict = Body(...)):
+        from totp import matching_counter
+        user, _session = await _require_staff_mfa_session(request)
+        row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
+        if not row or not _pending_replace_active(row):
+            raise HTTPException(400, "Authenticator replacement is not in progress or has expired")
+        counter = matching_counter(row["pendingSecret"], body.get("code"))
+        if counter is None:
+            raise HTTPException(400, "That authenticator code was not accepted")
+        await db["nt_mfa"].update_one({"userId": user["id"]}, {
+            "$set": {
+                "secret": row["pendingSecret"],
+                "recoveryHashes": row.get("pendingRecoveryHashes") or [],
+                "lastCounter": counter,
+                "enabled": True,
+            },
+            "$unset": {"pendingSecret": "", "pendingRecoveryHashes": "", "pendingCreatedAt": ""},
+        })
+        await add_audit(user.get("name") or user["role"], "Authenticator replaced", None)
+        _no_store(response)
+        return {"enabled": True, "replaced": True}
+
+    @r.post("/mfa/replace/cancel")
+    async def mfa_replace_cancel(request: Request):
+        user, _session = await _require_staff_mfa_session(request)
+        await db["nt_mfa"].update_one(
+            {"userId": user["id"]},
+            {"$unset": {"pendingSecret": "", "pendingRecoveryHashes": "", "pendingCreatedAt": ""}},
+        )
+        await add_audit(user.get("name") or user["role"], "Authenticator replacement cancelled", None)
+        return {"ok": True, "replacePending": False}
+
+    @r.post("/mfa/recovery/regenerate")
+    async def mfa_recovery_regenerate(request: Request, response: Response, body: dict = Body(...)):
+        user, _session = await _require_staff_mfa_session(request)
+        row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
+        if not row:
+            raise HTTPException(400, "Turn on an authenticator before regenerating recovery codes")
+        if _pending_replace_active(row):
+            raise HTTPException(409, "Finish or cancel authenticator replacement first")
+        await _consume_current_mfa_code(user, row, body.get("code"))
+        codes = [secrets.token_hex(4) for _ in range(8)]
+        await db["nt_mfa"].update_one({"userId": user["id"]}, {"$set": {
+            "recoveryHashes": [_recovery_hash(code) for code in codes],
+        }})
+        await add_audit(user.get("name") or user["role"], "Recovery codes regenerated", None)
+        _no_store(response)
+        return {"recoveryCodes": codes}
+
     @r.post("/mfa/disable")
     async def mfa_disable(request: Request, body: dict = Body(...)):
         from totp import matching_counter
@@ -618,6 +801,11 @@ def build_auth(db, coll, add_audit):
         row = await db["nt_mfa"].find_one({"userId": user["id"], "enabled": True})
         if not row:
             return {"enabled": False}
+        if await mfa_enforcement():
+            raise HTTPException(
+                409,
+                "Staff authenticator is required. Replace your authenticator instead of turning it off.",
+            )
         code = str(body.get("code") or "").strip()
         counter = matching_counter(row["secret"], code)
         recovery = _recovery_hash(code)

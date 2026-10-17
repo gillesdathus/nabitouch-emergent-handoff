@@ -8,7 +8,7 @@ Never commit real values. `backend/env.example` lists the names. Production star
 | `MONGO_URL` | Database connection. Use a least-privilege user |
 | `DB_NAME` | Database name. Keep it separate from development |
 | `JWT_SECRET` | Signs session cookies. At least 16 characters. Rotate if it was ever shared |
-| `OWNER_EMAIL` / `OWNER_PASSWORD` | Initial owner account |
+| `OWNER_EMAIL` / `OWNER_PASSWORD` | Bootstrap-only. First API start creates the owner when that email is absent. After the live account password changes (reset, change-password, or invite), do not copy the current password back into the environment. `OWNER_PASSWORD` is not used for day-to-day sign-in |
 | `DEMO_MODE` / `DEMO_PASSWORD` | Development only. Production refuses `DEMO_MODE=true` |
 | `COOKIE_SECURE` | Must be true behind HTTPS |
 | `COOKIE_SAMESITE` | `lax` for the first-party site |
