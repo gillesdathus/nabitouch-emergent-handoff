@@ -25,8 +25,8 @@ def require_giftcards():
         raise HTTPException(503, "Gift-card transactions are turned off")
 from fieldcrypto import open_bytes, seal_bytes
 from payment_policy import (
-    CHECKOUT_HOLD_MINUTES, allowed_online_amounts, checkout_event_action, collection_status, deposit_cents,
-    due_after_payment, resolve_payment_policy, review_after_expiry,
+    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status,
+    due_after_payment, review_after_expiry,
 )
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, OperationFailure
@@ -386,6 +386,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         elif not allowed(user, appt, "view"):
             raise HTTPException(404, "Invoice not found")
         view = public_invoice(invoice, await ledger_for(invoice["id"]), await claim_views(invoice["id"]))
+        try:
+            payable = authorized_checkout_cents(appt, view["balance"]["cents"], view["received"]["cents"])
+        except ValueError:
+            payable = 0
+        view["payableNow"] = money_view(payable)
         if user["role"] == "client":
             for claim in view["claims"]:
                 claim["notes"] = ""
@@ -1127,22 +1132,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         visit = await appointment(invoice["appointmentId"])
         if visit.get("status") == "cancelled":
             raise HTTPException(409, "A cancelled visit cannot start a new payment")
-        settings = await db.nt_settings.find_one({"id": "app"}) or {}
-        from config import is_production
-        policy = resolve_payment_policy(
-            settings.get("paymentPolicy"), production=is_production(),
-            explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
-        )
-        amount = body.get("amountCents", balance)
-        if visit.get("payNow") == "deposit" and "amountCents" not in body and received <= 0:
-            try:
-                amount = deposit_cents(int(invoice["totalCents"]), policy)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        if type(amount) is not int or amount <= 0 or amount > balance:
-            raise HTTPException(400, "Amount must be within the outstanding balance")
-        if user["role"] == "client" and visit.get("payNow") in ("full", "deposit") and amount not in allowed_online_amounts(balance, policy, received):
-            raise HTTPException(400, "That amount is not one of the amounts due")
+        requested = body.get("amountCents") if "amountCents" in body else None
+        try:
+            amount = authorized_checkout_cents(visit, balance, received, requested)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         if user["role"] == "client":
             expected = min(int(invoice.get("expectedInsuranceCents") or 0), balance)
             share = balance - expected

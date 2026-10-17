@@ -102,6 +102,33 @@ def settlement(total_dollars, policy, choice):
     }
 
 
+def authorized_checkout_cents(visit, balance_cents, received_cents=0, requested_cents=None):
+    """Card amount for this attempt. A saved deposit or full payment wins over the outstanding balance and over a client number."""
+    balance = int(balance_cents)
+    received = int(received_cents or 0)
+    if balance <= 0:
+        raise ValueError("Amount must be within the outstanding balance")
+    visit = visit or {}
+    due = visit.get("paymentDue") if isinstance(visit.get("paymentDue"), dict) else {}
+    pay_now = visit.get("payNow")
+    stored = due.get("dueNowCents")
+    if received > 0:
+        authorized = balance
+    elif pay_now in ("full", "deposit") and type(stored) is int and 0 < stored <= balance:
+        authorized = stored
+    elif pay_now == "deposit":
+        raise ValueError("This visit has no saved deposit amount")
+    elif requested_cents is None:
+        authorized = balance
+    else:
+        authorized = requested_cents
+    if type(authorized) is not int or authorized <= 0 or authorized > balance:
+        raise ValueError("Amount must be within the outstanding balance")
+    if requested_cents is not None and pay_now in ("full", "deposit") and requested_cents != authorized:
+        raise ValueError("That amount is not the amount due")
+    return authorized
+
+
 def allowed_online_amounts(balance_cents, policy, received_cents=0):
     """The customer pays the amount due, then later the remainder. Never more than the balance."""
     balance = int(balance_cents)

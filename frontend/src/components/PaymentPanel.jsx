@@ -5,7 +5,7 @@ import { PayPill, Pill } from "@/components/ui-kit";
 import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 import { money, CLAIM_STATUS, DONE } from "@/lib/domain";
-import { formatCents } from "@/lib/billing";
+import { formatCents, payableNowCents } from "@/lib/billing";
 import { apiError } from "@/lib/api";
 
 function InsuranceLedger({ invoice }) {
@@ -23,8 +23,7 @@ export function StripeCheckout({ appt, invoice, open, onClose }) {
   const { api } = useDemo();
   const [phase, setPhase] = useState("form");
   const [note, setNote] = useState("");
-  const received = invoice?.received?.cents || 0;
-  const due = received > 0 ? (invoice?.balance?.cents || 0) : (appt.paymentDue?.dueNowCents || invoice?.balance?.cents || 0);
+  const due = payableNowCents(appt, invoice);
   const pay = async () => {
     if (!invoice?.id || invoice.state === "draft") {
       setNote("Issue the invoice first. Opening this screen does not record a payment.");
@@ -32,8 +31,7 @@ export function StripeCheckout({ appt, invoice, open, onClose }) {
     }
     setPhase("processing");
     try {
-      const body = appt.payNow === "deposit" && received === 0 ? { amountCents: due } : (received > 0 ? { amountCents: invoice.balance.cents } : {});
-      const started = await api.invoiceCheckout(invoice.id, body);
+      const started = await api.invoiceCheckout(invoice.id, {});
       if (started.url) window.location.assign(started.url);
       setNote(`Checkout started for ${started.amount?.display || formatCents(due)}. Nothing is paid until a verified Stripe webhook arrives.`);
       setPhase("pending");
@@ -100,7 +98,7 @@ export function PaymentPanel({ appt, role }) {
       {(staff || claims) && <InsuranceLedger invoice={invoice} />}
       {invoice && invoice.balance?.cents > 0 && role === "client" && (
         <div className="space-y-2">
-          {cardsOn && <button type="button" onClick={() => run(async () => { const next = await api.invoiceCheckout(invoice.id, {}); setCardNote("Card payment is not confirmed until Nabitouch receives the bank notice."); return next; }, "Checkout started")} data-testid="invoice-card-btn" className="nb-btn-primary h-10 text-sm">Pay {invoice.balance.display} by card</button>}
+          {cardsOn && <button type="button" onClick={() => run(async () => { const next = await api.invoiceCheckout(invoice.id, {}); setCardNote("Card payment is not confirmed until Nabitouch receives the bank notice."); return next; }, "Checkout started")} data-testid="invoice-card-btn" className="nb-btn-primary h-10 text-sm">Pay {formatCents(payableNowCents(appt, invoice))} by card</button>}
           {cardsOn && cardNote && <p className="text-xs text-nb-mute" data-testid="card-pending-note">{cardNote}</p>}
           {!cardsOn && <p className="text-xs text-nb-mute" data-testid="card-checkout-off">Card checkout is turned off. Cash and e-Transfer remain available.</p>}
           {transfer?.recipientEmail && <div className="rounded-2xl bg-slate-50 p-3 text-xs" data-testid="etransfer-instructions"><p>{transfer.recipientName} · {transfer.recipientEmail}</p><p>{transfer.instructions}</p><button type="button" onClick={() => run(async () => { const next = await api.reportTransfer(invoice.id, `sent-${invoice.id}`.slice(0, 80)); setInvoice(next); return next; }, "Transfer reported")} data-testid="etransfer-sent-btn" className="nb-btn-ghost mt-2 h-9 text-xs">I sent the e-Transfer</button></div>}

@@ -2,8 +2,10 @@ import pytest
 
 from availability import clinic_is_bookable, clinic_visit_address, merge_clinic, public_clinic, visit_navigation_point
 from insurers import catalog, invoke
+from billing import lines_from_pricing
 from payment_policy import (
     allowed_online_amounts,
+    authorized_checkout_cents,
     checkout_event_action,
     closed_policy,
     collection_status,
@@ -91,6 +93,68 @@ def test_fixed_deposit_and_a_deposit_above_the_total():
 def test_percent_deposit_rounds_half_up():
     policy = {**preview_policy(), "depositPercent": 25}
     assert deposit_cents(10081, policy) == 2520
+
+
+def _visit(pay_now, total_cents, due_now):
+    return {"payNow": pay_now, "paymentDue": {"totalCents": total_cents, "dueNowCents": due_now, "remainingCents": total_cents, "paidCents": 0}}
+
+
+def test_checkout_uses_the_saved_deposit_not_the_invoice_balance():
+    visit = _visit("deposit", 10080, 2520)
+    assert authorized_checkout_cents(visit, 10080, 0) == 2520
+    assert authorized_checkout_cents(visit, 10080, 0, 2520) == 2520
+    with pytest.raises(ValueError, match="not the amount due"):
+        authorized_checkout_cents(visit, 10080, 0, 10080)
+    full = _visit("full", 10080, 10080)
+    assert authorized_checkout_cents(full, 10080, 0) == 10080
+    assert authorized_checkout_cents(full, 10080, 0, 10080) == 10080
+
+
+def test_checkout_after_a_deposit_collects_only_the_remaining_balance():
+    visit = _visit("deposit", 10080, 2520)
+    assert authorized_checkout_cents(visit, 7560, 2520) == 7560
+    with pytest.raises(ValueError, match="not the amount due"):
+        authorized_checkout_cents(visit, 7560, 2520, 2520)
+    refunded = authorized_checkout_cents(visit, 10080, 0, 2520)
+    assert refunded == 2520
+
+
+def test_fixed_deposit_and_rounding_stay_on_the_saved_cents():
+    fixed = _visit("deposit", 10080, 2000)
+    assert authorized_checkout_cents(fixed, 10080, 0, 2000) == 2000
+    rounded = _visit("deposit", 10081, 2520)
+    assert authorized_checkout_cents(rounded, 10081, 0) == 2520
+
+
+def test_travel_and_tax_stay_outside_the_treatment_discount_and_match_checkout():
+    priced = apply_campaign_price({"base": 120, "addons": 0, "travel": 15, "discount": 0, "tax": 6.75, "total": 141.75}, 20, 0.05, False)
+    rows, _net, tax, total = lines_from_pricing(priced)
+    assert priced["discount"] == 24
+    assert priced["travel"] == 15
+    assert any(row["description"] == "Travel" and row["netCents"] == 1500 for row in rows)
+    assert tax == 555
+    assert total == 11655
+    due = due_for_booking(priced["total"], {**preview_policy(), "depositType": "percent", "depositPercent": 25}, {"payNow": "deposit"})
+    visit = {"payNow": "deposit", "paymentDue": due}
+    assert authorized_checkout_cents(visit, total, 0) == due["dueNowCents"]
+    assert due["dueNowCents"] == 2914
+
+
+def test_a_visit_without_a_saved_choice_can_still_charge_a_requested_amount():
+    assert authorized_checkout_cents({}, 10080, 0, 2500) == 2500
+    with pytest.raises(ValueError, match="outstanding balance"):
+        authorized_checkout_cents({}, 10080, 0, 10081)
+
+
+def test_duplicate_checkout_authorization_is_the_same_cents():
+    visit = _visit("deposit", 10080, 2520)
+    first = authorized_checkout_cents(visit, 10080, 0)
+    second = authorized_checkout_cents(visit, 10080, 0, first)
+    assert first == second == 2520
+    assert checkout_event_action("pending", first, first) == "settle"
+    assert checkout_event_action("paid", first, first) == "duplicate"
+    assert checkout_event_action("expired", first, first) == "settle"
+    assert checkout_event_action("pending", 10080, first) == "reject"
 
 
 def test_partial_payment_then_the_remaining_balance():

@@ -24,6 +24,16 @@ export function billingBars(invoice) {
   };
 }
 
+export function payableNowCents(appt, invoice) {
+  if (Number.isInteger(invoice?.payableNow?.cents)) return Math.max(0, invoice.payableNow.cents);
+  const balance = invoice?.balance?.cents;
+  if (!Number.isInteger(balance) || balance <= 0) return 0;
+  const received = Number.isInteger(invoice?.received?.cents) ? invoice.received.cents : 0;
+  const dueNow = appt?.paymentDue?.dueNowCents;
+  if (received <= 0 && (appt?.payNow === "deposit" || appt?.payNow === "full") && Number.isInteger(dueNow) && dueNow > 0 && dueNow <= balance) return dueNow;
+  return balance;
+}
+
 export function invoiceFacts(invoice) {
   if (!invoice) return null;
   return {
