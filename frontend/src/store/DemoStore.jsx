@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { unregisterPush } from "@/lib/nativeShell";
 import { clearStoredBookingDraft, readStoredBookingDraft, writeStoredBookingDraft } from '@/lib/booking-selection';
+import { resolvePractitionerId } from '@/lib/practitionerIdentity';
 
 const Ctx = createContext(null);
 const TrainingBridge = createContext(null);
@@ -16,8 +17,9 @@ export function DemoProvider({ children }) {
   const [demoMode, setDemoMode] = useState(false);
   const clientId = user?.role === 'client' ? user.subject : null;
   const setClientId = () => {};
-  const [practRaw, setPractRaw] = useState('p-maya');
-  const practitionerId = user?.role === 'practitioner' ? user.subject : user?.role === 'owner' ? 'p-jordan' : practRaw;
+  const [practRaw, setPractRaw] = useState('');
+  // Prefer the account's linked subject. Never hardcode demo seed ids (p-jordan) — they are absent in production.
+  const practitionerId = resolvePractitionerId(user, practRaw);
   const [ownerMode, setOwnerModeRaw] = useState(() => localStorage.getItem(LS.owner) === '1');
   const [draft, setDraft] = useState(() => readStoredBookingDraft(emptyDraft));
   const busy = useRef(false);

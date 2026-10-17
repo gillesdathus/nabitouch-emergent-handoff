@@ -243,7 +243,7 @@ export function StaffShell({ role }) {
 function StaffShellInner({ role }) {
   const cfg = STAFF[role];
   const { idx, practitionerId, user } = useDemo();
-  const me = role === "pro" ? idx.practitioners[practitionerId] : null;
+  const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
   useEffect(() => { registerPush().catch(() => {}); }, []);
   return (

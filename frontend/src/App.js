@@ -6,6 +6,7 @@ import { DemoProvider, useDemo } from "@/store/DemoStore";
 import { OfflineNotice } from "@/components/RoleBar";
 import { Splash } from "@/components/Splash";
 import { ClientShell, StaffShell } from "@/components/shells";
+import { PractitionerErrorBoundary } from "@/components/PractitionerRouteGuard";
 import { PageSkeleton } from "@/components/ui-kit";
 
 const Login = lazy(() => import("@/pages/Login"));
@@ -122,18 +123,20 @@ export default function App() {
                   <Route path="/me/messages/:id" element={<Thread viewerRole="client" backTo="/me" />} />
                 </Route>
                 <Route element={<StaffShell role="pro" />}>
-                  <Route path="/pro" element={<ProToday />} />
-                  <Route path="/pro/profile" element={<ProProfile />} />
-                  <Route path="/pro/visit/:id" element={<ProVisit />} />
-                  <Route path="/pro/visit/:id/messages" element={<Thread viewerRole="practitioner" />} />
-                  <Route path="/pro/visit/:id/native" element={<NativeNav />} />
-                  <Route path="/pro/soap/:id" element={<ProSoap />} />
-                  <Route path="/pro/plans" element={<ProPlans />} />
-                  <Route path="/pro/earnings" element={<ProEarnings />} />
-                  <Route path="/pro/ratings" element={<ProClientRatings />} />
-                  <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
-                  <Route path="/pro/route" element={<ProRoute mode="pro" />} />
-                  <Route path="/pro/recovery" element={<ProRecovery />} />
+                  <Route element={<PractitionerErrorBoundary />}>
+                    <Route path="/pro" element={<ProToday />} />
+                    <Route path="/pro/profile" element={<ProProfile />} />
+                    <Route path="/pro/visit/:id" element={<ProVisit />} />
+                    <Route path="/pro/visit/:id/messages" element={<Thread viewerRole="practitioner" />} />
+                    <Route path="/pro/visit/:id/native" element={<NativeNav />} />
+                    <Route path="/pro/soap/:id" element={<ProSoap />} />
+                    <Route path="/pro/plans" element={<ProPlans />} />
+                    <Route path="/pro/earnings" element={<ProEarnings />} />
+                    <Route path="/pro/ratings" element={<ProClientRatings />} />
+                    <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
+                    <Route path="/pro/route" element={<ProRoute mode="pro" />} />
+                    <Route path="/pro/recovery" element={<ProRecovery />} />
+                  </Route>
                 </Route>
                 <Route element={<StaffShell role="owner" />}>
                   <Route path="/owner" element={<OwnerDash />} />
