@@ -16,7 +16,7 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/store/DemoStore", () => ({
   useDemo: () => ({
-    state: { zones: [{ id: "z-central", name: "Central", radiusKm: 6, fee: 0, color: "#1565F0", enabled: true }], appointments: [] },
+    state: { zones: [{ id: "z-central", name: "Central", radiusKm: 6, fee: 0, color: "#1565F0", enabled: true }], appointments: [{ id: "a-partial" }] },
     idx: {
       settings: {
         gst: 0.05,

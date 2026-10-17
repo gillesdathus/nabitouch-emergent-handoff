@@ -390,8 +390,11 @@ PRACTITIONER_HIDDEN = {"base", "licenseExpiry", "insuranceExpiry"}
 
 
 def busy_slot(appt):
-    return {"id": appt["id"], "date": appt["date"], "time": appt["time"], "duration": appt["duration"],
-            "practitionerId": appt.get("practitionerId"), "status": appt["status"]}
+    """A public busy block. An incomplete stored row is not a booked time."""
+    if not appt.get("date") or not appt.get("time") or appt.get("duration") in (None, ""):
+        return None
+    return {"id": appt.get("id"), "date": appt["date"], "time": appt["time"], "duration": appt["duration"],
+            "practitionerId": appt.get("practitionerId"), "status": appt.get("status")}
 
 
 def present_trip(appt):
@@ -543,7 +546,7 @@ async def get_state(request: Request):
         if role == "client":
             mine = [hide_practitioner_home(appt) for appt in mine]
         ids = {a["clientId"] for a in mine}
-        busy = [busy_slot(a) for a in appts if a not in mine]
+        busy = [slot for slot in (busy_slot(a) for a in appts if a not in mine) if slot]
         out["appointments"] = (mine if role == "practitioner" else mine + busy) if role else busy
         if role == "practitioner":
             out["clients"] = [without_keys(c, {"insurance"}) for c in out["clients"] if c["id"] in ids]

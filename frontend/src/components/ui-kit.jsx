@@ -122,7 +122,7 @@ export function ZoneMap({ zones, point, pins = [], center, height = 220 }) {
           <circle key={z.id} cx="50" cy="50" r={(z.radiusKm / maxR) * 46} fill={z.color} fillOpacity={z.enabled ? 0.12 : 0.03} stroke={z.color} strokeOpacity=".5" strokeDasharray={z.enabled ? "0" : "2 2"} strokeWidth=".4" />
         ))}
         <circle cx="50" cy="50" r="1.4" fill="#0B2E8A" />
-        {pins.map((p, i) => { const q = toXY(p); return <circle key={i} cx={q.x} cy={q.y} r="1.6" fill={p.color || "#1565F0"} stroke="white" strokeWidth=".5" />; })}
+        {pins.filter((p) => p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng))).map((p, i) => { const q = toXY(p); return <circle key={i} cx={q.x} cy={q.y} r="1.6" fill={p.color || "#1565F0"} stroke="white" strokeWidth=".5" />; })}
         {point && (() => { const q = toXY(point); return <g><circle cx={q.x} cy={q.y} r="3.5" fill="#1565F0" opacity=".25" /><circle cx={q.x} cy={q.y} r="1.8" fill="#1565F0" stroke="white" strokeWidth=".6" /></g>; })()}
       </svg>
       <div className="absolute left-3 top-3 flex flex-wrap gap-1.5"><span className="rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-nb-ink">Zone diagram, not a street map</span></div>
