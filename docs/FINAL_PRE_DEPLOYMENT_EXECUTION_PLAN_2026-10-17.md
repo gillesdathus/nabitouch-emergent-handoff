@@ -13,7 +13,7 @@
 | Safety report | `docs/FINAL_CUTOVER_SAFETY_REPORT_2026-10-17.md` |
 | Docs HEAD at plan authoring | `b9c714a` (may advance with this doc only) |
 
-### Live status — Gate B PASS (2026-10-17)
+### Live status — public cutover PASS (2026-10-17)
 
 | Gate / item | Status |
 | --- | --- |
@@ -21,8 +21,10 @@
 | **A** off-host (`C:\Nabitouch-Backups`) + SHA-256 | **PASS** |
 | **A** passphrase in password manager | **VERIFIED** |
 | **A** VPS temp passphrase shred | **DONE** |
-| **B** private loopback deploy | **PASS** — see `docs/GATE_B_PRIVATE_DEPLOY_RESULT_2026-10-17.md`; `POST_BUILD_DIGEST=sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` |
-| **C–G**, PR merge, Nginx, Stripe | **Not authorized** |
+| **B** private loopback deploy | **PASS** — `POST_BUILD_DIGEST=sha256:080185ce702a34025d9745ab6934651a7205c2cf0d1b33e425e8171fc9584d8f` |
+| Legacy export + archive-only | **PASS** — `docs/LEGACY_PATIENT_ARCHIVE_ONLY_2026-10-17.md` |
+| Controlled public cutover | **PASS** — `docs/PUBLIC_CUTOVER_RESULT_2026-10-17.md` |
+| PR #1 merge / Stripe live card checkout | **Not authorized** (still disabled) |
 
 This plan completes **safe preparation** only. Commands under **OWNER** require explicit approval before any run. Do not alter Nginx, public traffic, production records, or live payments.
 

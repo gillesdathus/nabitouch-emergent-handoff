@@ -1,6 +1,8 @@
 ﻿# FINAL CUTOVER SAFETY REPORT â€” 17 October 2026
 
-**Recommendation: NO-GO** for public cutover, Nginx change, PR merge, or payment activation.
+**Update 2026-10-17 evening:** Controlled **public cutover PASS** (static frontend + `/api/` → `:8011`). Draft PR #1 remains unmerged. Stripe card checkout remains **disabled**. See `docs/PUBLIC_CUTOVER_RESULT_2026-10-17.md`.
+
+**Prior recommendation (pre-cutover):** NO-GO until owner-authorized phases completed.
 
 | Item | Value |
 | --- | --- |
