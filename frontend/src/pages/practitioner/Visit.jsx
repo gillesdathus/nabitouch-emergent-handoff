@@ -15,7 +15,7 @@ import { Notice, Stepper } from "@/components/tide";
 import { SafetyCenter } from "@/components/SafetyCenter";
 import { MemberBadge } from "@/components/MemberBadge";
 import { openNavigation } from "@/lib/nativeShell";
-import { readTripOrigin, tripOriginMessage } from "@/lib/tripOrigin";
+import { readTripOrigin, sampleTripNotice, tripOriginMessage } from "@/lib/tripOrigin";
 import { SessionReadiness, useSessionReadiness } from "@/components/session/SessionReadiness";
 import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/components/session/SmartSession";
 import { sendSessionOp, usePendingOps, useSessionOpSync, useTurnaround } from "@/lib/turnaround";
@@ -176,6 +176,7 @@ export default function Visit() {
 
       {appt.status === "en_route" && <div className="nb-card space-y-3 p-4" data-testid="tracking-controls">
         <p className="text-sm"><b>Destination.</b> {appt.address?.line}</p>
+        {sampleTripNotice(appt.trip) && <p className="text-sm text-amber-800" data-testid="visit-sample-trip">{sampleTripNotice(appt.trip)}</p>}
         <p className="text-sm">Estimated travel {appt.trip?.from && appt.trip?.driveMin ? `${appt.trip.driveMin} min` : "is calculated once sharing starts"}. <span className="text-xs text-nb-mute">This is not a confirmed arrival.</span></p>
         {tripOriginMessage(appt.trip) && <p className="text-sm text-amber-800" data-testid="visit-location-unavailable">{tripOriginMessage(appt.trip)} Nabitouch has not recorded a trip origin.</p>}
         <div className="flex flex-wrap gap-2">

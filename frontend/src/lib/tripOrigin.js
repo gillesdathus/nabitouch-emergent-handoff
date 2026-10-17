@@ -8,6 +8,11 @@ function finite(lat, lng) {
   return { lat: latitude, lng: longitude };
 }
 
+export function sampleTripNotice(trip) {
+  if (!trip?.simulated || trip.sharingSource === "practitioner") return "";
+  return "Sample visit. This is not a live practitioner location.";
+}
+
 export function tripOriginMessage(trip) {
   if (!trip || trip.location === "gps") return "";
   if (trip.location === "unavailable" || !trip.from) return "Current location is unavailable.";

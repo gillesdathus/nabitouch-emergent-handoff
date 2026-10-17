@@ -60,11 +60,10 @@ def _ensure_enroute(owner_h, aid, practitioner_h):
     reset = requests.post(f"{API}/demo/reset", headers=owner_h, timeout=30)
     assert reset.status_code == 200, reset.text
     appt = next(a for a in requests.get(f"{API}/state", headers=owner_h).json()["appointments"] if a["id"] == aid)
-    if appt["status"] == "en_route":
-        return
-    assert appt["status"] in ("assigned", "confirmed", "preparing"), appt["status"]
-    r = requests.post(f"{API}/appointments/{aid}/transition", json={"to": "en_route"}, headers=practitioner_h)
-    assert r.status_code == 200, f"transition {aid}->en_route: {r.status_code} {r.text}"
+    if appt["status"] != "en_route":
+        assert appt["status"] in ("assigned", "confirmed", "preparing"), appt["status"]
+        r = requests.post(f"{API}/appointments/{aid}/transition", json={"to": "en_route"}, headers=practitioner_h)
+        assert r.status_code == 200, f"transition {aid}->en_route: {r.status_code} {r.text}"
     started = requests.post(f"{API}/tracking/sessions/{aid}/start", headers=practitioner_h)
     assert started.status_code == 200, started.text
 

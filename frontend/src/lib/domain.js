@@ -120,19 +120,6 @@ export const CLAIM_STATUS = {
   declined: { label: 'Claim declined', tone: 'red' },
 };
 
-// Simulated GPS replay of an authorised work trip. Returns null when not sharing.
-export function tripState(appt, now = Date.now()) {
-  const tr = appt?.trip;
-  if (!tr?.sharing || !tr.from || !tr.to || appt.status !== 'en_route') return null;
-  const t = Math.min(1, Math.max(0, (now - new Date(tr.startedAt).getTime()) / (tr.demoSec * 1000)));
-  const { from: a, to: b } = tr;
-  const c = { lat: (a.lat + b.lat) / 2 + (b.lng - a.lng) * 0.18, lng: (a.lng + b.lng) / 2 - (b.lat - a.lat) * 0.35 };
-  const at = (u) => ({ lat: (1 - u) ** 2 * a.lat + 2 * (1 - u) * u * c.lat + u * u * b.lat, lng: (1 - u) ** 2 * a.lng + 2 * (1 - u) * u * c.lng + u * u * b.lng });
-  const etaMin = t >= 1 ? 0 : Math.max(1, Math.ceil(tr.driveMin * (1 - t)));
-  const arrival = new Date(now + etaMin * 60000);
-  const sched = new Date(`${appt.date}T${appt.time}:00`);
-  return { t, pos: at(t), route: Array.from({ length: 41 }, (_, i) => at(i / 40)), etaMin, arrival, remainingKm: Math.max(0, tr.km * (1 - t)), lateMin: Math.round((arrival - sched) / 60000), arriving: t >= 0.97 };
-}
 export const fmtClockTime = (d) => d.toLocaleTimeString('en-CA', { timeZone: "America/Edmonton", hour: 'numeric', minute: '2-digit' });
 
 export const RECEPTION_PERMS = [
@@ -188,21 +175,6 @@ export function paymentChoice(draft, settings) {
 }
 
 export const INSURERS = ['Alberta Blue Cross', 'Canada Life', 'Sun Life', 'Manulife', 'Green Shield Canada', 'Desjardins', 'Other'];
-
-// Synthetic sample addresses used by the demo autocomplete (no external geocoder).
-export const SAMPLE_ADDRESSES = [
-  { line: '10150 104 St NW, Edmonton, AB', area: 'Downtown', lat: 53.5435, lng: -113.499 },
-  { line: '10222 102 St NW, Edmonton, AB', area: 'Downtown', lat: 53.5445, lng: -113.4935 },
-  { line: '11135 83 Ave NW, Edmonton, AB', area: 'Garneau', lat: 53.519, lng: -113.517 },
-  { line: '9620 83 Ave NW, Edmonton, AB', area: 'Strathcona', lat: 53.518, lng: -113.473 },
-  { line: '12520 102 Ave NW, Edmonton, AB', area: 'Westmount', lat: 53.5431, lng: -113.5363 },
-  { line: '5320 Terwillegar Blvd NW, Edmonton, AB', area: 'Terwillegar', lat: 53.462, lng: -113.585 },
-  { line: '8882 170 St NW, Edmonton, AB', area: 'West Edmonton', lat: 53.5225, lng: -113.6235 },
-  { line: '13650 50 St NW, Edmonton, AB', area: 'Clareview', lat: 53.6015, lng: -113.4135 },
-  { line: '2020 Sherwood Dr, Sherwood Park, AB', area: 'Sherwood Park', lat: 53.5413, lng: -113.2958 },
-  { line: '1 St Anne St, St. Albert, AB', area: 'St. Albert', lat: 53.6305, lng: -113.6256 },
-  { line: '4950 Gateway Blvd, Leduc, AB', area: 'Leduc', lat: 53.2594, lng: -113.5492 },
-];
 
 export const CLINIC_POINT = { lat: 53.5461, lng: -113.4938 };
 

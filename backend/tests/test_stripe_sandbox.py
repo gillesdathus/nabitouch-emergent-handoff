@@ -27,7 +27,7 @@ def sandbox(monkeypatch):
     mid = uuid.uuid4().hex
     iid, aid, sid, pi = "inv-" + mid, "appt-" + mid, "cs_test_fixture_" + mid, "pi_fixture_" + mid
     DB.nt_invoices.insert_one({"id": iid, "number": iid, "appointmentId": aid, "state": "issued", "version": 0, "totalCents": 10080, "balanceCents": 10080, "receivedCents": 0, "clientId": "synthetic-client", "serviceDate": "2026-10-16", "lines": []})
-    DB.nt_appointments.insert_one({"id": aid, "clientId": "synthetic-client", "payNow": "deposit", "paymentDue": {"status": "deposit_pending"}})
+    DB.nt_appointments.insert_one({"id": aid, "clientId": "synthetic-client", "payNow": "deposit", "paymentDue": {"status": "deposit_pending", "totalCents": 10080, "dueNowCents": 2520, "remainingCents": 7560, "paidCents": 0}})
     motor = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = motor[os.environ["DB_NAME"]]
     calls = []
@@ -80,9 +80,10 @@ def start(sandbox, amount=2520):
     return {"id": sid, "payment_intent": pi, "amount_total": amount, "currency": "cad", "payment_status": "paid", "metadata": {"invoiceId": iid}}
 
 
-@pytest.mark.parametrize("amount", [2520, 10080])
+@pytest.mark.parametrize("amount", [2520])
 def test_hosted_checkout_server_amount_and_duplicate_submission(sandbox, amount):
     client, iid, aid, sid, pi, calls = sandbox
+    assert client.post(f"/api/invoices/{iid}/checkout", json={"amountCents": 10080}).status_code == 400
     start(sandbox, amount)
     assert client.post(f"/api/invoices/{iid}/checkout", json={"amountCents": amount}).status_code == 200
     assert len(calls) == 1
@@ -256,6 +257,7 @@ def test_checkout_uses_persisted_server_quote_gst_travel_discount_and_credit(san
     lines, net, tax, amount = billing.lines_from_pricing(quote)
     assert amount == total and net + tax == total
     DB.nt_invoices.update_one({"id": iid}, {"$set": {"lines": lines, "totalCents": total, "taxCents": tax}})
+    DB.nt_appointments.update_one({"id": aid}, {"$set": {"payNow": "full", "paymentDue.dueNowCents": total, "paymentDue.totalCents": total}})
     assert client.post(f"/api/invoices/{iid}/checkout", json={"amountCents": total, "totalCents": 1, "taxCents": 0, "discount": 999}).status_code == 200
     assert calls[0][2]["data"]["line_items[0][price_data][unit_amount]"] == str(total)
 

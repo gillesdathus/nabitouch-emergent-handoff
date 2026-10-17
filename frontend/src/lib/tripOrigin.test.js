@@ -1,4 +1,4 @@
-import { readTripOrigin, tripOriginMessage } from "./tripOrigin";
+import { readTripOrigin, sampleTripNotice, tripOriginMessage } from "./tripOrigin";
 
 const now = Date.parse("2026-10-17T02:00:00Z");
 
@@ -25,4 +25,6 @@ test("denied, timed out, invalid and stale fixes are not coordinates", async () 
 test("a missing trip origin is named and a maps handoff is not treated as a recorded start", () => {
   expect(tripOriginMessage({ location: "unavailable", to: { lat: 53.52, lng: -113.62 } })).toBe("Current location is unavailable.");
   expect(tripOriginMessage({ location: "gps", from: { lat: 53.48, lng: -113.55 } })).toBe("");
+  expect(sampleTripNotice({ simulated: true, sharing: true, from: { lat: 53.5, lng: -113.4 } })).toBe("Sample visit. This is not a live practitioner location.");
+  expect(sampleTripNotice({ simulated: true, sharingSource: "practitioner" })).toBe("");
 });

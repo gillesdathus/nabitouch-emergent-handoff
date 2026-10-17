@@ -396,6 +396,17 @@ def test_trip_start_uses_current_gps_and_never_a_saved_or_downtown_origin():
     assert invalid["location"] == "unavailable" and "from" not in invalid
     hidden = server.hide_practitioner_home({"trip": without_gps})
     assert "from" not in hidden["trip"]
+    sample = server.present_trip({"id": "a-106", "trip": {"from": {"lat": 53.5, "lng": -113.4}, "to": {"lat": 53.55, "lng": -113.51}, "sharing": True, "simulated": True, "km": 9.4, "driveMin": 24, "demoSec": 240}})
+    assert "from" not in sample["trip"]
+    assert sample["trip"]["sharing"] is False
+    assert sample["trip"]["location"] == "sample"
+    assert sample["trip"]["to"] == {"lat": 53.55, "lng": -113.51}
+    import tracking
+    assert tracking.trip_sharing({"status": "en_route", "trip": {"sharing": True, "simulated": True}}) is False
+    assert tracking.trip_sharing({"status": "en_route", "trip": {"sharing": True, "simulated": True, "sharingSource": "practitioner"}}) is True
+    from seed import build_seed
+    seeded = next(item["trip"] for item in build_seed()["appointments"] if item["id"] == "a-106")
+    assert seeded["simulated"] is True and seeded["sharing"] is False and "from" not in seeded
     asyncio.run(server.authorize_transition({"role": "practitioner", "subject": "p-1"}, clinic, "en_route"))
     with pytest.raises(HTTPException) as denied:
         asyncio.run(server.authorize_transition({"role": "practitioner", "subject": "other"}, clinic, "en_route"))

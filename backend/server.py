@@ -394,6 +394,18 @@ def busy_slot(appt):
             "practitionerId": appt.get("practitionerId"), "status": appt["status"]}
 
 
+def present_trip(appt):
+    """A sample trip is not a recorded drive. It keeps its destination and drops any invented origin."""
+    trip = dict((appt or {}).get("trip") or {})
+    if not trip or not trip.get("simulated") or trip.get("sharingSource") == "practitioner":
+        return appt
+    for key in ("from", "km", "driveMin", "demoSec"):
+        trip.pop(key, None)
+    trip["sharing"] = False
+    trip["location"] = "sample"
+    return {**appt, "trip": trip}
+
+
 def hide_practitioner_home(appt):
     """Clients and the desk see the visit, not the practitioner's exact start. A missing GPS fix is left missing."""
     trip = appt.get("trip") or {}
@@ -462,6 +474,7 @@ async def client_workspace(client_id: str, request: Request):
     if "insurance" in client:
         client = {**client, "insurance": open_insurance(client.get("insurance"))}
     appts = await coll("appointments").find({"clientId": client_id}, NO_ID).sort([("date", -1), ("time", -1)]).to_list(300)
+    appts = [present_trip(a) for a in appts]
     if user["role"] == "desk":
         appts = [hide_practitioner_home(a) for a in appts]
         if not perms.get("viewAddresses"):
@@ -503,6 +516,7 @@ async def get_state(request: Request):
             q = q.sort("at", -1).limit(80)
         out[name] = await q.to_list(1000)
     out["clients"] = [{**client, "insurance": open_insurance(client.get("insurance"))} if "insurance" in client else client for client in out["clients"]]
+    out["appointments"] = [present_trip(appt) for appt in out["appointments"]]
     out["soap"] = [open_tree(note) for note in out["soap"]]
     out["settings"] = shape_settings(out["settings"], role)
     out["practitioners"] = [present_practitioner(person, role) for person in out["practitioners"] if visible_profile(person, role, sub)]

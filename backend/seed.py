@@ -247,8 +247,8 @@ def build_seed():
     by["a-111"]["address"] = {"line": "[Clinic address — to be supplied]", "lat": 53.5461, "lng": -113.4938, "zoneId": None, "notes": ""}
     by["a-111"]["pricing"] = {**by["a-111"]["pricing"], "travel": 0, "tax": 6.0, "total": 126.0}
     by["a-111"]["claim"]["eligible"] = 126.0
-    by["a-106"]["trip"] = {"from": PRACTITIONERS[1]["base"], "to": {"lat": ADDR["noah"]["lat"], "lng": ADDR["noah"]["lng"]}, "startedAt": ago(0.5),
-                           "demoSec": 240, "km": 9.4, "driveMin": 24, "sharing": True, "simulated": True}
+    by["a-106"]["trip"] = {"to": {"lat": ADDR["noah"]["lat"], "lng": ADDR["noah"]["lng"]}, "startedAt": ago(0.5),
+                           "sharing": False, "simulated": True, "location": "sample"}
     appointments = [with_settle(a) for a in appointments]
     for a in appointments:
         if a["id"] == "a-106":

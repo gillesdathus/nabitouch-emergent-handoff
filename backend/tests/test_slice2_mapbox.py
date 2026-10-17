@@ -147,7 +147,9 @@ def test_desk_cannot_see_practitioner_home_on_a_trip(owner, desk):
     people = requests.get(f"{API}/state", headers=owner, timeout=20).json()["practitioners"]
     base = next(person["base"] for person in people if person["id"] == "p-liam")
     trip = next(item["trip"] for item in requests.get(f"{API}/state", headers=desk, timeout=20).json()["appointments"] if item["id"] == "a-106")
-    assert [trip["from"]["lat"], trip["from"]["lng"]] != [base["lat"], base["lng"]]
+    assert "from" not in trip
+    assert trip.get("sharing") is not True
+    assert [base["lat"], base["lng"]] != [trip.get("to", {}).get("lat"), trip.get("to", {}).get("lng")]
 
 
 def test_tracking_still_requires_a_session_and_suggest_does_not_echo_a_token():

@@ -43,6 +43,8 @@ def trip_sharing(appt):
     trip = appt.get("trip") or {}
     if appt.get("status") != "en_route" or not trip.get("sharing"):
         return False
+    if trip.get("simulated") and trip.get("sharingSource") != "practitioner":
+        return False
     if is_production() and trip.get("sharingSource") != "practitioner":
         return False
     return True
