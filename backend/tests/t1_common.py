@@ -64,7 +64,12 @@ def stripe_sign(payload: str):
 
 
 def stripe_webhook(event):
-    payload = json.dumps(event)
+    # PAYMENT_MODE=test requires event.livemode is False (not omitted).
+    # Callers may still set livemode=True to assert live-event rejection.
+    body = dict(event)
+    if "livemode" not in body:
+        body["livemode"] = False
+    payload = json.dumps(body)
     return requests.post(f"{API}/stripe/webhook", data=payload, headers={"Stripe-Signature": stripe_sign(payload), "Content-Type": "application/json"}, timeout=30)
 
 

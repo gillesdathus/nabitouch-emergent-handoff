@@ -8,7 +8,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from booking_fixtures import EDMONTON_HOME
+from booking_fixtures import EDMONTON_HOME, book_appointment
 from t1_common import API, BENV, MAYA, OWNER, SAMPLE_PW, SARAH, login
 
 pytestmark = pytest.mark.real_consent
@@ -34,17 +34,11 @@ def maya():
     return login(MAYA)
 
 
-def book(owner, slug="swedish", day_offset=(20, 200), times=("09:00", "12:00", "16:00"), practitioner="p-maya"):
-    for d in range(*day_offset):
-        day = (datetime.now(TZ).date() + timedelta(days=d)).isoformat()
-        for t in times:
-            body = {"source": "reception", "practitionerId": practitioner, "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
-                    "appointment": {"serviceSlug": slug, "duration": 60, "date": day, "time": t, "locationType": "home", "paymentMethod": "self",
-                                    "addressId": "ad-sarah", "address": ADDR}}
-            b = owner.post(f"{API}/bookings", json=body, timeout=40)
-            if b.status_code == 200:
-                return b.json()["appointment"]
-    pytest.fail("could not book")
+def book(owner, slug="swedish", day_offset=(20, 200), times=("09:00", "12:00", "16:00"), practitioner=None):
+    """Reception booking helper. Prefers demo seed ids when present; otherwise uses bookable staff."""
+    return book_appointment(
+        owner, API, slug=slug, day_offset=day_offset, times=times, practitioner=practitioner, address=ADDR,
+    )
 
 
 def to_arrived(owner, aid):

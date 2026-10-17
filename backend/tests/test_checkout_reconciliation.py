@@ -3,8 +3,15 @@ import uuid
 
 import pytest
 
-from t1_common import API, OWNER, login, stripe_webhook
-from test_smart_intake_turnaround import DB, book
+from booking_fixtures import book_appointment
+from t1_common import API, BENV, OWNER, login, stripe_webhook
+from pymongo import MongoClient
+
+DB = MongoClient(BENV["MONGO_URL"])[BENV["DB_NAME"]]
+
+
+def book(owner):
+    return book_appointment(owner, API)
 
 
 @pytest.mark.parametrize("kind,payment_status,settled", [
@@ -27,7 +34,7 @@ def test_signed_deposit_requires_payment_confirmation_and_settles_once(kind, pay
     obj = {"id": session_id, "amount_total": 2520, "currency": "cad"}
     if payment_status is not None:
         obj["payment_status"] = payment_status
-    event = {"id": "evt_synthetic_" + uuid.uuid4().hex, "type": kind, "data": {"object": obj}}
+    event = {"id": "evt_synthetic_" + uuid.uuid4().hex, "livemode": False, "type": kind, "data": {"object": obj}}
     response = stripe_webhook(event)
     assert response.status_code == 200
     assert response.json()["settled"] is settled
