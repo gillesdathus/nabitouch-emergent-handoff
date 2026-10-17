@@ -2,11 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { unregisterPush } from "@/lib/nativeShell";
+import { clearStoredBookingDraft, readStoredBookingDraft, writeStoredBookingDraft } from '@/lib/booking-selection';
 
 const Ctx = createContext(null);
 const TrainingBridge = createContext(null);
 const LS = { client: 'nt_demo_client', pract: 'nt_demo_pract', owner: 'nt_demo_owner' };
-const emptyDraft = () => ({ step: 0, locationType: 'home', address: null, addressQuery: '', addressNotes: '', serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', marketingConsent: false } });
+const emptyDraft = () => ({ step: 0, locationType: 'home', address: null, addressQuery: '', addressNotes: '', serviceId: null, serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, checkoutSessionId: null, checkoutAmountCents: null, invoiceId: null, depositCents: null, idempotencyKey: undefined, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', marketingConsent: false } });
 
 export function DemoProvider({ children }) {
   const [state, setState] = useState(null);
@@ -18,8 +19,12 @@ export function DemoProvider({ children }) {
   const [practRaw, setPractRaw] = useState('p-maya');
   const practitionerId = user?.role === 'practitioner' ? user.subject : user?.role === 'owner' ? 'p-jordan' : practRaw;
   const [ownerMode, setOwnerModeRaw] = useState(() => localStorage.getItem(LS.owner) === '1');
-  const [draft, setDraft] = useState(emptyDraft);
+  const [draft, setDraft] = useState(() => readStoredBookingDraft(emptyDraft));
   const busy = useRef(false);
+
+  useEffect(() => {
+    writeStoredBookingDraft(draft);
+  }, [draft]);
 
   const refresh = useCallback(async () => {
     try { setState(await api.state()); setError(false); } catch { setError(true); }
@@ -78,8 +83,10 @@ export function DemoProvider({ children }) {
     state, idx, error, refresh, run, api,
     clientId, setClientId, practitionerId, setPractitionerId, ownerMode, setOwnerMode,
     me: idx && clientId ? idx.clients[clientId] : null,
-    draft, setDraft, patchDraft: (p) => setDraft((d) => ({ ...d, ...p })), resetDraft: () => setDraft(emptyDraft()),
-    resetDemo: () => run(async () => { await api.reset(); setDraft(emptyDraft()); }, 'Demo data reset'),
+    draft, setDraft,
+    patchDraft: (p) => setDraft((d) => ({ ...d, ...p })),
+    resetDraft: () => { clearStoredBookingDraft(); setDraft(emptyDraft()); },
+    resetDemo: () => run(async () => { await api.reset(); clearStoredBookingDraft(); setDraft(emptyDraft()); }, 'Demo data reset'),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -7,6 +7,7 @@ import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
+import { serviceSelectionPatch } from "@/lib/booking-selection";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
 const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
@@ -51,14 +52,14 @@ export function StepService() {
       <H t="Choose your treatment" s="The total is confirmed before you book." />
       <div className="grid gap-3 sm:grid-cols-2">
         {state.services.filter((x) => bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile)).map((x) => (
-          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} onClick={() => patchDraft({ serviceSlug: x.slug, duration: x.prices[String(draft.duration)] ? draft.duration : Number(Object.keys(x.prices)[0]) })}>
+          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }))}>
             <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" loading="lazy" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{x.name}</p><p className="line-clamp-2 text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="h-5 w-5 shrink-0 text-nb-blue" />}</div>
           </Tile>))}
       </div>
       {s && (
         <div className="mt-8 space-y-6">
           <div><p className="nb-label">Duration</p><div className="grid grid-cols-3 gap-2">
-            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => patchDraft({ duration: Number(d) })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{money(p)}</span></Tile>)}
+            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => patchDraft({ duration: Number(d), time: null, idempotencyKey: undefined, checkoutSessionId: null, checkoutAmountCents: null, depositCents: null, invoiceId: null })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{money(p)}</span></Tile>)}
           </div></div>
           <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
             {idx.settings.addons.map((a) => <button key={a.id} onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>{a.name} · +{money(a.price)}</button>)}

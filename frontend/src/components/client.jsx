@@ -53,9 +53,10 @@ export function ServiceCard({ s, i = 0, eligible }) {
   );
 }
 
+/** Optional in-flow CTA — never fixed/floating so catalogue cards stay fully visible. */
 export const StickyBook = ({ onClick, label = "Book Your Massage", sub }) => (
-  <div className="fixed bottom-8 right-8 z-30 hidden md:block" data-testid="sticky-book-bar">
-    <button onClick={onClick} data-testid="sticky-book-btn" className="nb-btn-primary h-14 w-full px-8 text-base md:w-auto">
+  <div className="mt-8 flex justify-center pb-2 md:justify-end" data-testid="sticky-book-bar">
+    <button type="button" onClick={onClick} data-testid="sticky-book-btn" className="nb-btn-primary h-12 px-6 text-sm sm:h-14 sm:px-8 sm:text-base">
       {label}{sub && <span className="text-xs font-normal text-white/80">· {sub}</span>}<ArrowRight className="h-5 w-5" />
     </button>
   </div>

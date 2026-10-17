@@ -151,7 +151,30 @@ export default function Me() {
   const bday = state.promotions.find((p) => p.id === "promo-birthday");
   const bdayOk = bday && promoEligibility(bday, me, "swedish");
   const plans = state.plans.filter((p) => p.clientId === me.id && p.visibleToClient);
-  const rebook = (a, slug) => { const s = slug || a.serviceSlug; patchDraft({ serviceSlug: s, duration: a?.duration || Number(Object.keys(idx.services[s].prices).includes("60") ? 60 : Object.keys(idx.services[s].prices)[0]), practitionerId: a?.practitionerId || me.preferredPractitioners[0] || "", locationType: a?.locationType || "home", address: me.addresses[0] || null, addressQuery: me.addresses[0]?.line || "", step: 2, date: null, time: null }); nav("/book"); };
+  const rebook = (a, slug) => {
+    const key = slug || a.serviceSlug;
+    const service = idx.services[key];
+    if (!service) return;
+    const duration = a?.duration || (service.prices?.["60"] ? 60 : Number(Object.keys(service.prices || {})[0]));
+    patchDraft({
+      serviceId: service.id || null,
+      serviceSlug: service.slug,
+      duration,
+      practitionerId: a?.practitionerId || me.preferredPractitioners[0] || "",
+      locationType: a?.locationType || "home",
+      address: me.addresses[0] || null,
+      addressQuery: me.addresses[0]?.line || "",
+      step: 2,
+      date: null,
+      time: null,
+      checkoutSessionId: null,
+      checkoutAmountCents: null,
+      depositCents: null,
+      invoiceId: null,
+      idempotencyKey: undefined,
+    });
+    nav(service.id ? `/book?service=${encodeURIComponent(service.id)}` : "/book");
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-8" data-testid="client-dashboard">

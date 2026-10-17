@@ -28,4 +28,6 @@ test("rejects a workspace the account was not given", () => {
   expect(canOpen(owner, "/owner/zones")).toBe(true);
   expect(canOpen(null, "/services")).toBe(true);
   expect(canOpen(client, "/book")).toBe(true);
+  expect(canOpen(client, "/book?service=svc-swedish")).toBe(true);
+  expect(canOpen(client, "/login?next=%2Fbook%3Fservice%3Dx")).toBe(true);
 });

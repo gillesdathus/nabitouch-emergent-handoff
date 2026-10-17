@@ -23,7 +23,8 @@ export function workspaceForPath(pathname) {
 }
 
 export function canOpen(user, pathname) {
-  const need = workspaceForPath(pathname);
+  const path = String(pathname || "").split("?")[0];
+  const need = workspaceForPath(path);
   if (!need) return true;
   return spacesOf(user).includes(need);
 }

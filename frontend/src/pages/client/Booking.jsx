@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, MapPin, Clock, User, Layers, HeartHandshake } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
@@ -13,6 +13,7 @@ import { StepWhere, StepService, StepWhen, StepYou, StepPay } from "./BookingSte
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferListed, paymentChoice, clinicBookable } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
+import { bookingPathForService, isLockedBookingAppointment, resolveCatalogueService, serviceSelectionPatch } from "@/lib/booking-selection";
 
 const STEPS = ["Where", "Service", "When", "You", "Payment", "Review"];
 
@@ -39,6 +40,8 @@ function Breakdown({ q, compact, settlement }) {
 
 export default function Booking() {
   const { draft, patchDraft, state, idx, me, run, api, resetDraft, register } = useDemo();
+  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [done, setDone] = useState(null);
   const [guestTrack, setGuestTrack] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -54,9 +57,44 @@ export default function Booking() {
   const winbackCode = !useCredit && winback && draft.useWinback ? winback.code : undefined;
   const g = draft.guest;
   const step = draft.step;
-  const service = idx.services[draft.serviceSlug];
+  const service = idx?.services?.[draft.serviceSlug] || resolveCatalogueService(state?.services, draft.serviceId || draft.serviceSlug);
+
+  // Apply ?service=<id|slug> from catalogue / auth return without forcing re-selection.
+  useEffect(() => {
+    if (!state?.services?.length) return undefined;
+    const appointmentId = params.get("appointment") || params.get("appointmentId");
+    if (appointmentId) {
+      const existing = state.appointments?.find((row) => row.id === appointmentId);
+      if (isLockedBookingAppointment(existing)) {
+        toast.message("This visit is complete. Use reschedule or modify from My Nabitouch.");
+        nav("/me", { replace: true });
+        return undefined;
+      }
+    }
+    const key = params.get("service") || params.get("serviceId");
+    if (!key) return undefined;
+    const selected = resolveCatalogueService(state.services, key);
+    if (!selected) return undefined;
+    if (draft.serviceId === selected.id || draft.serviceSlug === selected.slug) {
+      if (!draft.serviceId && selected.id) patchDraft({ serviceId: selected.id });
+      return undefined;
+    }
+    patchDraft({ ...serviceSelectionPatch(selected, draft), step: draft.step || 0 });
+    return undefined;
+  }, [state, params]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the URL service id aligned when the client changes treatment in-flow.
+  useEffect(() => {
+    if (!service?.id) return;
+    const current = params.get("service") || params.get("serviceId");
+    if (current === service.id || current === service.slug) return;
+    const next = new URLSearchParams(params);
+    next.set("service", service.id);
+    next.delete("serviceId");
+    setParams(next, { replace: true });
+  }, [service?.id, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
   const zr = draft.locationType !== "clinic" && draft.address ? zoneFor(draft.address, state.zones) : null;
-  const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx.settings, locationType: draft.locationType });
+  const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx?.settings, locationType: draft.locationType });
   const shown = step === 5 && serverQuote ? serverQuote : q;
   const quotePayload = step === 5 ? {
     useCredit,
@@ -96,6 +134,10 @@ export default function Booking() {
     true,
   ];
   const go = (n) => { patchDraft({ step: n }); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" })); };
+  const changeTreatment = () => {
+    go(1);
+    if (service) nav(bookingPathForService(service), { replace: true });
+  };
 
   const confirm = async () => {
     if (submitting) return;
@@ -157,6 +199,17 @@ export default function Booking() {
           <div className="sr-only">{STEPS.map((label, index) => (
             <button key={label} type="button" disabled={index > step && !ok.slice(0, index).every(Boolean)} onClick={() => go(index)} aria-label={`Step ${index + 1}: ${label}`} data-testid={`booking-step-indicator-${index}`}>{label}</button>
           ))}</div>
+          {service && step !== 1 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-3" data-testid="booking-selected-service">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wide text-nb-mute">Selected treatment</p>
+                <p className="truncate text-sm font-semibold text-nb-ink">{service.name} · {draft.duration} min</p>
+              </div>
+              <button type="button" onClick={changeTreatment} data-testid="booking-change-treatment" className="text-sm font-semibold text-nb-blue underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nb-blue focus-visible:ring-offset-2">
+                Change treatment
+              </button>
+            </div>
+          )}
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={step} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
@@ -189,7 +242,18 @@ export default function Booking() {
         <div className="sticky top-32 space-y-4">
           <div className="nb-card p-5" data-testid="booking-summary-aside">
             <p className="text-sm font-semibold">Your booking</p>
-            {service ? <><p className="mt-3 text-sm">{service.name} · {draft.duration} min</p>{draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}<div className="mt-4"><Breakdown q={step === 5 && serverQuote ? serverQuote : q} settlement={step === 5 ? settlement : null} compact /></div></> : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
+            {service ? (
+              <>
+                <div className="mt-3 flex items-start justify-between gap-3">
+                  <p className="text-sm" data-testid="booking-summary-service">{service.name} · {draft.duration} min</p>
+                  <button type="button" onClick={changeTreatment} data-testid="booking-summary-change-treatment" className="shrink-0 text-xs font-semibold text-nb-blue underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nb-blue focus-visible:ring-offset-2">
+                    Change treatment
+                  </button>
+                </div>
+                {draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}
+                <div className="mt-4"><Breakdown q={step === 5 && serverQuote ? serverQuote : q} settlement={step === 5 ? settlement : null} compact /></div>
+              </>
+            ) : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>
           {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>}
           {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <PromoBanner compact eligible={welcomeOfferListed(state.promotions.find((p) => p.id === "promo-welcome"))} testid="booking-promo-banner" />}
