@@ -16,6 +16,10 @@ from pydantic import BaseModel, EmailStr, Field
 
 from emailer import send_email
 from devices import revoke_devices
+from rbac import (
+    effective_roles, has_role, has_strict_role, is_sysadmin, normalize_roles,
+    primary_role, require_roles, workspaces_for, STAFF_ROLES,
+)
 
 ALG = "HS256"
 
@@ -90,18 +94,26 @@ def clear_auth_cookies(resp: Response):
 
 
 def public(u):
-    return {k: u.get(k) for k in ("id", "email", "name", "role", "subject")}
+    roles = normalize_roles(u.get("roles"), u.get("role"))
+    body = {k: u.get(k) for k in ("id", "email", "name", "role", "subject", "preferredWorkspace", "status")}
+    body["roles"] = roles
+    body["role"] = u.get("role") or primary_role(roles)
+    if is_sysadmin(u):
+        body["capabilities"] = ["sysadmin"]
+    return body
 
 
 async def present(u, coll):
-    """Session profile. Workspaces come from the account role, plus practitioner when the owner record is that practitioner."""
+    """Session profile. Workspaces are presentation context derived from authorized roles."""
     body = public(u)
-    role = body.get("role")
-    spaces = [role] if role in ("client", "practitioner", "owner", "desk") else []
-    if role == "owner" and body.get("subject"):
+    spaces = workspaces_for(u)
+    # Confirm practitioner subject still exists before offering that workspace.
+    if "practitioner" in spaces and body.get("subject"):
         person = await coll("practitioners").find_one({"id": body["subject"]}, {"_id": 0, "id": 1})
-        if person:
-            spaces.append("practitioner")
+        if not person:
+            spaces = [s for s in spaces if s != "practitioner"]
+    elif "practitioner" in spaces and not body.get("subject"):
+        spaces = [s for s in spaces if s != "practitioner"]
     body["workspaces"] = spaces
     return body
 
@@ -159,6 +171,7 @@ class StaffIn(BaseModel):
     password: str = Field(min_length=8)
     name: str
     role: str
+    roles: Optional[list] = None
     practitionerId: Optional[str] = None
 
 
@@ -166,7 +179,21 @@ class InviteIn(BaseModel):
     email: EmailStr
     name: str = Field(min_length=2, max_length=80)
     role: str
+    roles: Optional[list] = None
     phone: Optional[str] = None
+    practitionerId: Optional[str] = None
+    preferredWorkspace: Optional[str] = None
+
+
+class WorkspaceIn(BaseModel):
+    workspace: str
+
+
+class StaffRolesIn(BaseModel):
+    roles: list
+    preferredWorkspace: Optional[str] = None
+    status: Optional[str] = None
+    practitionerId: Optional[str] = None
 
 
 class InviteAccept(BaseModel):
@@ -223,18 +250,20 @@ def build_auth(db, coll, add_audit):
         from config import is_production
         if blocks_demo_account(user, is_production()):
             return None
-        if user and user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+        if user and set(effective_roles(user)) & set(STAFF_ROLES) and await mfa_enforcement() and not row.get("mfaAt"):
             return None
         if user:
             user["sid"] = p["sid"]
+            # Keep roles normalized on the request-scoped user document.
+            user["roles"] = normalize_roles(user.get("roles"), user.get("role"))
         return user
 
     async def require(request: Request, *roles) -> dict:
         u = await user_from(request)
         if not u:
             raise HTTPException(401, "Not authenticated")
-        if roles and u["role"] not in roles:
-            raise HTTPException(403, "Not permitted for your role")
+        if roles:
+            require_roles(u, *roles)
         return u
 
     async def seed():
@@ -304,7 +333,7 @@ def build_auth(db, coll, add_audit):
         require_native(request)
         u = await password_user(body)
         enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
-        privileged = u.get("role") in ("owner", "practitioner", "desk")
+        privileged = bool(set(effective_roles(u)) & set(STAFF_ROLES))
         if privileged and enrolled:
             return {"mfaRequired": True, "challenge": _challenge_for(u, "mfa-native")}
         if privileged and await mfa_enforcement():
@@ -346,7 +375,7 @@ def build_auth(db, coll, add_audit):
         from config import is_production
         if not account or blocks_demo_account(account, is_production()):
             raise HTTPException(401, "Session expired")
-        if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+        if bool(set(effective_roles(account)) & set(STAFF_ROLES)) and await mfa_enforcement() and not row.get("mfaAt"):
             raise HTTPException(401, "Sign in with your authenticator")
         jti = secrets.token_urlsafe(16)
         expires = (datetime.now(timezone.utc) + timedelta(days=NATIVE_REFRESH_DAYS)).isoformat()
@@ -373,7 +402,7 @@ def build_auth(db, coll, add_audit):
     async def login(request: Request, response: Response, body: dict = Body(...)):
         u = await password_user(body)
         enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
-        privileged = u.get("role") in ("owner", "practitioner", "desk")
+        privileged = bool(set(effective_roles(u)) & set(STAFF_ROLES))
         if privileged and (enrolled or await mfa_enforcement()):
             # A password check is not a session. Drop any previous cookies so the
             # authenticator request is not rejected as a stale cookie session.
@@ -461,7 +490,7 @@ def build_auth(db, coll, add_audit):
         from config import is_production
         if not account or blocks_demo_account(account, is_production()):
             raise HTTPException(401, "Session expired")
-        if account.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement() and not row.get("mfaAt"):
+        if bool(set(effective_roles(account)) & set(STAFF_ROLES)) and await mfa_enforcement() and not row.get("mfaAt"):
             raise HTTPException(401, "Sign in with your authenticator")
         jti = secrets.token_urlsafe(16)
         expires = (datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS)).isoformat()
@@ -530,7 +559,7 @@ def build_auth(db, coll, add_audit):
             body = await request.json()
         if body and body.get("challenge"):
             user = await _challenge_user(body, "mfa-enroll")
-            if not user or user.get("role") not in ("owner", "practitioner", "desk"):
+            if not user or not (set(effective_roles(user)) & set(STAFF_ROLES)):
                 raise HTTPException(401, "Sign in again")
         else:
             user = await require(request, "owner", "practitioner", "desk")
@@ -555,7 +584,7 @@ def build_auth(db, coll, add_audit):
         via_challenge = bool(body.get("challenge"))
         if via_challenge:
             user = await _challenge_user(body, "mfa-enroll")
-            if not user or user.get("role") not in ("owner", "practitioner", "desk"):
+            if not user or not (set(effective_roles(user)) & set(STAFF_ROLES)):
                 raise HTTPException(401, "Sign in again")
         else:
             user = await require(request, "owner", "practitioner", "desk")
@@ -680,7 +709,7 @@ def build_auth(db, coll, add_audit):
             "email": user.get("email"),
             "role": user.get("role"),
             "mfaEnabled": enabled,
-            "mfaEnforced": await mfa_enforcement() if user.get("role") in ("owner", "practitioner", "desk") else False,
+            "mfaEnforced": await mfa_enforcement() if bool(set(effective_roles(user)) & set(STAFF_ROLES)) else False,
             "recoveryCodesRemaining": len((mfa or {}).get("recoveryHashes") or []) if enabled else 0,
             "replacePending": pending,
             "sessionMfaVerified": bool(session and session.get("mfaAt")),
@@ -691,7 +720,7 @@ def build_auth(db, coll, add_audit):
     @r.post("/change-password")
     async def change_password(request: Request, body: dict = Body(...)):
         user = await require(request)
-        if user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+        if bool(set(effective_roles(user)) & set(STAFF_ROLES)) and await mfa_enforcement():
             session = await _session_row(user)
             if not (session and session.get("mfaAt")):
                 raise HTTPException(403, "Confirm your authenticator before this action")
@@ -714,7 +743,7 @@ def build_auth(db, coll, add_audit):
     @r.post("/sessions/revoke-others")
     async def revoke_other_sessions(request: Request):
         user = await require(request)
-        if user.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+        if bool(set(effective_roles(user)) & set(STAFF_ROLES)) and await mfa_enforcement():
             session = await _session_row(user)
             if not (session and session.get("mfaAt")):
                 raise HTTPException(403, "Confirm your authenticator before this action")
@@ -832,7 +861,7 @@ def build_auth(db, coll, add_audit):
         u = await users.find_one(q)
         if not u:
             raise HTTPException(404, "No demo account")
-        if u.get("role") in ("owner", "practitioner", "desk") and await mfa_enforcement():
+        if bool(set(effective_roles(u)) & set(STAFF_ROLES)) and await mfa_enforcement():
             enrolled = await db["nt_mfa"].find_one({"userId": u["id"], "enabled": True})
             if not enrolled:
                 raise HTTPException(403, "Enroll an authenticator before this staff sign-in")
@@ -842,25 +871,46 @@ def build_auth(db, coll, add_audit):
         apply_session(response, u["id"], sid, csrf, jti)
         return await present(u, coll)
 
+    @r.post("/workspace")
+    async def set_workspace(request: Request, body: WorkspaceIn):
+        """Remember preferred presentation workspace. Does not grant roles."""
+        user = await require(request)
+        spaces = workspaces_for(user)
+        if body.workspace not in spaces:
+            raise HTTPException(403, "That workspace is not authorized for your account")
+        await users.update_one({"id": user["id"]}, {"$set": {"preferredWorkspace": body.workspace}})
+        user["preferredWorkspace"] = body.workspace
+        await add_audit(user.get("name") or user["email"], f"Preferred workspace set to {body.workspace}", None)
+        return await present(user, coll)
+
     @r.get("/staff")
     async def staff(request: Request):
         await require(request, "owner")
-        return await users.find({"role": {"$in": ["practitioner", "desk", "owner"]}}, {"_id": 0, "password_hash": 0}).to_list(200)
+        rows = await users.find(
+            {"$or": [{"role": {"$in": list(STAFF_ROLES)}}, {"roles": {"$in": list(STAFF_ROLES)}}]},
+            {"_id": 0, "password_hash": 0},
+        ).to_list(200)
+        for row in rows:
+            row["roles"] = normalize_roles(row.get("roles"), row.get("role"))
+        return rows
 
     @r.post("/staff")
     async def create_staff(request: Request, body: StaffIn):
         owner = await require(request, "owner")
-        if body.role not in ("practitioner", "desk"):
-            raise HTTPException(400, "Role must be practitioner or desk")
+        roles = normalize_roles(body.roles, body.role)
+        if not roles or any(role not in STAFF_ROLES for role in roles):
+            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
+        if "owner" in roles and not has_strict_role(owner, "owner"):
+            raise HTTPException(403, "Only an owner can grant the owner role")
         email = body.email.lower()
-        if body.role == "practitioner":
+        if "practitioner" in roles:
             from onboarding import acceptable_login
             if not acceptable_login(email, owner.get("email")):
                 raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
         if await users.find_one({"email": email}):
             raise HTTPException(409, "Email already in use")
         subject = None
-        if body.role == "practitioner":
+        if "practitioner" in roles:
             subject = body.practitionerId or f"p-{uuid.uuid4().hex[:6]}"
             if not await coll("practitioners").find_one({"id": subject}):
                 initials = "".join(w[0] for w in body.name.split()[:2]).upper()
@@ -869,50 +919,51 @@ def build_auth(db, coll, add_audit):
                                                         "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "directBilling": False, "mobile": True})
                 from availability import draft_schedule
                 await db.nt_schedules.insert_one(draft_schedule(subject))
-        u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": body.name, "role": body.role,
-             "subject": subject, "createdAt": datetime.now(timezone.utc).isoformat()}
+        primary = primary_role(roles)
+        preferred = "practitioner" if primary == "practitioner" else ("desk" if primary == "desk" else "owner")
+        u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": body.name, "role": primary,
+             "roles": roles, "subject": subject, "preferredWorkspace": preferred, "status": "active",
+             "createdAt": datetime.now(timezone.utc).isoformat()}
         await users.insert_one(dict(u))
-        await add_audit(owner["name"], f"Staff account created: {body.name} ({body.role})")
+        await add_audit(owner["name"], f"Staff account created: {body.name} ({','.join(roles)})")
         return await present(u, coll)
 
-    @r.post("/staff/invite")
-    async def invite_staff(request: Request, body: InviteIn):
-        owner = await require(request, "owner")
-        if body.role not in ("practitioner", "desk"):
-            raise HTTPException(400, "Role must be practitioner or desk")
-        email = body.email.lower()
-        if body.role == "practitioner":
-            from onboarding import acceptable_login
-            if not acceptable_login(email, owner.get("email")):
-                raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
-        if await users.find_one({"email": email}):
-            raise HTTPException(409, "Email already in use")
+    async def _issue_invite(owner, *, email, name, roles, phone, practitioner_id, preferred):
         subject = None
-        if body.role == "practitioner":
-            subject = f"p-{uuid.uuid4().hex[:8]}"
-            initials = "".join(part[0] for part in body.name.split()[:2]).upper() or "NT"
-            await coll("practitioners").insert_one({
-                "id": subject, "name": body.name, "initials": initials, "color": "#18A8F5", "isOwner": False,
-                "specialties": [], "available": False, "bookable": False, "onboardingStatus": "invited",
-                "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "phone": (body.phone or "").strip(),
-                "email": email, "directBilling": False, "mobile": True, "demo": False, "origin": "invited",
-            })
-            from availability import draft_schedule
-            await db.nt_schedules.insert_one(draft_schedule(subject))
+        if "practitioner" in roles:
+            subject = practitioner_id or f"p-{uuid.uuid4().hex[:8]}"
+            if not await coll("practitioners").find_one({"id": subject}):
+                initials = "".join(part[0] for part in name.split()[:2]).upper() or "NT"
+                await coll("practitioners").insert_one({
+                    "id": subject, "name": name, "initials": initials, "color": "#18A8F5", "isOwner": False,
+                    "specialties": [], "available": False, "bookable": False, "onboardingStatus": "invited",
+                    "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "phone": (phone or "").strip(),
+                    "email": email, "directBilling": False, "mobile": True, "demo": False, "origin": "invited",
+                })
+                from availability import draft_schedule
+                await db.nt_schedules.insert_one(draft_schedule(subject))
         now = datetime.now(timezone.utc)
         raw = secrets.token_urlsafe(32)
         secret = secrets.token_urlsafe(32)
         user_id = str(uuid.uuid4())
+        primary = primary_role(roles)
+        preferred_ws = preferred if preferred in ("owner", "practitioner", "desk") else (
+            "practitioner" if primary == "practitioner" else ("desk" if primary == "desk" else "owner")
+        )
         await users.insert_one({
-            "id": user_id, "email": email, "password_hash": hash_pw(secret), "name": body.name, "role": body.role,
-            "subject": subject, "createdAt": now.isoformat(), "invitePending": True,
+            "id": user_id, "email": email, "password_hash": hash_pw(secret), "name": name, "role": primary,
+            "roles": roles, "subject": subject, "preferredWorkspace": preferred_ws, "status": "invited",
+            "createdAt": now.isoformat(), "invitePending": True,
         })
-        await db.nt_staff_invites.insert_one({
-            "tokenHash": hashlib.sha256(raw.encode()).hexdigest(), "userId": user_id, "used": False,
-            "createdAt": now.isoformat(), "expiresAt": (now + timedelta(hours=72)).isoformat(),
-        })
-        await add_audit(owner["name"], f"Staff invitation created: {body.name} ({body.role})")
-        result = {"invited": True, "delivery": "not_sent", "role": body.role, "email": email}
+        invite = {
+            "id": "inv-" + uuid.uuid4().hex[:10],
+            "tokenHash": hashlib.sha256(raw.encode()).hexdigest(), "userId": user_id, "used": False, "revoked": False,
+            "roles": roles, "email": email, "createdAt": now.isoformat(),
+            "expiresAt": (now + timedelta(hours=72)).isoformat(),
+        }
+        await db.nt_staff_invites.insert_one(invite)
+        await add_audit(owner["name"], f"Staff invitation created: {name} ({','.join(roles)})")
+        result = {"invited": True, "delivery": "not_sent", "role": primary, "roles": roles, "email": email, "inviteId": invite["id"]}
         if preview_local_reset():
             result["delivery"] = "preview_link"
             result["previewInviteToken"] = raw
@@ -927,12 +978,99 @@ def build_auth(db, coll, add_audit):
         result["message"] = "Invitation email sent."
         return result
 
+    @r.post("/staff/invite")
+    async def invite_staff(request: Request, body: InviteIn):
+        owner = await require(request, "owner")
+        roles = normalize_roles(body.roles, body.role)
+        if not roles or any(role not in STAFF_ROLES for role in roles):
+            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
+        if "owner" in roles and not has_strict_role(owner, "owner"):
+            raise HTTPException(403, "Only an owner can grant the owner role")
+        email = body.email.lower()
+        if "practitioner" in roles:
+            from onboarding import acceptable_login
+            if not acceptable_login(email, owner.get("email")):
+                raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
+        if await users.find_one({"email": email}):
+            raise HTTPException(409, "Email already in use")
+        return await _issue_invite(
+            owner, email=email, name=body.name, roles=roles, phone=body.phone,
+            practitioner_id=body.practitionerId, preferred=body.preferredWorkspace,
+        )
+
+    @r.post("/staff/invites/{invite_id}/resend")
+    async def resend_invite(invite_id: str, request: Request):
+        owner = await require(request, "owner")
+        invite = await db.nt_staff_invites.find_one({"id": invite_id})
+        if not invite or invite.get("used") or invite.get("revoked"):
+            raise HTTPException(404, "Invitation not found")
+        account = await users.find_one({"id": invite["userId"]})
+        if not account:
+            raise HTTPException(404, "Invitation not found")
+        await db.nt_staff_invites.update_one({"id": invite_id}, {"$set": {"revoked": True, "revokedAt": datetime.now(timezone.utc).isoformat()}})
+        return await _issue_invite(
+            owner, email=account["email"], name=account.get("name") or account["email"],
+            roles=normalize_roles(invite.get("roles") or account.get("roles"), account.get("role")),
+            phone="", practitioner_id=account.get("subject"), preferred=account.get("preferredWorkspace"),
+        )
+
+    @r.post("/staff/invites/{invite_id}/revoke")
+    async def revoke_invite(invite_id: str, request: Request):
+        owner = await require(request, "owner")
+        invite = await db.nt_staff_invites.find_one({"id": invite_id})
+        if not invite or invite.get("used"):
+            raise HTTPException(404, "Invitation not found")
+        await db.nt_staff_invites.update_one({"id": invite_id}, {"$set": {"revoked": True, "revokedAt": datetime.now(timezone.utc).isoformat()}})
+        await users.update_one({"id": invite["userId"], "invitePending": True}, {"$set": {"status": "revoked"}})
+        await add_audit(owner["name"], f"Staff invitation revoked: {invite.get('email') or invite_id}")
+        return {"ok": True, "revoked": True}
+
+    @r.patch("/staff/{user_id}")
+    async def patch_staff(user_id: str, request: Request, body: StaffRolesIn):
+        owner = await require(request, "owner")
+        account = await users.find_one({"id": user_id})
+        if not account:
+            raise HTTPException(404, "Staff account not found")
+        roles = normalize_roles(body.roles, account.get("role"))
+        if not roles or any(role not in STAFF_ROLES for role in roles):
+            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
+        if "owner" in roles and not has_strict_role(owner, "owner"):
+            raise HTTPException(403, "Only an owner can grant the owner role")
+        if is_sysadmin(account) and "owner" not in effective_roles(owner):
+            raise HTTPException(403, "Protected system administrator accounts require an owner")
+        patch = {"roles": roles, "role": primary_role(roles)}
+        if body.preferredWorkspace:
+            patch["preferredWorkspace"] = body.preferredWorkspace
+        if body.status in ("active", "suspended"):
+            patch["status"] = body.status
+            if body.status == "suspended":
+                await sessions.update_many({"userId": user_id, "revoked": False}, {"$set": {"revoked": True, "revokedReason": "suspended"}})
+        if body.practitionerId is not None:
+            patch["subject"] = body.practitionerId or None
+        await users.update_one({"id": user_id}, {"$set": patch})
+        await add_audit(owner["name"], f"Staff roles updated: {account.get('email')} → {','.join(roles)}")
+        updated = await users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+        return await present(updated, coll)
+
+    @r.post("/staff/{user_id}/revoke-sessions")
+    async def revoke_staff_sessions(user_id: str, request: Request):
+        owner = await require(request, "owner")
+        account = await users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1})
+        if not account:
+            raise HTTPException(404, "Staff account not found")
+        result = await sessions.update_many({"userId": user_id, "revoked": False}, {"$set": {"revoked": True, "revokedReason": "admin_revoke"}})
+        await add_audit(owner["name"], f"Sessions revoked for {account.get('email')}")
+        return {"ok": True, "revoked": int(result.modified_count)}
+
     @r.post("/invite/accept")
     async def accept_invite(body: InviteAccept):
         rec = await db.nt_staff_invites.find_one({"tokenHash": hashlib.sha256(body.token.encode()).hexdigest()})
-        if not rec or rec.get("used") or rec.get("expiresAt", "") < datetime.now(timezone.utc).isoformat():
+        if not rec or rec.get("used") or rec.get("revoked") or rec.get("expiresAt", "") < datetime.now(timezone.utc).isoformat():
             raise HTTPException(400, "This invitation is invalid or has expired")
-        updated = await users.update_one({"id": rec["userId"]}, {"$set": {"password_hash": hash_pw(body.password), "invitePending": False}})
+        updated = await users.update_one(
+            {"id": rec["userId"]},
+            {"$set": {"password_hash": hash_pw(body.password), "invitePending": False, "status": "active"}},
+        )
         if updated.matched_count != 1:
             raise HTTPException(400, "This invitation is invalid or has expired")
         await db.nt_staff_invites.update_one({"_id": rec["_id"]}, {"$set": {"used": True}})

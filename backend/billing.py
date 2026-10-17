@@ -302,6 +302,8 @@ async def _body(request):
 
 
 def build_billing_router(db, coll, add_audit, user_from):
+    from rbac import has_role
+
     r = APIRouter(prefix="/api")
 
     async def settings():
@@ -316,14 +318,22 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(401, "Not authenticated")
         return user
 
-    async def appointment(aid):
+    async def appointment(aid, *, required=True):
+        if not aid:
+            if required:
+                raise HTTPException(404, "Appointment not found")
+            return {}
         found = await coll("appointments").find_one({"id": aid}, {"_id": 0})
         if not found:
-            raise HTTPException(404, "Appointment not found")
+            if required:
+                raise HTTPException(404, "Appointment not found")
+            return {}
         return found
 
     async def sync_payment_due(invoice):
         """Copy the ledger result onto the visit. A missing payment policy leaves older visits unchanged."""
+        if not invoice.get("appointmentId"):
+            return
         lines = await ledger_for(invoice["id"])
         received, _balance, _state, _overdue = project(invoice, lines)
         refunded = sum(int(line["amountCents"]) for line in lines if line["type"] in ("refund", "reversal"))
@@ -334,18 +344,22 @@ def build_billing_router(db, coll, add_audit, user_from):
         )
 
     def allowed(user, appt, kind):
-        if user["role"] == "owner":
+        if has_role(user, "owner"):
             return True
-        if user["role"] == "practitioner" and user.get("subject") == appt.get("practitionerId") and kind in ("view", "cash", "claim"):
+        if has_role(user, "practitioner") and user.get("subject") == (appt or {}).get("practitionerId") and kind in ("view", "cash", "claim"):
             return True
-        if user["role"] == "client" and user.get("subject") == appt.get("clientId") and kind == "view":
+        if user.get("role") == "client" and user.get("subject") == (appt or {}).get("clientId") and kind == "view":
             return True
-        if user["role"] == "desk" and kind == "view":
+        if has_role(user, "desk") and kind == "view":
             return True
         return False
 
     async def desk_can(user, key):
-        return user["role"] == "desk" and bool((await perms()).get(key))
+        return has_role(user, "desk") and not has_role(user, "owner") and bool((await perms()).get(key))
+
+    async def can_manage_invoice(user, invoice, appt=None):
+        visit = appt if appt is not None else await appointment(invoice.get("appointmentId"), required=False)
+        return has_role(user, "owner") or await desk_can(user, "managePayments") or allowed(user, visit, "cash")
 
     async def load(iid):
         found = await db.nt_invoices.find_one({"id": iid}, {"_id": 0})
@@ -508,12 +522,79 @@ def build_billing_router(db, coll, add_audit, user_from):
         await add_audit(user.get("name") or "staff", f"{stored.get('number') or stored['id']} {line['type']} {money_view(line['amountCents'])['display']}", stored.get("appointmentId"))
         return stored
 
+    @r.post("/invoices")
+    async def create_manual_invoice(request: Request):
+        """Standalone invoice. Does not require an appointment and does not imply treatment completion."""
+        user = await actor(request)
+        body = await _body(request) or {}
+        if not (has_role(user, "owner") or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to create invoices")
+        client_id = str(body.get("clientId") or "").strip()
+        client = await coll("clients").find_one({"id": client_id}, {"_id": 0}) if client_id else None
+        if not client:
+            raise HTTPException(400, "Choose a patient for this invoice")
+        practitioner_id = str(body.get("practitionerId") or "").strip() or None
+        practitioner = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0}) if practitioner_id else None
+        service_date = str(body.get("serviceDate") or now().date().isoformat())
+        notes = str(body.get("notes") or "").strip()[:500]
+        rows = []
+        for item in body.get("lines") or []:
+            slug = str(item.get("serviceSlug") or "").strip()
+            service = await coll("services").find_one({"slug": slug}, {"_id": 0}) if slug else None
+            duration = int(item.get("duration") or 0)
+            qty = max(1, int(item.get("quantity") or 1))
+            if item.get("unitCents") is not None:
+                unit = int(item.get("unitCents"))
+            elif service and duration and service.get("prices"):
+                unit = to_cents(service["prices"].get(str(duration)) or service["prices"].get(duration) or 0)
+            else:
+                unit = to_cents(item.get("unitPrice") or 0)
+            if unit < 0:
+                raise HTTPException(400, "Line amounts cannot be negative")
+            desc = str(item.get("description") or (service or {}).get("name") or "Service").strip()[:120]
+            if duration:
+                desc = f"{desc} ({duration} min)"
+            rows.append({
+                "description": desc, "quantity": qty, "netCents": unit * qty, "taxCode": "taxable",
+                "serviceSlug": slug or None, "duration": duration or None,
+                "unitCents": unit, "practitionerId": item.get("practitionerId") or practitioner_id,
+            })
+        if not rows:
+            raise HTTPException(400, "Add at least one service line")
+        discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        if discount:
+            rows.append({"description": str(body.get("discountLabel") or "Discount"), "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
+        net = sum(int(row["netCents"]) for row in rows)
+        gst_rate = Decimal(str((await settings()).get("gst") or 0.05))
+        tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if net > 0 else 0
+        total = net + tax
+        if total < 0:
+            raise HTTPException(400, "Invoice total cannot be negative")
+        invoice = {
+            "id": "inv-" + uuid.uuid4().hex[:12], "number": None, "appointmentId": None, "clientId": client_id,
+            "practitionerId": practitioner_id,
+            "clientName": ((client.get("firstName") or "") + " " + (client.get("lastName") or "")).strip() or "Client",
+            "practitionerName": (practitioner or {}).get("name") or "",
+            "service": rows[0]["description"], "duration": rows[0].get("duration"), "serviceDate": service_date,
+            "issueDate": None, "dueDate": None, "currency": "CAD", "state": "draft", "version": 1,
+            "origin": "manual", "countsAsRevenue": True, "notes": notes,
+            "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
+            "createdAt": now_iso(), "idempotencyKey": body.get("idempotencyKey"),
+        }
+        if body.get("idempotencyKey"):
+            existing = await db.nt_invoices.find_one({"idempotencyKey": body["idempotencyKey"], "origin": "manual"}, {"_id": 0})
+            if existing:
+                return await view_for(user, existing)
+        await db.nt_invoices.insert_one(dict(invoice))
+        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}", None)
+        return await view_for(user, invoice)
+
     @r.post("/invoices/from-appointment/{aid}")
     async def draft_invoice(aid: str, request: Request):
         user = await actor(request)
         body = await _body(request)
         appt = await appointment(aid)
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        if not await can_manage_invoice(user, {"appointmentId": aid}, appt):
             raise HTTPException(403, "Not permitted to invoice this visit")
         if appt.get("status") == "cancelled":
             raise HTTPException(409, "A cancelled visit is not invoiced")
@@ -572,11 +653,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     async def can_list(user, client_id):
-        if user["role"] == "owner":
+        if has_role(user, "owner"):
             return True
-        if user["role"] == "desk":
+        if has_role(user, "desk"):
             return await desk_can(user, "managePayments") or await desk_can(user, "viewInsuranceStatus")
-        return user["role"] == "client" and (not client_id or client_id == user.get("subject"))
+        return user.get("role") == "client" and (not client_id or client_id == user.get("subject"))
 
     @r.get("/invoices")
     async def list_invoices(request: Request, clientId: str = "", state: str = "", limit: int = 50, skip: int = 0):
@@ -691,8 +772,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         user = await actor(request)
         body = await _body(request)
         invoice = await load(iid)
-        appt = await appointment(invoice["appointmentId"])
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_manage_invoice(user, invoice, appt):
             raise HTTPException(403, "Not permitted to issue this invoice")
         if invoice["state"] != "draft":
             return await view_for(user, invoice)
@@ -719,13 +800,16 @@ def build_billing_router(db, coll, add_audit, user_from):
         user = await actor(request)
         body = await _body(request)
         invoice = await load(iid)
-        appt = await appointment(invoice["appointmentId"])
-        method = body.get("method")
-        if method != "cash":
-            raise HTTPException(400, "This endpoint records cash. Card and insurance use their own confirmation.")
-        if user["role"] == "client":
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        method = str(body.get("method") or "cash").strip().lower().replace("-", "_")
+        allowed_methods = {"cash", "etransfer", "e_transfer", "terminal", "external_card", "other"}
+        if method not in allowed_methods:
+            raise HTTPException(400, "Use cash, e-transfer, terminal, or other for manual payments. Stripe stays on Checkout.")
+        if method in ("e_transfer", "external_card"):
+            method = "etransfer" if method == "e_transfer" else "terminal"
+        if user.get("role") == "client":
             raise HTTPException(403, "Clients cannot confirm cash")
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        if not await can_manage_invoice(user, invoice, appt):
             raise HTTPException(403, "Not permitted to record this payment")
         if invoice["state"] == "draft":
             raise HTTPException(409, "Issue the invoice before recording a payment")
@@ -744,11 +828,11 @@ def build_billing_router(db, coll, add_audit, user_from):
                 manual_settlement_cents(appt, balance, received, amount)
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from exc
-            return {"type": "client_payment", "method": "cash", "amountCents": amount, "reference": body.get("reference")}
+            return {"type": "client_payment", "method": method, "amountCents": amount, "reference": body.get("reference"), "provider": "manual"}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
         await sync_payment_due(saved)
-        await notify_client(saved, "cash:" + str(body.get("idempotencyKey")))
+        await notify_client(saved, f"{method}:" + str(body.get("idempotencyKey")))
         return await view_for(user, saved)
 
     @r.post("/invoices/{iid}/adjustments")

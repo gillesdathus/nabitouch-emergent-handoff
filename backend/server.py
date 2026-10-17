@@ -466,11 +466,73 @@ async def reception_perms():
     return settings.get("receptionPerms") or {}
 
 
+@api.get("/clients/search")
+async def search_clients(request: Request, q: str = "", limit: int = 20):
+    """Staff patient lookup by name, email, or phone. Does not return clinical notes."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    needle = str(q or "").strip().lower()
+    if len(needle) < 2:
+        return {"clients": [], "duplicates": []}
+    limit = max(1, min(int(limit or 20), 50))
+    rows = await coll("clients").find({}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1, "email": 1, "phone": 1, "preferredName": 1}).to_list(2000)
+    hits = []
+    for row in rows:
+        blob = " ".join(str(row.get(k) or "") for k in ("firstName", "lastName", "preferredName", "email", "phone")).lower()
+        digits = "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit())
+        q_digits = "".join(ch for ch in needle if ch.isdigit())
+        if needle in blob or (q_digits and q_digits in digits):
+            hits.append(row)
+        if len(hits) >= limit:
+            break
+    duplicates = []
+    for row in hits[:10]:
+        email = str(row.get("email") or "").lower()
+        phone = "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit())[-10:]
+        same = [other for other in rows if other["id"] != row["id"] and (
+            (email and str(other.get("email") or "").lower() == email) or
+            (len(phone) >= 10 and "".join(ch for ch in str(other.get("phone") or "") if ch.isdigit())[-10:] == phone)
+        )]
+        if same:
+            duplicates.append({"clientId": row["id"], "matches": [m["id"] for m in same[:5]]})
+    await add_audit(user.get("name") or "staff", f"Patient search ({len(hits)} hits)")
+    return {"clients": hits, "duplicates": duplicates}
+
+
+@api.post("/clients")
+async def create_client(request: Request, body: dict = Body(...)):
+    """Staff patient registration. Does not merge duplicates automatically."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    if has_role(user, "desk") and not has_role(user, "owner") and not (await reception_perms()).get("createBooking"):
+        raise HTTPException(403, "Not permitted")
+    first = str(body.get("firstName") or "").strip()
+    last = str(body.get("lastName") or "").strip()
+    email = str(body.get("email") or "").strip().lower()
+    phone = str(body.get("phone") or "").strip()
+    if not first or not last:
+        raise HTTPException(400, "First and last name are required")
+    if email and await coll("clients").find_one({"email": email}, {"_id": 1}):
+        raise HTTPException(409, "A patient with that email already exists")
+    client = {
+        "id": "c-" + uuid.uuid4().hex[:10], "firstName": first, "lastName": last, "preferredName": str(body.get("preferredName") or "").strip(),
+        "email": email, "phone": phone, "dob": str(body.get("dob") or "").strip(), "language": body.get("language") or "English",
+        "contactMethod": body.get("contactMethod") or "Text", "marketingConsent": bool(body.get("marketingConsent")),
+        "smsConsent": bool(body.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [],
+        "loyaltyPoints": 0, "onlineBookings": 0, "createdAt": now_iso(), "createdBy": user.get("id"),
+    }
+    await coll("clients").insert_one(dict(client))
+    await add_audit(user.get("name") or "staff", f"Patient created {first} {last}")
+    return client
+
+
 @api.get("/clients/{client_id}/workspace")
 async def client_workspace(client_id: str, request: Request):
     """Staff client record. Reception sees only what its permissions allow. Clinical notes are never included."""
+    from rbac import has_role
     user = await require(request, "owner", "desk")
-    perms = await reception_perms() if user["role"] == "desk" else {}
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    perms = await reception_perms() if desk_only else {}
     client = await coll("clients").find_one({"id": client_id}, NO_ID)
     if not client:
         raise HTTPException(404, "Client not found")
@@ -478,7 +540,7 @@ async def client_workspace(client_id: str, request: Request):
         client = {**client, "insurance": open_insurance(client.get("insurance"))}
     appts = await coll("appointments").find({"clientId": client_id}, NO_ID).sort([("date", -1), ("time", -1)]).to_list(300)
     appts = [present_trip(a) for a in appts]
-    if user["role"] == "desk":
+    if desk_only:
         appts = [hide_practitioner_home(a) for a in appts]
         if not perms.get("viewAddresses"):
             appts = [without_keys(a, {"address"}) for a in appts]
@@ -487,7 +549,7 @@ async def client_workspace(client_id: str, request: Request):
             client = without_keys(client, {"insurance"})
     consents = await db.nt_consents.find({"clientId": client_id}, NO_ID).sort("at", -1).to_list(100)
     consent_view = [{k: c.get(k) for k in ("id", "kind", "purpose", "version", "at", "withdrawnAt", "status")} for c in consents]
-    can_read_threads = user["role"] == "owner" or bool(perms.get("viewHistory") or perms.get("createBooking"))
+    can_read_threads = has_role(user, "owner") or bool(perms.get("viewHistory") or perms.get("createBooking"))
     threads = []
     if can_read_threads:
         for a in appts:
@@ -498,12 +560,15 @@ async def client_workspace(client_id: str, request: Request):
             last = await db.nt_messages.find({"appointmentId": a["id"]}, NO_ID).sort("createdAt", -1).to_list(1)
             threads.append({"appointmentId": a["id"], "ref": a.get("ref"), "date": a.get("date"), "time": a.get("time"), "messages": count, "notices": notices,
                             "last": {k: last[0].get(k) for k in ("body", "authorRole", "authorLabel", "createdAt")} if last else None})
-    plans = await coll("plans").find({"clientId": client_id}, NO_ID).to_list(50) if user["role"] == "owner" else []
+    plans = await coll("plans").find({"clientId": client_id}, NO_ID).to_list(50) if has_role(user, "owner") else []
+    invoices = []
+    if has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")):
+        invoices = await db.nt_invoices.find({"clientId": client_id}, {"_id": 0, "id": 1, "number": 1, "state": 1, "totalCents": 1, "serviceDate": 1, "origin": 1}).sort("serviceDate", -1).to_list(50)
     await add_audit(user.get("name") or "staff", f"Opened client record {client.get('firstName', '')} {client.get('lastName', '')}".strip())
-    return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans,
-            "access": {"role": user["role"], "threads": can_read_threads, "plans": user["role"] == "owner", "clinical": False,
-                       "invoices": user["role"] == "owner" or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
-                       "insurance": user["role"] == "owner" or bool(perms.get("viewInsuranceStatus"))}}
+    return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans, "invoices": invoices,
+            "access": {"role": user["role"], "threads": can_read_threads, "plans": has_role(user, "owner"), "clinical": False,
+                       "invoices": has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
+                       "insurance": has_role(user, "owner") or bool(perms.get("viewInsuranceStatus"))}}
 
 
 @api.get("/state")
@@ -1377,14 +1442,13 @@ async def price_welcome(*, service, duration, addons, zone, client, incoming, pr
 async def resolve_booking(payload, user):
     """Read the catalogue and appointment history and return a server quote. This does not reserve the offer."""
     incoming = payload.get("client") or {}
-    source = payload.get("source") or "online"
-    if source not in ("online", "reception"):
-        source = "online"
-    if user and user["role"] == "practitioner":
+    from rbac import normalize_booking_source, has_role
+    source = normalize_booking_source(payload.get("source"), default="online")
+    if user and has_role(user, "practitioner") and not has_role(user, "owner", "desk", "manager"):
         raise HTTPException(403, "Not permitted")
-    if user and user["role"] == "desk" and not (await reception_perms()).get("createBooking"):
+    if user and has_role(user, "desk") and not has_role(user, "owner", "manager") and not (await reception_perms()).get("createBooking"):
         raise HTTPException(403, "Not permitted")
-    if user and user["role"] == "client":
+    if user and user["role"] == "client" and not has_role(user, "owner", "manager", "desk"):
         incoming = {"id": user["subject"]}
     elif (not user) and incoming.get("id"):
         raise HTTPException(403, "Sign in to book for an existing profile")
