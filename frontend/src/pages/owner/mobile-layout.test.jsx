@@ -41,7 +41,7 @@ test("calendar day strip and mobile list stay readable for dense labels", () => 
     personId: "",
   }));
   expect(view.host.querySelector("[data-testid='calendar-day-strip']")).toBeTruthy();
-  expect(view.host.querySelector("[data-testid='calendar-mobile-list']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='calendar-list']")).toBeTruthy();
   const card = view.host.querySelector("[data-testid='calendar-appointment-apt-mobile-1']");
   expect(card.textContent).toContain("Alexandria-Marie");
   expect(card.textContent).toContain("Swedish Massage");
@@ -50,7 +50,8 @@ test("calendar day strip and mobile list stay readable for dense labels", () => 
   view.unmount();
 });
 
-test("week grid is horizontally contained rather than page-wide", () => {
+test("week grid is contained in its own scroll area rather than page-wide", () => {
+  window.matchMedia = (q) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} });
   const view = mount(createElement(VisualCalendar, {
     appointments: [visit],
     practitioners: [{ id: "p1", name: "Maya", color: "#1565F0" }],
@@ -62,6 +63,7 @@ test("week grid is horizontally contained rather than page-wide", () => {
   act(() => { view.host.querySelector("[data-testid='calendar-view-week']").click(); });
   const wrap = view.host.querySelector("[data-testid='calendar-grid-wrap']");
   expect(wrap).toBeTruthy();
-  expect(wrap.className).toContain("overflow-x-auto");
+  expect(wrap.className).toContain("overflow-auto");
   view.unmount();
+  delete window.matchMedia;
 });

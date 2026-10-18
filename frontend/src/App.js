@@ -184,7 +184,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </Gate>
-          <Toaster position="bottom-right" richColors closeButton />
+          <Toaster position="bottom-right" richColors closeButton offset={{ bottom: "var(--nb-toast-offset)", right: "1.5rem" }} mobileOffset={{ bottom: "var(--nb-toast-offset)" }} />
         </BrowserRouter>
       </DemoProvider>
     </MotionConfig>

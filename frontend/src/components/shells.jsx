@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
 import { Avatar } from "@/components/ui-kit";
@@ -65,7 +65,7 @@ const STAFF = {
   owner: {
     title: "Owner",
     nav: [
-      { to: "/owner", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/owner", label: "Dashboard", short: "Home", icon: LayoutDashboard, end: true },
       { to: "/owner/schedule", label: "Schedule", icon: CalendarDays },
       { to: "/owner/manage", label: "Manage", icon: LayoutGrid },
       { to: "/owner/payments", label: "Invoices", icon: ReceiptText },
@@ -93,41 +93,51 @@ function Page({ children }) {
   return <div key={pathname} className="nb-page">{children}</div>;
 }
 
+const slug = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
+
+function DockItem({ icon: Icon, label, active, primary }) {
+  return (
+    <span className={cn("relative flex h-full flex-col items-center justify-center gap-0.5 rounded-2xl px-0 transition-colors duration-200", active ? "text-nb-ink" : primary ? "text-nb-blue" : "text-nb-mute")}>
+      {active && <motion.span layoutId="dock-active" transition={{ type: "spring", stiffness: 420, damping: 34 }} className="absolute inset-x-2 top-0 h-[3px] rounded-full bg-nb-ink" />}
+      {Icon && <Icon className="h-5 w-5 shrink-0" strokeWidth={active ? 2.3 : 1.9} aria-hidden="true" />}
+      <span className={cn("max-w-full truncate text-[10px] leading-tight tracking-tight min-[360px]:text-[10.5px]", active ? "font-semibold" : "font-medium")}>{label}</span>
+    </span>
+  );
+}
+
+function MoreSheet({ more, testid, active }) {
+  const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => { setOpen(false); }, [pathname]);
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger data-testid={`${testid}-more`} aria-label="More" className="min-w-0 flex-1">
+        <DockItem icon={MoreHorizontal} label="More" active={active} />
+      </SheetTrigger>
+      <SheetContent side="bottom" className="max-h-[80dvh] overflow-y-auto rounded-t-[28px] pb-[calc(1.25rem+var(--nb-safe-b))]" data-testid={`${testid}-more-sheet`}>
+        <SheetTitle className="mb-3 text-base">More</SheetTitle>
+        <div className="grid grid-cols-2 gap-2">
+          {more.map((item) => (
+            <NavLink key={item.to} to={item.to} data-testid={`${testid}-more-${slug(item.label)}`} className={({ isActive }) => cn("flex min-h-11 items-center rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100", isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50")}>{item.label}</NavLink>
+          ))}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export function FloatingNav({ items, more = [], testid = "bottom-nav" }) {
   const { pathname } = useLocation();
   const moreActive = more.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
   return (
-    <nav data-testid={testid} className="safe-bottom fixed inset-x-3 bottom-3 z-50 lg:hidden" aria-label="Bottom">
-      <div className="mx-auto flex max-w-md items-center justify-between gap-1 rounded-full p-1.5 shadow-[0_18px_40px_-16px_rgba(11,27,63,.45)] nb-glass">
-        {items.map((it) => {
-          const Icon = it.icon || ICONS[it.label];
-          return (
-            <NavLink key={it.to} to={it.to} end={it.end} data-testid={`${testid}-${it.label.toLowerCase().replace(/\s/g, "-")}`} aria-label={it.label} title={it.label} className="relative min-w-0 flex-1">
-              {({ isActive }) => (
-                <span className={cn("relative flex h-12 items-center justify-center gap-1.5 rounded-full transition-colors duration-200", isActive ? "text-white" : it.primary ? "text-nb-blue" : "text-nb-mute")}>
-                  {isActive && <motion.span layoutId={`${testid}-active`} transition={{ type: "spring", stiffness: 420, damping: 34 }} className="absolute inset-0 rounded-full bg-nb-ink" />}
-                  {!isActive && it.primary && <span className="absolute inset-1 rounded-full tint-lagoon" />}
-                  {Icon && <Icon className="relative h-5 w-5 shrink-0" strokeWidth={isActive ? 2.3 : 1.9} />}
-                </span>
-              )}
-            </NavLink>
-          );
-        })}
-        {more.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger data-testid={`${testid}-more`} aria-label="More" className={cn("relative flex h-12 min-w-0 flex-1 items-center justify-center rounded-full", moreActive ? "text-white" : "text-nb-mute")}>
-              {moreActive && <span className="absolute inset-0 rounded-full bg-nb-ink" />}
-              <MoreHorizontal className="relative h-5 w-5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52 rounded-2xl">
-              {more.map((item) => (
-                <DropdownMenuItem key={item.to} asChild className="rounded-xl">
-                  <Link to={item.to} data-testid={`${testid}-more-${item.label.toLowerCase()}`}>{item.label}</Link>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+    <nav data-testid={testid} className="nb-dock fixed inset-x-0 bottom-0 z-50 border-t border-sky-100 bg-white/95 backdrop-blur-md lg:hidden" aria-label="Primary">
+      <div className="mx-auto flex h-[var(--nb-nav-h)] max-w-xl items-stretch justify-between gap-0.5 px-1.5">
+        {items.map((it) => (
+          <NavLink key={it.to} to={it.to} end={it.end} data-testid={`${testid}-${slug(it.label)}`} aria-label={it.label} className="min-w-0 flex-1">
+            {({ isActive }) => <DockItem icon={it.icon || ICONS[it.label]} label={it.short || it.label} active={isActive} primary={it.primary} />}
+          </NavLink>
+        ))}
+        {more.length > 0 && <MoreSheet more={more} testid={testid} active={moreActive} />}
       </div>
     </nav>
   );
@@ -197,8 +207,8 @@ export function ClientShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
   return (
-    <div className="flex min-h-screen flex-col overflow-x-hidden">
-      <header className="sticky top-0 z-40 border-x-0 border-t-0 nb-glass">
+    <div className="flex min-h-[100dvh] flex-col overflow-x-clip">
+      <header className="sticky top-0 z-40 border-x-0 border-t-0 pt-[var(--nb-safe-t)] nb-glass">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-5">
           <Lockup />
           <nav className="hidden items-center gap-1 lg:flex" aria-label="Main">
@@ -225,7 +235,7 @@ export function ClientShell() {
           </nav>
         )}
       </header>
-      <main className="flex-1 pb-28 lg:pb-10"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
+      <main className="nb-main-clear flex-1"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
       {showWa && <WhatsAppFab phone={wa.phone || "+17802356508"} />}
       <FloatingNav items={BOTTOM_NAV} testid="client-bottom" />
     </div>
@@ -280,13 +290,13 @@ function StaffShellInner({ role }) {
         </div>
       </aside>
       <div className="min-w-0 lg:pl-64">
-        <header className="safe-top sticky top-0 z-30 flex h-14 items-center justify-between border-b border-sky-100 bg-white/95 px-4 backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-30 flex h-[calc(var(--nb-header-h)+var(--nb-safe-t))] items-center justify-between border-b border-sky-100 bg-white/95 px-4 pt-[var(--nb-safe-t)] backdrop-blur lg:hidden">
           <Lockup to={cfg.nav[0].to} testid={`${role}-mobile-logo-link`} className="min-w-0" />
           <div className="min-w-0 shrink"><AccountMenu /></div>
         </header>
-        <main className="min-w-0 px-4 py-5 staff-main-pad sm:px-6 lg:px-10 lg:pb-10"><Page><Outlet /></Page></main>
+        <main className="nb-main-clear mx-auto min-w-0 max-w-[1600px] px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8"><Page><Outlet /></Page></main>
       </div>
-      <FloatingNav items={cfg.nav} more={cfg.more} testid={`${role}-bottom`} />
+      <FloatingNav items={cfg.nav} more={role === "owner" ? OWNER_MORE.map(([to, label]) => ({ to, label })) : cfg.more} testid={`${role}-bottom`} />
     </div>
   );
 }

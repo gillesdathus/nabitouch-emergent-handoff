@@ -141,6 +141,7 @@ export const api = {
   invoiceByAppointment: (id) => http.get(`/invoices/by-appointment/${id}`).then(data),
   draftInvoice: (id) => http.post(`/invoices/from-appointment/${id}`, {}).then(data),
   issueInvoice: (id, idempotencyKey) => http.post(`/invoices/${id}/issue`, { idempotencyKey }).then(data),
+  recordInvoicePayment: (id, body) => http.post(`/invoices/${id}/payments`, body).then(data),
   recordClaim: (id, body) => http.post(`/invoices/${id}/claims`, body).then(data),
   updateClaim: (id, claimId, body) => http.post(`/invoices/${id}/claims/${claimId}`, body).then(data),
   recordInsurerPayment: (id, claimId, body) => http.post(`/invoices/${id}/claims/${claimId}/payments`, body).then(data),

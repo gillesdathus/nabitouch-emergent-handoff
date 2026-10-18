@@ -11,7 +11,7 @@ The application stays React (JavaScript, Yarn), FastAPI, and MongoDB. Brand layo
 1. Rotate the owner password, the demo password, `JWT_SECRET`, the Emergent email key, Mapbox tokens, and any preview MongoDB password. Values are in git history. See `docs/SECURITY_FINDINGS.md`. Do not send the old values back to the repository.
 2. Provide a non-production MongoDB with authentication and TLS, or accept local Docker for Slice 1 tests. This audit used a temporary unauthenticated container and deleted it.
 3. Tell the team the production site origin when it exists. Do not invent a domain. `APP_URL` and CORS both need it. Until then, local and staging origins only.
-4. Change the pytest defaults that target `https://tidewell-hub.preview.emergentagent.com` and call `POST /api/demo/reset` before anyone runs the suite on a new machine.
+4. Change the pytest defaults that target `https://lagoon-ui-refresh.preview.emergentagent.com` and call `POST /api/demo/reset` before anyone runs the suite on a new machine.
 5. `pip install -r backend/requirements.txt` fails outside Emergent because `emergentintegrations==0.2.2` is not public. Slice 4 removes that pin after email tests pass. Until then, local installs must omit it deliberately and record that they did.
 
 ## Credentials and decisions by slice

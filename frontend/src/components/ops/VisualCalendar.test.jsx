@@ -14,6 +14,9 @@ const visit = {
   pricing: { total: 120 },
 };
 
+beforeEach(() => { window.matchMedia = (q) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} }); });
+afterEach(() => { delete window.matchMedia; });
+
 function render(props) {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -43,7 +46,7 @@ test("day view places a real appointment and an empty hour opens a slot", () => 
   expect(card.textContent).toContain("Relaxation");
   act(() => { card.click(); });
   expect(onOpen).toHaveBeenCalledWith("apt-1");
-  const hour = view.host.querySelector("[aria-label='Open 2026-10-14 9:00 AM']") || [...view.host.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.includes("2026-10-14"));
+  const hour = [...view.host.querySelectorAll("button")].find((button) => button.getAttribute("aria-label")?.includes("Oct 14 9:00 AM"));
   expect(hour).toBeTruthy();
   act(() => { hour.click(); });
   expect(onSlot).toHaveBeenCalled();
