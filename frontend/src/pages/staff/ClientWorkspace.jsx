@@ -10,6 +10,7 @@ import { Conversation } from "@/components/Conversation";
 import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { edmontonNow } from "@/components/ops/calendar/time";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { sumInvoices, useInvoices } from "@/lib/useInvoices";
@@ -19,7 +20,8 @@ import { cn } from "@/lib/utils";
 function Hero({ c, appts, totals, canMoney, actions }) {
   const done = appts.filter((a) => ["completed", "closed"].includes(a.status)).length;
   const upcoming = appts.filter((a) => ["requested", "confirmed", "en_route", "assigned", "preparing", "arrived", "in_session"].includes(a.status)).length;
-  const next = appts.filter((a) => OPEN.includes(a.status)).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))[0];
+  const nowAt = edmontonNow();
+  const next = appts.filter((a) => OPEN.includes(a.status) && `${a.date}${a.time}` >= `${nowAt.date}${nowAt.time}`).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))[0];
   return (
     <section className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100 sm:p-5" data-testid="cw-hero">
       <div className="flex min-w-0 items-start gap-3">
@@ -41,7 +43,7 @@ function Hero({ c, appts, totals, canMoney, actions }) {
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         {[["Visits", done, "cw-stat-visits"], ["Upcoming", upcoming, "cw-stat-upcoming"], ["Owing", canMoney ? formatCents(totals.balance) : "—", "cw-stat-owing"]].map(([k, v, id]) => (
           <div key={k} className="min-w-0 rounded-2xl bg-sky-50/80 px-2 py-2.5 ring-1 ring-sky-100" data-testid={id}>
-            <p className="nb-num truncate text-lg font-semibold text-nb-ink sm:text-xl">{v}</p>
+            <p className="nb-num truncate text-base font-semibold text-nb-ink min-[360px]:text-lg sm:text-xl">{v}</p>
             <p className="text-[11px] text-nb-mute">{k}</p>
           </div>
         ))}

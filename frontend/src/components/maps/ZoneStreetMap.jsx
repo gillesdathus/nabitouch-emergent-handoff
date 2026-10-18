@@ -24,6 +24,14 @@ const zoneFeatures = (zones, center) => ({
   })),
 });
 
+// Fan out pins that share a coordinate so each stays clickable.
+function spread(pins, i) {
+  const same = pins.slice(0, i).filter((p) => p.lat === pins[i].lat && p.lng === pins[i].lng).length;
+  if (!same) return { dx: 0, dy: 0 };
+  const a = same * 1.2;
+  return { dx: Math.cos(a) * 0.004 * Math.ceil(same / 5), dy: Math.sin(a) * 0.0025 * Math.ceil(same / 5) };
+}
+
 function pinElement(color, label) {
   const n = document.createElement("span");
   n.className = "nb-pin";
@@ -42,31 +50,45 @@ export default function ZoneStreetMap({ zones = [], center, pins = [], clinic, h
   const zoneKey = JSON.stringify(zones.map((z) => [z.id, z.radiusKm, z.color, z.enabled]));
   const pinKey = JSON.stringify(pins) + JSON.stringify(clinic || null);
 
+  const data = useRef(zoneFeatures(zones, c));
+  data.current = zoneFeatures(zones, c);
+
+  const ensureZones = (m) => {
+    try {
+      if (!m.getSource("zones")) {
+        m.addSource("zones", { type: "geojson", data: data.current });
+        m.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": ["get", "color"], "fill-opacity": ["case", ["get", "enabled"], 0.12, 0.03] } });
+        m.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.8, "line-dasharray": ["case", ["get", "enabled"], ["literal", [1, 0]], ["literal", [2, 2]]] } });
+      } else {
+        m.getSource("zones").setData(data.current);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   useEffect(() => {
     mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_PUBLIC_TOKEN;
     const m = new mapboxgl.Map({ container: el.current, style: "mapbox://styles/mapbox/streets-v12", center: [c.lng, c.lat], zoom: 9.6, cooperativeGestures: true });
     m.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
     m.on("error", (e) => { if ([401, 403].includes(e?.error?.status)) setBlocked(true); });
-    m.on("load", () => {
-      m.addSource("zones", { type: "geojson", data: zoneFeatures([], c) });
-      m.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": ["get", "color"], "fill-opacity": ["case", ["get", "enabled"], 0.12, 0.03] } });
-      m.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.8, "line-dasharray": ["case", ["get", "enabled"], ["literal", [1, 0]], ["literal", [2, 2]]] } });
-    });
+    const sync = () => ensureZones(m);
+    m.on("style.load", sync);
+    m.on("load", sync);
+    m.on("styledata", sync);
     map.current = m;
     return () => m.remove();
   }, []); // eslint-disable-line
 
   useEffect(() => {
     const m = map.current;
-    if (!m) return undefined;
-    const apply = () => {
-      m.getSource("zones")?.setData(zoneFeatures(zones, c));
-      const outer = Math.max(5, ...zones.map((z) => Number(z.radiusKm) || 0));
-      const b = new mapboxgl.LngLatBounds();
-      circle(c, outer, 16).forEach((p) => b.extend(p));
-      m.fitBounds(b, { padding: 24, duration: 0 });
-    };
-    if (m.isStyleLoaded() && m.getSource("zones")) apply(); else m.once("load", apply);
+    if (!m) return;
+    ensureZones(m);
+    const outer = Math.max(5, ...zones.map((z) => Number(z.radiusKm) || 0));
+    const b = new mapboxgl.LngLatBounds();
+    circle(c, outer, 16).forEach((p) => b.extend(p));
+    m.fitBounds(b, { padding: 24, duration: 0 });
   }, [zoneKey, c.lat, c.lng]); // eslint-disable-line
 
   useEffect(() => {
@@ -76,7 +98,7 @@ export default function ZoneStreetMap({ zones = [], center, pins = [], clinic, h
     markers.current = [
       new mapboxgl.Marker({ element: pinElement("#0B1B3F", "Service centre") }).setLngLat([c.lng, c.lat]).setPopup(new mapboxgl.Popup({ offset: 16 }).setText("Service centre (zone origin)")).addTo(m),
       ...(clinic?.lat ? [new mapboxgl.Marker({ color: "#0E9E9A" }).setLngLat([clinic.lng, clinic.lat]).setPopup(new mapboxgl.Popup({ offset: 24 }).setText(clinic.label || "Clinic")).addTo(m)] : []),
-      ...pins.map((p) => new mapboxgl.Marker({ element: pinElement(p.color || "#1565F0", p.label) }).setLngLat([p.lng, p.lat]).setPopup(new mapboxgl.Popup({ offset: 16 }).setText(p.label)).addTo(m)),
+      ...pins.map((p, i) => new mapboxgl.Marker({ element: pinElement(p.color || "#1565F0", p.label) }).setLngLat([p.lng + spread(pins, i).dx, p.lat + spread(pins, i).dy]).setPopup(new mapboxgl.Popup({ offset: 16 }).setText(p.label)).addTo(m)),
     ];
     return undefined;
   }, [pinKey, c.lat, c.lng]); // eslint-disable-line
@@ -84,10 +106,10 @@ export default function ZoneStreetMap({ zones = [], center, pins = [], clinic, h
   return (
     <div className="relative overflow-hidden rounded-[var(--nb-r-lg)] border border-sky-100" style={{ height }} data-testid={testid}>
       <div ref={el} className="h-full w-full" aria-label="Service zone map" role="region" />
-      {blocked && <p role="status" className="absolute inset-x-3 top-3 mr-12 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-900 ring-1 ring-amber-200" data-testid={`${testid}-tiles-blocked`}>Street tiles are blocked for this web address. Add this domain to the Mapbox public token's URL restrictions. Zones and pins still use real coordinates.</p>}
-      <div className="pointer-events-none absolute bottom-3 left-3 max-w-[70%] rounded-2xl bg-white/95 p-2.5 text-[11px] shadow-[var(--nb-elev-2)]" data-testid={`${testid}-legend`}>
+      {blocked && <p role="status" className="absolute inset-x-3 top-3 mr-12 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-900 ring-1 ring-amber-200" data-testid={`${testid}-tiles-blocked`}>Street tiles blocked for this domain — allow it in the Mapbox token URL restrictions.</p>}
+      <div className="pointer-events-none absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded-2xl bg-white/95 p-2 text-[10.5px] shadow-[var(--nb-elev-2)] sm:max-w-[70%] sm:p-2.5 sm:text-[11px]" data-testid={`${testid}-legend`}>
         {[...zones].sort((a, b) => a.radiusKm - b.radiusKm).map((z) => (
-          <p key={z.id} className="flex items-center gap-1.5 leading-5"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: z.color }} /><b className="truncate font-semibold">{z.name}</b><span className="shrink-0 text-nb-mute">≤{z.radiusKm} km · ${z.fee}{z.perKm ? ` + $${z.perKm}/km` : ""}{z.enabled === false ? " · off" : ""}</span></p>
+          <p key={z.id} className="flex items-center gap-1.5 leading-5"><span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: z.color }} /><b className="min-w-0 truncate font-semibold">{z.name}</b><span className="shrink-0 text-nb-mute">≤{z.radiusKm} km · ${z.fee}{z.perKm ? ` + $${z.perKm}/km` : ""}{z.enabled === false ? " · off" : ""}</span></p>
         ))}
         <p className="mt-1 text-nb-mute">{pins.length} upcoming confirmed address{pins.length === 1 ? "" : "es"}</p>
       </div>

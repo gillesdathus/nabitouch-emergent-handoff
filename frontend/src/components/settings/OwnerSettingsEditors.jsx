@@ -90,7 +90,7 @@ export function AddonsEditor({ addons = [] }) {
       {rows && <>
         <div className="space-y-2">
           {rows.map((r, i) => (
-            <div key={i} className="grid grid-cols-[1fr_6.5rem_auto] gap-2" data-testid={`settings-addon-row-${i}`}>
+            <div key={i} className="grid grid-cols-[minmax(0,1fr)_4.75rem_auto] gap-2 sm:grid-cols-[minmax(0,1fr)_6.5rem_auto]" data-testid={`settings-addon-row-${i}`}>
               <input aria-label="Name" value={r.name} onChange={(e) => set(i, { name: e.target.value })} className="nb-input h-10" placeholder="Name" data-testid={`settings-addon-name-${i}`} />
               <input aria-label="Price" type="number" min="0" step="0.5" inputMode="decimal" value={r.price} onChange={(e) => set(i, { price: e.target.value })} className="nb-input h-10" placeholder="$" data-testid={`settings-addon-price-${i}`} />
               <button type="button" aria-label={`Remove ${r.name || "enhancement"}`} onClick={() => setRows(rows.filter((_, j) => j !== i))} className="nb-btn-ghost h-10 w-10 px-0" data-testid={`settings-addon-remove-${i}`}><Trash2 className="h-4 w-4" /></button>

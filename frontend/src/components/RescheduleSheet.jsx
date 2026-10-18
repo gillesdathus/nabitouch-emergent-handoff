@@ -12,7 +12,8 @@ export function RescheduleSheet({ appt, label, onPick, onClose, cta = "Review mo
   const [time, setTime] = useState(appt.time);
   const now = edmontonNow();
   const times = useMemo(() => GROUPS.map(([name, a, b]) => [name, Array.from({ length: (b - a) / 15 }, (_, i) => fromMin(a + i * 15)).filter((t) => date > now.date || t > now.time)]), [date, now.date, now.time]);
-  const changed = date !== appt.date || time !== appt.time;
+  const offered = times.some(([, list]) => list.includes(time));
+  const changed = offered && (date !== appt.date || time !== appt.time);
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerContent className="mx-auto max-h-[90dvh] max-w-lg rounded-t-[28px] bg-nb-canvas" data-testid="reschedule-sheet">
@@ -20,7 +21,7 @@ export function RescheduleSheet({ appt, label, onPick, onClose, cta = "Review mo
           <DrawerTitle className="flex items-center gap-2 text-lg"><CalendarClock className="h-5 w-5 text-nb-blue" />Move visit</DrawerTitle>
           <DrawerDescription className="mt-0.5 text-sm text-nb-mute">{label} · now {fmtDate(appt.date)} {fmtTime(appt.time)} · {appt.duration} min</DrawerDescription>
           <label className="mt-4 block text-xs font-semibold text-nb-mute">New date
-            <input type="date" min={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} className="nb-input mt-1 h-11" data-testid="reschedule-date" />
+            <input type="date" min={todayISO()} value={date} onChange={(e) => { setDate(e.target.value); }} className="nb-input mt-1 h-11" data-testid="reschedule-date" />
           </label>
           <div className="mt-4 space-y-3" data-testid="reschedule-times">
             {times.map(([name, list]) => list.length > 0 && (
@@ -33,7 +34,7 @@ export function RescheduleSheet({ appt, label, onPick, onClose, cta = "Review mo
             ))}
           </div>
           <p className="mt-3 text-[11px] text-nb-mute">Edmonton local time. The server checks the practitioner's hours, travel and buffers before saving.</p>
-          <button type="button" disabled={!changed || !time} onClick={() => onPick(date, time)} className="nb-btn-primary mt-4 h-12 w-full" data-testid="reschedule-continue">{cta} · {fmtDate(date)} {fmtTime(time)}</button>
+          <div className="sticky bottom-0 -mx-5 mt-4 border-t border-sky-100 bg-nb-canvas/95 px-5 pb-1 pt-3 backdrop-blur"><button type="button" disabled={!changed || !time} onClick={() => onPick(date, time)} className="nb-btn-primary h-12 w-full" data-testid="reschedule-continue">{offered ? `${cta} · ${fmtDate(date)} ${fmtTime(time)}` : "Choose a time"}</button></div>
         </div>
       </DrawerContent>
     </Drawer>

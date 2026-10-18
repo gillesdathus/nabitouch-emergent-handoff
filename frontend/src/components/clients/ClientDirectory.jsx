@@ -8,6 +8,7 @@ import { Avatar, Pill } from "@/components/ui-kit";
 import { formatCents } from "@/lib/billing";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
 import { useInvoices } from "@/lib/useInvoices";
+import { edmontonNow } from "@/components/ops/calendar/time";
 import { useDemo } from "@/store/DemoStore";
 
 const FILTERS = [["all", "All"], ["upcoming", "Upcoming visit"], ["balance", "Balance due"], ["new", "No visits yet"]];
@@ -27,7 +28,7 @@ function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook,
         {balance > 0 && <Pill tone="amber" testid={`client-card-balance-${c.id}`}>{formatCents(balance)} due</Pill>}
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <div className="min-w-0 rounded-xl bg-sky-50/70 px-2.5 py-2"><dt className="text-nb-mute">Visits</dt><dd className="nb-num font-semibold">{visits}</dd></div>
+        <div className="min-w-0 rounded-xl bg-sky-50/70 px-2.5 py-2"><dt className="text-nb-mute">Bookings</dt><dd className="nb-num font-semibold">{visits}</dd></div>
         <div className="min-w-0 rounded-xl bg-sky-50/70 px-2.5 py-2"><dt className="text-nb-mute">Next visit</dt><dd className="truncate font-semibold">{next ? `${fmtDate(next.date, { month: "short", day: "numeric" })} · ${fmtTime(next.time)}` : "—"}</dd></div>
       </dl>
       {(showInsurance || c.marketingConsent) && (
@@ -57,6 +58,8 @@ export function ClientDirectory({ role = "owner" }) {
   const [filter, setFilter] = useState("all");
   const [book, setBook] = useState(null);
   const [invoice, setInvoice] = useState(null);
+  const now = edmontonNow();
+  const nowKey = `${now.date}${now.time}`;
   const info = useMemo(() => {
     const out = {};
     state.clients.forEach((c) => { out[c.id] = { visits: 0, next: null, balance: 0 }; });
@@ -64,11 +67,11 @@ export function ClientDirectory({ role = "owner" }) {
       const row = out[a.clientId];
       if (!row) return;
       if (!["cancelled", "no_show"].includes(a.status)) row.visits += 1;
-      if (!row.next && OPEN.includes(a.status)) row.next = a;
+      if (!row.next && OPEN.includes(a.status) && `${a.date}${a.time}` >= nowKey) row.next = a;
     });
     (invoices || []).forEach((r) => { if (out[r.clientId] && !["draft", "voided"].includes(r.state)) out[r.clientId].balance += r.balance?.cents || 0; });
     return out;
-  }, [state.clients, state.appointments, invoices]);
+  }, [state.clients, state.appointments, invoices, nowKey]);
   const needle = q.trim().toLowerCase();
   const list = state.clients
     .filter((c) => !needle || `${c.firstName} ${c.lastName} ${c.preferredName || ""} ${c.email || ""} ${c.phone || ""}`.toLowerCase().includes(needle))
