@@ -50,7 +50,7 @@ export default function Credentials() {
       <div className="grid gap-4 lg:grid-cols-2">
       <section className="nb-card p-5 text-sm">
         <h2 className="font-semibold">Activation and the 14-day grace</h2>
-        <p className="mt-2 text-nb-mute">Owner approval activates the profile as soon as a staff login is linked. Association license #, insurance liability policy #, municipality license #, and CPR / First Aid can be added within 14 days. After that grace, new bookings pause until all four verified numbers are on file. Placeholder numbers are refused. Expiry reminder windows are 60, 30, 14, and 7 days unless you change them in settings.</p>
+        <p className="mt-2 text-nb-mute">Owner approval activates the profile as soon as a staff login is linked and opens new bookings by default when weekly hours exist (you can pause them later). Association license #, insurance liability policy #, municipality license #, and CPR / First Aid can be added within 14 days. After that grace, new bookings pause until all four verified numbers are on file. Placeholder numbers are refused. Expiry reminder windows are 60, 30, 14, and 7 days unless you change them in settings.</p>
       </section>
       {launch && (
         <section className="nb-card space-y-2 p-5 text-sm" data-testid="launch-readiness">
