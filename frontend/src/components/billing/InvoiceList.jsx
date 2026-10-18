@@ -23,7 +23,7 @@ function InvoiceCard({ row, onOpen }) {
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center justify-between gap-2"><span className="truncate text-sm font-semibold">{row.number || "Draft"}</span><span className="nb-num shrink-0 text-sm font-semibold">{row.state === "draft" ? row.total.display : row.balance.display}</span></span>
         <span className="block truncate text-xs text-nb-mute">{row.clientName || "Client"} · {row.service}</span>
-        <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-nb-mute"><span>{row.serviceDate ? fmtDate(row.serviceDate) : "—"} · total {row.total.display}</span><InvoiceStatePill invoice={row} /></span>
+        <span className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[11px] text-nb-mute"><span className="min-w-0 truncate">{row.serviceDate ? fmtDate(row.serviceDate, { month: "short", day: "numeric" }) : "—"} · {row.total.display}</span><span className="shrink-0 whitespace-nowrap"><InvoiceStatePill invoice={row} /></span></span>
       </span>
     </button>
   );

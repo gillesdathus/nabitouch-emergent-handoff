@@ -19,7 +19,7 @@ import { Breathing } from "@/components/brand";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, DONE, money, fmtDate, fmtTime, promoEligibility } from "@/lib/domain";
 
-const greet = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
+const greet = () => { const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton", hour: "numeric", hourCycle: "h23" }).format(new Date())); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 
 function SignedOut() {
   return (

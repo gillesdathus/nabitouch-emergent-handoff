@@ -1,12 +1,14 @@
 import { addDays, fmtTime } from "@/lib/domain";
 import { cn } from "@/lib/utils";
-import { edmontonNow, weekStart } from "./time";
+import { edmontonNow, shiftMonth, weekStart } from "./time";
 
 const NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function MonthGrid({ cursor, appointments, ctx, compact }) {
   const first = weekStart(`${cursor.slice(0, 8)}01`);
-  const cells = Array.from({ length: 42 }, (_, i) => addDays(first, i));
+  const lastDay = addDays(shiftMonth(cursor, 1), -1);
+  const weeks = Math.ceil((Math.round((new Date(`${lastDay}T12:00:00`) - new Date(`${first}T12:00:00`)) / 86400000) + 1) / 7);
+  const cells = Array.from({ length: weeks * 7 }, (_, i) => addDays(first, i));
   const today = edmontonNow().date;
   const month = cursor.slice(0, 7);
   return (

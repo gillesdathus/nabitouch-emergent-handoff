@@ -79,13 +79,13 @@ export function InvoiceDrawer({ invoice, open, onOpenChange, flags = {}, onChang
                 <div><DrawerTitle className="text-lg font-semibold text-white" data-testid="invoice-drawer-number">{invoice.number || "Draft invoice"}</DrawerTitle><DrawerDescription className="text-sm text-white/75">{invoice.clientName && staffLink ? `${invoice.clientName} · ` : ""}{invoice.service}{invoice.duration ? ` · ${invoice.duration} min` : ""}{invoice.serviceDate ? ` · ${fmtDate(invoice.serviceDate)}` : ""}</DrawerDescription></div>
                 <InvoiceStatePill invoice={invoice} testid="invoice-drawer-state" />
               </div>
-              <p className="relative mt-5 text-xs text-white/70">Outstanding</p>
-              <p className="nb-num relative text-4xl font-semibold" data-testid="invoice-drawer-balance">{invoice.balance.display}</p>
+              <p className="relative mt-5 text-xs text-white/70">{invoice.state === "draft" ? "Draft total · not issued" : "Outstanding"}</p>
+              <p className="nb-num relative text-4xl font-semibold" data-testid="invoice-drawer-balance">{invoice.state === "draft" ? invoice.total.display : invoice.balance.display}</p>
               <div className="relative mt-4"><TideBar invoice={invoice} dark /></div>
               <p className="relative mt-2 text-[11px] text-white/70">Solid: money received. Dashed: insurance expected, not yet received.</p>
             </div>
             <div className="mt-5 space-y-6">
-              <MoneyLedger invoice={invoice} />
+              <MoneyLedger invoice={invoice} staff={Boolean(staffLink)} />
               {staffLink
                 ? <><StaffInvoiceActions invoice={invoice} onChange={onChange} />{pathname !== staffLink && <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Record insurance and payments<ArrowUpRight className="h-4 w-4" /></Link>}</>
                 : <PayOptions invoice={invoice} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={onChange} />}

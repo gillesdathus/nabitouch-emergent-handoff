@@ -31,7 +31,7 @@ export const LedgerRow = ({ label, hint, cents, tone = "", strong, testid }) => 
   </div>
 );
 
-export function MoneyLedger({ invoice }) {
+export function MoneyLedger({ invoice, staff }) {
   return (
     <div className="divide-y divide-dashed divide-sky-100 rounded-2xl bg-white px-4 ring-1 ring-sky-100" data-testid="invoice-money-ledger">
       <LedgerRow label="Invoice total" cents={invoice.total.cents} strong testid="ledger-total" />
@@ -39,7 +39,7 @@ export function MoneyLedger({ invoice }) {
       {invoice.approved.cents > 0 && <LedgerRow label="Insurance approved" hint="Approval is not a payment" cents={invoice.approved.cents} testid="ledger-approved" />}
       {invoice.expectedInsurance.cents > 0 && <LedgerRow label="Insurance pending" hint="Expected, not yet received" cents={invoice.expectedInsurance.cents} tone="text-cyan-700" testid="ledger-ins-pending" />}
       <LedgerRow label="Insurance received" cents={invoice.insuranceReceived.cents} tone="text-nb-teal" testid="ledger-ins-received" />
-      <LedgerRow label="Your payments" cents={invoice.clientPaid.cents} tone="text-nb-teal" testid="ledger-client-paid" />
+      <LedgerRow label={staff ? "Client payments" : "Your payments"} cents={invoice.clientPaid.cents} tone="text-nb-teal" testid="ledger-client-paid" />
       {invoice.refunded.cents > 0 && <LedgerRow label="Refunded" cents={invoice.refunded.cents} tone="text-amber-700" testid="ledger-refunded" />}
       <LedgerRow label="Outstanding balance" hint={invoice.expectedInsurance.cents > 0 ? `Your share after expected insurance ≈ ${invoice.estimatedClientShare.display}` : undefined} cents={invoice.balance.cents} strong testid="ledger-balance" />
     </div>

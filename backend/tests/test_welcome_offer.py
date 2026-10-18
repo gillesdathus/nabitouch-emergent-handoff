@@ -63,9 +63,9 @@ def test_welcome_offer_has_placements_and_edit_does_not_rewrite_invoice_lines():
     assert edited["value"] == 30
     after = lines_from_pricing(snapshot)
     assert before == after
-    assert priced["promoName"] == "First-booking welcome offer"
-    assert priced["welcomeOffer"] is True
-    rows, net, tax, total = lines_from_pricing(priced)
+    assert snapshot["promoName"] == "First-booking welcome offer"
+    assert snapshot["welcomeOffer"] is True
+    rows, net, tax, total = lines_from_pricing(snapshot)
     assert rows[0]["netCents"] == 12000
     assert rows[1]["description"] == "First-booking welcome offer"
     assert rows[1]["netCents"] == -2400

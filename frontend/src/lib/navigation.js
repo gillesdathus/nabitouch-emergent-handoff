@@ -12,7 +12,7 @@ export const BOTTOM_NAV = [
   { to: "/services", label: "Services" },
   { to: "/book", label: "Book", primary: true },
   { to: "/offers", label: "Offers" },
-  { to: "/me", label: "My Nabitouch" },
+  { to: "/me", label: "My Nabitouch", short: "Account" },
 ];
 
 const ROLE_BUTTONS = ["Owner", "Client", "Practitioner", "Receptionist", "Reception"];

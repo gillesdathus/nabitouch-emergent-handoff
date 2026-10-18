@@ -74,14 +74,20 @@ export function TimeGrid({ days, appointments, ctx }) {
   const scroller = useRef(null);
   const [ghost, setGhost] = useState(null);
   const now = edmontonNow();
-  useEffect(() => { if (scroller.current) scroller.current.scrollTop = px(8 * 60); }, [days.length]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTop = px(8 * 60) - 16;
+    const idx = days.indexOf(now.date);
+    if (idx > 0 && el.scrollWidth > el.clientWidth) el.scrollLeft = Math.max(0, 56 + idx * ((el.scrollWidth - 56) / days.length) - el.clientWidth / 2);
+  }, [days.length, days[0]]); // eslint-disable-line
   const cols = `3.5rem repeat(${days.length}, minmax(${days.length > 1 ? "7.5rem" : "0"}, 1fr))`;
   const full = { ...ctx, now };
   return (
     <div ref={scroller} className="nb-panel relative max-h-[max(26rem,calc(100dvh-17rem))] overflow-auto" data-testid="calendar-grid-wrap">
       <div className="min-w-0" style={{ minWidth: days.length > 1 ? "56rem" : undefined }}>
         <div className="sticky top-0 z-40 grid border-b border-sky-100 bg-white/95 backdrop-blur" style={{ gridTemplateColumns: cols }}>
-          <div />
+          <div className="sticky left-0 z-10 bg-white/95" />
           {days.map((d) => (
             <div key={d} className={cn("px-2 py-2 text-center", d === now.date && "text-nb-blue")}>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-nb-mute">{fmtDate(d, { weekday: "short" })}</p>
@@ -90,7 +96,7 @@ export function TimeGrid({ days, appointments, ctx }) {
           ))}
         </div>
         <div className="grid" style={{ gridTemplateColumns: cols }} data-testid="calendar-grid">
-          <div className="relative" style={{ height: px(END) }}>
+          <div className="sticky left-0 z-30 bg-white" style={{ height: px(END) }}>
             {HOURS.map((h) => <span key={h} className="absolute right-2 -translate-y-1/2 text-[10px] text-nb-mute" style={{ top: px(h) }}>{h === START ? "" : fmtTime(fromMin(h))}</span>)}
           </div>
           {days.map((d) => <DayColumn key={d} date={d} items={layoutLanes(appointments.filter((a) => a.date === d))} ctx={full} ghost={ghost} setGhost={setGhost} />)}

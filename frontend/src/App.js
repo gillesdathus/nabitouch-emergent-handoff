@@ -8,6 +8,9 @@ import { Splash } from "@/components/Splash";
 import { ClientShell, StaffShell } from "@/components/shells";
 import { PractitionerErrorBoundary } from "@/components/PractitionerRouteGuard";
 import { PageSkeleton } from "@/components/ui-kit";
+import { AppErrorBoundary, installChunkRecovery } from "@/components/AppErrorBoundary";
+
+installChunkRecovery();
 
 const Login = lazy(() => import("@/pages/Login"));
 const PaymentResult = lazy(() => import("@/pages/client/PaymentResult"));
@@ -91,6 +94,7 @@ export default function App() {
           <Splash />
           <OfflineNotice />
           <Gate>
+            <AppErrorBoundary>
             <Suspense fallback={<PageSkeleton />}>
               <Routes>
                 <Route element={<ClientShell />}>
@@ -183,6 +187,7 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>
+            </AppErrorBoundary>
           </Gate>
           <Toaster position="bottom-right" richColors closeButton offset={{ bottom: "var(--nb-toast-offset)", right: "1.5rem" }} mobileOffset={{ bottom: "var(--nb-toast-offset)" }} />
         </BrowserRouter>
