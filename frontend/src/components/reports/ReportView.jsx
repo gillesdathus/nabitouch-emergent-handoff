@@ -28,7 +28,7 @@ export function RangePicker({ range, setRange, presets = PRESETS }) {
   const [chosen, setChosen] = useState(() => presets.find(([k]) => { const [s, e] = presetRange(k); return s === range[0] && e === range[1]; })?.[0] || "");
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid="report-range">
-      <div className="nb-seg">
+      <div className="nb-seg flex-wrap rounded-2xl">
         {presets.map(([k, l]) => { const [s, e] = presetRange(k); const on = chosen === k && range[0] === s && range[1] === e; return <button key={k} type="button" onClick={() => { setChosen(k); setRange([s, e]); }} data-testid={`report-preset-${k}`} aria-pressed={on} className="nb-seg-btn">{l}</button>; })}
       </div>
       <DateField value={range[0]} max={range[1]} onChange={(v) => setRange([v, range[1]])} testid="report-start" />

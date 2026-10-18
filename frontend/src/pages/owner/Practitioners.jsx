@@ -8,7 +8,7 @@ import { useDemo } from "@/store/DemoStore";
 
 export default function Practitioners() {
   const { state } = useDemo();
-  const { credentials, board } = usePractitionerData(null, true);
+  const { credentials, board, loaded } = usePractitionerData(null, true);
   const people = state.practitioners || [];
   return (
     <div className="min-w-0 space-y-5" data-testid="owner-practitioners">
@@ -24,7 +24,7 @@ export default function Practitioners() {
                 <Avatar person={person} photo={person.photo} size={48} />
                 <div className="min-w-0 flex-1"><p className="truncate font-semibold">{person.name}</p><p className="truncate text-xs text-nb-mute">{person.designation || "No designation"}</p></div>
               </div>
-              <div className="flex flex-wrap gap-1.5">{["account", "profile", "booking", "credentials"].map((k) => <Pill key={k} tone={s[k][0]} testid={`pr-card-${person.id}-${k}`}>{s[k][1]}</Pill>)}</div>
+              <div className="flex flex-wrap gap-1.5">{loaded ? ["account", "profile", "booking", "credentials"].map((k) => <Pill key={k} tone={s[k][0]} testid={`pr-card-${person.id}-${k}`}>{s[k][1]}</Pill>) : <span className="nb-skeleton h-6 w-48 rounded-full" />}</div>
               <div>
                 <div className="flex justify-between text-[11px] text-nb-mute"><span>Profile {s.done}/{s.items.length}</span><span className={s.overdue ? "font-semibold text-rose-700" : ""}>{s.complete ? "Complete" : s.daysLeft == null ? "Not activated" : s.overdue ? "30-day window passed" : `${s.daysLeft} days left`}</span></div>
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-sky-50"><div className="h-full rounded-full bg-gradient-to-r from-nb-blue to-nb-turq" style={{ width: `${(s.done / s.items.length) * 100}%` }} /></div>

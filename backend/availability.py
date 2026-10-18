@@ -1050,6 +1050,8 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         user = await require(request, "owner")
         if kind not in ATTESTABLE_KINDS:
             raise HTTPException(400, "Choose registration or liability insurance")
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
         await coll("practitioners").update_one({"id": practitioner_id}, {"$unset": {f"credentialAttestations.{kind}": ""}})
         await add_audit(user["name"], f"Owner attestation removed: {kind} for {practitioner_id}", None)
         saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})

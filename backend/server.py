@@ -2185,7 +2185,8 @@ async def report_pdf(report_id: str, request: Request):
             ("Travel", snap.get("travel")), ("GST", snap.get("gst")), ("Collected", snap.get("collected")), ("Insurance received", snap.get("insuranceReceived")),
             ("Insurance pending", snap.get("insurancePending")), ("Outstanding", snap.get("outstanding")), ("Status", str(row.get("status") or "").title())]
     money = lambda v: f"${float(v or 0):,.2f}"
-    detail = [[str(x.get("date") or ""), str(x.get("ref") or ""), str(x.get("serviceSlug") or ""), money(x.get("invoiced")), money(x.get("collected")), money(x.get("outstanding"))] for x in (snap.get("rows") or [])[:1000] if isinstance(x, dict)]
+    names = {s.get("slug"): s.get("name") for s in await coll("services").find({}, {"_id": 0, "slug": 1, "name": 1}).to_list(200)}
+    detail = [[str(x.get("date") or ""), str(x.get("ref") or ""), str(names.get(x.get("serviceSlug")) or x.get("serviceSlug") or ""), money(x.get("invoiced")), money(x.get("collected")), money(x.get("outstanding"))] for x in (snap.get("rows") or [])[:1000] if isinstance(x, dict)]
     sections = [("Visits in this period", ["Date", "Reference", "Service", "Invoiced", "Collected", "Outstanding"], detail, [2, 2, 3, 2, 2, 2])]
     title = "Period report" + (f" · {row.get('practitionerName')}" if row.get("practitionerName") else "")
     shown = [(k, v if k in ("Visits", "Status") else money(v)) for k, v in kpis]

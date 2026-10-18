@@ -333,7 +333,7 @@ def build_finance_router(db, user_from, settings_doc):
             w.writerows(rows)
             return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
         if format == "pdf":
-            widths = [2] * len(headers)
+            widths = [max(4, min(22, max([len(str(h)), *(len(str(r[i])) for r in rows[:300])]))) for i, h in enumerate(headers)]
             sections = [*groups, ("Detail", headers, rows, widths)]
             pdf = report_pdf(title, stamp, kpis, sections, await settings_doc())
             return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})

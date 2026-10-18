@@ -15,13 +15,14 @@ export function usePractitionerData(id, owner) {
   const [credentials, setCredentials] = useState([]);
   const [board, setBoard] = useState(null);
   const [schedule, setSchedule] = useState(null);
+  const [loaded, setLoaded] = useState(false);
   const load = useCallback(() => Promise.all([
     api.credentials().catch(() => []),
     owner ? api.onboarding().catch(() => null) : Promise.resolve(null),
     id ? api.schedule(id).catch(() => null) : Promise.resolve(null),
-  ]).then(([c, b, s]) => { setCredentials(c || []); setBoard(b); setSchedule(s?.schedule || s); }), [api, id, owner]);
+  ]).then(([c, b, s]) => { setCredentials(c || []); setBoard(b); setSchedule(s?.schedule || s); setLoaded(true); }), [api, id, owner]);
   useEffect(() => { load(); }, [load]);
-  return { credentials, board, schedule, load };
+  return { credentials, board, schedule, load, loaded };
 }
 
 export default function PractitionerProfile({ self = false }) {
@@ -30,7 +31,7 @@ export default function PractitionerProfile({ self = false }) {
   const owner = !self && user?.role === "owner";
   const id = self ? practitionerId : params.id;
   const person = (state.practitioners || []).find((p) => p.id === id);
-  const { credentials, board, schedule, load } = usePractitionerData(id, owner);
+  const { credentials, board, schedule, load, loaded } = usePractitionerData(id, owner);
   const [editing, setEditing] = useState(false);
   if (!person) return <p className="text-sm text-nb-mute" data-testid="pr-missing">This practitioner profile is not available.</p>;
   const row = board?.practitioners?.find((p) => p.practitionerId === id);
@@ -42,7 +43,7 @@ export default function PractitionerProfile({ self = false }) {
       <PageHeader eyebrow={self ? "My profile" : "Practitioner"} title={person.name} description={person.designation || "No designation yet"} />
       <section className="nb-panel space-y-4 p-4 sm:p-5" data-testid="pr-hero">
         <PhotoEditor person={person} onChanged={changed} />
-        <StatusChips status={status} />
+        {loaded ? <StatusChips status={status} /> : <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-busy="true" data-testid="pr-status-loading">{[0, 1, 2, 3].map((n) => <div key={n} className="nb-skeleton h-16 rounded-2xl" />)}</div>}
       </section>
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Tabs defaultValue="profile" className="min-w-0">
@@ -63,7 +64,7 @@ export default function PractitionerProfile({ self = false }) {
               )}
             </Panel>
           </TabsContent>
-          <TabsContent value="credentials"><CredentialPanel person={person} status={status} credentials={credentials} owner={owner} onChanged={changed} /></TabsContent>
+          <TabsContent value="credentials">{loaded && <CredentialPanel person={person} status={status} credentials={credentials} owner={owner} onChanged={changed} />}</TabsContent>
           <TabsContent value="hours">
             <Panel title="Weekly hours" testid="pr-hours">
               <p className="text-sm">{(schedule?.weekly || []).length ? `${schedule.weekly.length} weekly window${schedule.weekly.length === 1 ? "" : "s"} · ${schedule.status === "approved" ? "approved" : "awaiting owner approval"} · new bookings ${schedule.acceptingBookings ? "open" : "paused"}` : "No weekly hours yet."}</p>
@@ -71,7 +72,7 @@ export default function PractitionerProfile({ self = false }) {
             </Panel>
           </TabsContent>
         </Tabs>
-        <CompletenessCard status={status} self={self} />
+        {loaded ? <CompletenessCard status={status} self={self} /> : <div className="nb-skeleton h-72 rounded-[var(--nb-r-lg)]" />}
       </div>
     </div>
   );

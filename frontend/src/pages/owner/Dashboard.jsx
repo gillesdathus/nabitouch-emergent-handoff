@@ -78,8 +78,8 @@ function QuickActions({ training, go }) {
 
 function usePractitionerAlerts(enabled) {
   const { state } = useDemo();
-  const { credentials, board } = usePractitionerData(null, enabled);
-  if (!enabled || !board) return [];
+  const { credentials, board, loaded } = usePractitionerData(null, enabled);
+  if (!enabled || !loaded || !board) return [];
   return (state.practitioners || []).flatMap((person) => {
     const row = board.practitioners?.find((p) => p.practitionerId === person.id);
     const s = practitionerStatus({ person, credentials, board: row });
