@@ -1144,10 +1144,13 @@ def build_billing_router(db, coll, add_audit, user_from):
     async def stripe_status(request: Request):
         await actor(request)
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
+        from config import stripe_card_checkout_enabled
         return {
             "configured": bool(key),
             "liveEnabled": key.startswith("sk_live"),
             "testKeyPresent": key.startswith("sk_test_"),
+            "cardCheckoutEnabled": stripe_card_checkout_enabled(),
+            "paymentMode": os.environ.get("PAYMENT_MODE", ""),
             "webhookConfigured": bool(card_secret()),
             "externalVerification": "not-run",
         }
@@ -1305,7 +1308,8 @@ def build_billing_router(db, coll, add_audit, user_from):
             created = await stripe_request("POST", "checkout/sessions", data=form, idempotency_key=request_key)
             session_id = created.get("id")
             hosted_url = created.get("url")
-            if not session_id or not hosted_url or created.get("livemode") is not False:
+            expect_live = os.environ.get("PAYMENT_MODE") == "live"
+            if not session_id or not hosted_url or bool(created.get("livemode")) != expect_live:
                 raise HTTPException(502, "Card checkout could not be started")
         elif payments_simulated():
             session_id = "cs_test_" + uuid.uuid4().hex[:16]
@@ -1435,9 +1439,17 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Invalid event")
         if not isinstance(event, dict) or not isinstance(event.get("data"), dict) or not isinstance(event["data"].get("object"), dict):
             raise HTTPException(400, "Invalid event")
-        if event.get("livemode") is True or event["data"]["object"].get("livemode") is True:
+        live_event = event.get("livemode") is True or event["data"]["object"].get("livemode") is True
+        mode = os.environ.get("PAYMENT_MODE", "").strip().lower()
+        from config import stripe_card_checkout_enabled
+        if mode == "live":
+            if not live_event:
+                raise HTTPException(400, "Live event mode is required")
+            if not stripe_card_checkout_enabled():
+                raise HTTPException(400, "Live Stripe events are prohibited while card checkout is off")
+        elif live_event:
             raise HTTPException(400, "Live Stripe events are prohibited")
-        if os.environ.get("PAYMENT_MODE") == "test" and event.get("livemode") is not False:
+        if mode == "test" and event.get("livemode") is not False:
             raise HTTPException(400, "Sandbox event mode is required")
         eid = str(event.get("id") or "")
         if not 8 <= len(eid) <= 255:

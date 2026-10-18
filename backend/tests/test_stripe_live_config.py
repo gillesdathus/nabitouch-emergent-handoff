@@ -9,17 +9,30 @@ from config import stripe_card_checkout_enabled
 from stripe_gateway import validate_stripe_env
 
 
-def _live_ok(monkeypatch):
+def _live_ok(monkeypatch, *, checkout=False):
     monkeypatch.setenv("PAYMENT_MODE", "live")
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_live_synthetic_fixture")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_synthetic_fixture")
-    monkeypatch.setenv("STRIPE_CARD_CHECKOUT_ENABLED", "false")
+    monkeypatch.setenv("STRIPE_CARD_CHECKOUT_ENABLED", "true" if checkout else "false")
 
 
 def test_live_mode_accepts_live_key_with_checkout_disabled(monkeypatch):
     _live_ok(monkeypatch)
     validate_stripe_env()
     assert stripe_card_checkout_enabled() is False
+
+
+def test_live_mode_accepts_authorized_checkout(monkeypatch):
+    _live_ok(monkeypatch, checkout=True)
+    validate_stripe_env()
+    assert stripe_card_checkout_enabled() is True
+
+
+def test_live_checkout_requires_live_secret_and_webhook(monkeypatch):
+    _live_ok(monkeypatch, checkout=True)
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "")
+    with pytest.raises(RuntimeError, match="webhook signing secret"):
+        validate_stripe_env()
 
 
 def test_live_mode_rejects_test_key(monkeypatch):
@@ -33,13 +46,6 @@ def test_live_mode_requires_webhook_secret_when_key_set(monkeypatch):
     _live_ok(monkeypatch)
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "")
     with pytest.raises(RuntimeError, match="webhook signing secret"):
-        validate_stripe_env()
-
-
-def test_live_mode_refuses_enabled_checkout(monkeypatch):
-    _live_ok(monkeypatch)
-    monkeypatch.setenv("STRIPE_CARD_CHECKOUT_ENABLED", "true")
-    with pytest.raises(RuntimeError, match="Live card checkout remains disabled"):
         validate_stripe_env()
 
 

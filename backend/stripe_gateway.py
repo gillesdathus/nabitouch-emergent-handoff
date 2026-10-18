@@ -7,16 +7,23 @@ from fastapi import HTTPException
 API_VERSION = "2026-08-26.dahlia"
 
 
+def _checkout_enabled():
+    return os.environ.get("STRIPE_CARD_CHECKOUT_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+
+
+def payment_mode():
+    return os.environ.get("PAYMENT_MODE", "disabled").strip().lower()
+
+
 def validate_stripe_env():
-    """Validate PAYMENT_MODE against Stripe secrets without enabling checkout.
+    """Validate PAYMENT_MODE against Stripe secrets.
 
     - test: sandbox keys only; acceptance still requires delivery channels off.
-    - live: matching live secret allowed while STRIPE_CARD_CHECKOUT_ENABLED stays false.
-    - Checkout enablement remains gated; live checkout cannot be turned on here.
+    - live: matching live secret + webhook; checkout may be enabled when authorized.
     """
     key = os.environ.get("STRIPE_SECRET_KEY", "").strip()
-    mode = os.environ.get("PAYMENT_MODE", "disabled").strip().lower()
-    enabled = os.environ.get("STRIPE_CARD_CHECKOUT_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+    mode = payment_mode()
+    enabled = _checkout_enabled()
     whsec = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
 
     if mode not in ("disabled", "simulated", "test", "live"):
@@ -54,8 +61,8 @@ def validate_stripe_env():
             raise RuntimeError("Stripe live mode requires a sk_live_ or rk_live_ secret key when a secret key is set")
         if key and not whsec.startswith("whsec_"):
             raise RuntimeError("Stripe live mode requires a webhook signing secret when a secret key is set")
-        if enabled:
-            raise RuntimeError("Live card checkout remains disabled; set STRIPE_CARD_CHECKOUT_ENABLED=false")
+        if enabled and not (is_live_key and whsec.startswith("whsec_")):
+            raise RuntimeError("Live card checkout requires a live secret key and webhook signing secret")
         return
 
     # disabled / simulated
@@ -64,7 +71,7 @@ def validate_stripe_env():
     if is_test_key:
         raise RuntimeError("Stripe test credentials require PAYMENT_MODE=test")
     if enabled and mode != "simulated":
-        raise RuntimeError("Enabled checkout requires explicit PAYMENT_MODE=test")
+        raise RuntimeError("Enabled checkout requires explicit PAYMENT_MODE=test or PAYMENT_MODE=live")
 
 
 async def stripe_request(method, path, *, data=None, idempotency_key=None):
@@ -72,9 +79,12 @@ async def stripe_request(method, path, *, data=None, idempotency_key=None):
         validate_stripe_env()
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
+    mode = payment_mode()
     key = os.environ.get("STRIPE_SECRET_KEY", "")
-    if os.environ.get("PAYMENT_MODE") != "test" or not key:
-        raise HTTPException(503, "Stripe sandbox is not configured")
+    if mode not in ("test", "live") or not key:
+        raise HTTPException(503, "Stripe is not configured")
+    if mode == "live" and not _checkout_enabled():
+        raise HTTPException(503, "Card checkout is turned off")
     headers = {"Stripe-Version": API_VERSION}
     if method != "GET":
         if not idempotency_key:
@@ -84,10 +94,13 @@ async def stripe_request(method, path, *, data=None, idempotency_key=None):
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.request(method, "https://api.stripe.com/v1/" + path, auth=(key, ""), headers=headers, data=data)
         if response.status_code >= 400:
-            raise HTTPException(502, "Stripe sandbox request failed; retry the same operation key")
+            raise HTTPException(502, "Stripe request failed; retry the same operation key")
         obj = response.json()
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(502, "Stripe sandbox unavailable; retry the same operation key") from exc
-    if obj.get("livemode") is True:
+        raise HTTPException(502, "Stripe unavailable; retry the same operation key") from exc
+    live_obj = obj.get("livemode") is True
+    if mode == "test" and live_obj:
         raise HTTPException(409, "Live Stripe objects are prohibited")
+    if mode == "live" and obj.get("livemode") is False:
+        raise HTTPException(409, "Sandbox Stripe objects are prohibited in live mode")
     return obj

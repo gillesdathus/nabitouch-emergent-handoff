@@ -328,10 +328,8 @@ def build_plans_router(db, coll, add_audit, user_from):
             raise HTTPException(503, "Card checkout is turned off")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
         url = None
-        if key.startswith("sk_live"):
-            raise HTTPException(503, "Live card checkout is not enabled")
-        if key.startswith("sk_test_"):
-            import httpx
+        if key.startswith(("sk_test_", "sk_live_")):
+            from stripe_gateway import stripe_request
             from config import public_base_url
             app_url = public_base_url(request)
             form = {"mode": "subscription" if subscription else "payment", "success_url": app_url + "/me/plans?plan=return&session_id={CHECKOUT_SESSION_ID}", "cancel_url": app_url + "/me/plans?plan=cancel",
@@ -340,11 +338,10 @@ def build_plans_router(db, coll, add_audit, user_from):
             if subscription:
                 form["line_items[0][price_data][recurring][interval]"] = "month"
                 form["subscription_data[metadata][membershipId]"] = purchase["membershipId"]
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
-            if resp.status_code >= 400 or not resp.json().get("id"):
+            created = await stripe_request("POST", "checkout/sessions", data=form, idempotency_key=f"plan-{purchase['id']}")
+            session_id, url = created.get("id"), created.get("url")
+            if not session_id:
                 raise HTTPException(502, "Card checkout could not be started")
-            session_id, url = resp.json()["id"], resp.json().get("url")
         elif payments_simulated():
             session_id = "cs_test_" + uuid.uuid4().hex[:16]
         else:
