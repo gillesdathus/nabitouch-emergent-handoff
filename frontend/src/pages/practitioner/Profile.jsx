@@ -83,7 +83,7 @@ export function ProfileFields({ person, owner = false, onSaved, onCancel }) {
   );
 }
 
-function PhotoEditor({ person, onChanged }) {
+export function PhotoEditor({ person, onChanged }) {
   const { api, run } = useDemo();
   const input = useRef(null);
   const [busy, setBusy] = useState(false);

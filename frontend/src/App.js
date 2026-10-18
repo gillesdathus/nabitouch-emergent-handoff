@@ -22,7 +22,8 @@ const Home = lazy(() => import("@/pages/client/Home"));
 const Services = lazy(() => import("@/pages/client/Services"));
 const Practitioners = lazy(() => import("@/pages/client/Practitioners"));
 const PractitionerProfile = lazy(() => import("@/pages/client/PractitionerProfile"));
-const ProProfile = lazy(() => import("@/pages/practitioner/Profile"));
+const StaffPractitionerProfile = lazy(() => import("@/pages/staff/PractitionerProfile"));
+const OwnerPractitioners = lazy(() => import("@/pages/owner/Practitioners"));
 const Contact = lazy(() => import("@/pages/client/Contact"));
 const GuestTrack = lazy(() => import("@/pages/client/GuestTrack"));
 const Welcome = lazy(() => import("@/pages/client/Welcome"));
@@ -130,7 +131,7 @@ export default function App() {
                 <Route element={<StaffShell role="pro" />}>
                   <Route element={<PractitionerErrorBoundary />}>
                     <Route path="/pro" element={<ProToday />} />
-                    <Route path="/pro/profile" element={<ProProfile />} />
+                    <Route path="/pro/profile" element={<StaffPractitionerProfile self />} />
                     <Route path="/pro/visit/:id" element={<ProVisit />} />
                     <Route path="/pro/visit/:id/messages" element={<Thread viewerRole="practitioner" />} />
                     <Route path="/pro/visit/:id/native" element={<NativeNav />} />
@@ -159,6 +160,8 @@ export default function App() {
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
                   <Route path="/owner/clients" element={<StaffClients role="owner" />} />
+                  <Route path="/owner/practitioners" element={<OwnerPractitioners />} />
+                  <Route path="/owner/practitioners/:id" element={<StaffPractitionerProfile />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />

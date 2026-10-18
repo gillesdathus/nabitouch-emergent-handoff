@@ -15,6 +15,8 @@ import { useDemo } from "@/store/DemoStore";
 import { ACTIVE, DONE, addDays, bookedByWeek, fmtDate, fmtTime, money, todayISO } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import { sumInvoices, useInvoices } from "@/lib/useInvoices";
+import { practitionerStatus } from "@/lib/practitionerStatus";
+import { usePractitionerData } from "@/pages/staff/PractitionerProfile";
 
 const CLOSED = ["cancelled", "no_show", ...DONE];
 const CHART_H = 168;
@@ -74,6 +76,20 @@ function QuickActions({ training, go }) {
   return <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" data-testid="dashboard-actions">{list.map(([fn, label, Icon, detail]) => <div key={label} className="nb-panel min-w-0 px-1"><HubLink icon={Icon} title={label} detail={detail} onClick={fn} /></div>)}</div>;
 }
 
+function usePractitionerAlerts(enabled) {
+  const { state } = useDemo();
+  const { credentials, board } = usePractitionerData(null, enabled);
+  if (!enabled || !board) return [];
+  return (state.practitioners || []).flatMap((person) => {
+    const row = board.practitioners?.find((p) => p.practitionerId === person.id);
+    const s = practitionerStatus({ person, credentials, board: row });
+    const out = [];
+    if (s.overdue) out.push({ id: `${person.id}-overdue`, kind: "profile", text: `${person.name}: profile incomplete after 30 days (${s.done}/${s.items.length}) — decide whether to keep booking open`, to: `/owner/practitioners/${person.id}` });
+    ["registration", "liability"].forEach((k) => { if (s[k].state === "attested") out.push({ id: `${person.id}-${k}-attested`, kind: "credential", text: `${person.name}: ${k === "liability" ? "liability insurance" : "registration"} attested by owner — document not yet on file`, to: `/owner/practitioners/${person.id}` }); });
+    return out;
+  });
+}
+
 function useAlerts(state, today, invoices) {
   const credentials = state.practitioners.flatMap((person) => [["licence", person.licenseExpiry], ["insurance", person.insuranceExpiry]]
     .filter(([, date]) => date && date <= addDays(today, 60))
@@ -113,6 +129,9 @@ export default function Dashboard() {
     return Object.entries(counts).map(([slug, count]) => ({ name: idx.services[slug]?.name || slug, count })).sort((a, b) => b.count - a.count).slice(0, 6);
   }, [appts, idx.services]);
   const alerts = useAlerts(state, today, invoices);
+  const proAlerts = usePractitionerAlerts(!training);
+  alerts.all = [...proAlerts, ...alerts.all];
+  alerts.credentials = [...proAlerts, ...alerts.credentials];
   const chart = range === "week" ? weeks : visitsToday.map((a) => ({ week: fmtTime(a.time), revenue: a.pricing?.total || 0 }));
   const go = { booking: () => setBooking(true), invoice: () => setInvoice(true), nav: navigate };
 

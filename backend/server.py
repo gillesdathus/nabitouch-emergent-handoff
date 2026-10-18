@@ -2180,6 +2180,17 @@ async def report_pdf(report_id: str, request: Request):
     if not owner and not own:
         raise HTTPException(403, "Not permitted")
     snap = row.get("snapshot") or {}
+    from pdfbrand import report_pdf as branded_report
+    kpis = [("Invoiced", snap.get("invoiced")), ("Visits", snap.get("count", 0)), ("Gross treatment", snap.get("grossTreatment")), ("Discounts", snap.get("discounts")),
+            ("Travel", snap.get("travel")), ("GST", snap.get("gst")), ("Collected", snap.get("collected")), ("Insurance received", snap.get("insuranceReceived")),
+            ("Insurance pending", snap.get("insurancePending")), ("Outstanding", snap.get("outstanding")), ("Status", str(row.get("status") or "").title())]
+    money = lambda v: f"${float(v or 0):,.2f}"
+    detail = [[str(x.get("date") or ""), str(x.get("ref") or ""), str(x.get("serviceSlug") or ""), money(x.get("invoiced")), money(x.get("collected")), money(x.get("outstanding"))] for x in (snap.get("rows") or [])[:1000] if isinstance(x, dict)]
+    sections = [("Visits in this period", ["Date", "Reference", "Service", "Invoiced", "Collected", "Outstanding"], detail, [2, 2, 3, 2, 2, 2])]
+    title = "Period report" + (f" · {row.get('practitionerName')}" if row.get("practitionerName") else "")
+    shown = [(k, v if k in ("Visits", "Status") else money(v)) for k, v in kpis]
+    pdf = branded_report(title, f"{snap.get('start')} to {snap.get('end')}", [(k, str(v)) for k, v in shown], sections, await coll("settings").find_one({"id": "app"}, NO_ID))
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="nabitouch-report-{snap.get("start")}-{snap.get("end")}.pdf"'})
     lines = [
         f"{snap.get('start')} to {snap.get('end')}",
         snap.get("basis") or "",

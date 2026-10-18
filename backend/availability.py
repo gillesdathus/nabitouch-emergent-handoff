@@ -992,6 +992,8 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
                 "specialties": profile.get("specialties") or [],
                 "activationReady": profile.get("onboardingStatus") in ("invited", "draft", "pending") and not activation_blockers(gaps),
                 "accountStatus": (loaded.get("account") or {}).get("status"),
+                "activatedAt": profile.get("activatedAt") or "",
+                "credentialAttestations": profile.get("credentialAttestations") or {},
             })
         return {"practitioners": rows, "launch": launch_readiness(settings), "mfaEnforced": bool(settings.get("mfaEnforcePrivileged"))}
 
@@ -1023,6 +1025,36 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
             raise HTTPException(400, "Confirm that you are approving this practitioner")
         return await _activate_profile(user, practitioner_id)
 
+    @router.post("/practitioners/{practitioner_id}/credential-attestation")
+    async def attest_credential(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Owner vouches for a credential not yet on file. Booking opens; the gap stays tracked until a verified record exists."""
+        from onboarding import ATTESTABLE_KINDS
+        user = await require(request, "owner")
+        kind = payload.get("kind")
+        if kind not in ATTESTABLE_KINDS:
+            raise HTTPException(400, "Choose registration or liability insurance")
+        if payload.get("confirm") is not True:
+            raise HTTPException(400, "Confirm that you have seen this credential")
+        note = " ".join(str(payload.get("note") or "").split())[:300]
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
+        row = {"by": user["name"], "byId": user.get("id"), "at": datetime.now(timezone.utc).isoformat(), "note": note}
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {f"credentialAttestations.{kind}": row}})
+        await add_audit(user["name"], f"Owner attested {kind} for {practitioner_id} (document not on file)", None)
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})
+        return {"credentialAttestations": (saved or {}).get("credentialAttestations") or {}}
+
+    @router.delete("/practitioners/{practitioner_id}/credential-attestation/{kind}")
+    async def revoke_attestation(practitioner_id: str, kind: str, request: Request):
+        from onboarding import ATTESTABLE_KINDS
+        user = await require(request, "owner")
+        if kind not in ATTESTABLE_KINDS:
+            raise HTTPException(400, "Choose registration or liability insurance")
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$unset": {f"credentialAttestations.{kind}": ""}})
+        await add_audit(user["name"], f"Owner attestation removed: {kind} for {practitioner_id}", None)
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})
+        return {"credentialAttestations": (saved or {}).get("credentialAttestations") or {}}
+
     @router.post("/schedules/{practitioner_id}/approve")
     async def approve(practitioner_id: str, request: Request):
         """Approve weekly hours. Does not open new bookings; use pause/open for that."""
@@ -1043,6 +1075,8 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         elif status not in (None, "approved"):
             raise HTTPException(409, "This practitioner cannot be activated from its current status")
         updates = {"onboardingStatus": "approved"}
+        if not person.get("activatedAt"):
+            updates["activatedAt"] = datetime.now(timezone.utc).isoformat()
         # Never auto-open booking from activation.
         if person.get("bookable") is not True:
             updates["bookable"] = False

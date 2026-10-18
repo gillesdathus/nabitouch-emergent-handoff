@@ -74,11 +74,15 @@ def assignment_credential_problem(person, credentials, today=None):
     if status != "approved":
         return None
     today = today or date.today()
-    if not _current(credentials, "registration", today):
+    attested = (person or {}).get("credentialAttestations") or {}
+    if not _current(credentials, "registration", today) and not attested.get("registration"):
         return "Registration is missing or expired"
-    if not _current(credentials, "liability", today):
+    if not _current(credentials, "liability", today) and not attested.get("liability"):
         return "Liability insurance is missing or expired"
     return None
+
+
+ATTESTABLE_KINDS = ("registration", "liability")
 
 
 def activation_blockers(gaps):
@@ -99,14 +103,18 @@ def onboarding_gaps(*, person, credentials, login_email, owner_email, schedule, 
         elif not acceptable_login(login_email, owner_email):
             # Still show as a tracking gap for invite-created practitioners, but only hard-block when no login at all.
             gaps.append({"id": "login_email_review", "label": "Practitioner login email review", "status": "pending owner input"})
+    attested = (person or {}).get("credentialAttestations") or {}
+    pending = "owner attested · document not on file"
     registration = _current(credentials, "registration", today)
     if not registration:
-        gaps.append({"id": "registration", "label": "Professional registration number", "status": "pending verification"})
-        gaps.append({"id": "registration_expiry", "label": "Registration expiry", "status": "pending verification"})
+        state = pending if attested.get("registration") else "pending verification"
+        gaps.append({"id": "registration", "label": "Professional registration number", "status": state})
+        gaps.append({"id": "registration_expiry", "label": "Registration expiry", "status": state})
     liability = _current(credentials, "liability", today)
     if not liability:
-        gaps.append({"id": "liability", "label": "Professional liability insurance", "status": "pending verification"})
-        gaps.append({"id": "insurance_expiry", "label": "Insurance expiry", "status": "pending verification"})
+        state = pending if attested.get("liability") else "pending verification"
+        gaps.append({"id": "liability", "label": "Professional liability insurance", "status": state})
+        gaps.append({"id": "insurance_expiry", "label": "Insurance expiry", "status": state})
     if mfa_required and not mfa_enrolled:
         gaps.append({"id": "mfa", "label": "Staff authenticator", "status": "pending enrollment"})
     if not (person or {}).get("specialties"):

@@ -9,6 +9,8 @@ import { PractitionerSetupRequired, PractitionerUnauthorized, usePractitionerPro
 
 const ready = (a) => a.readiness?.allReady === true && OPEN.includes(a.status) && a.status !== "in_session";
 
+import { ProfileReminder } from "@/components/practitioner/ProfileReminder";
+
 export default function Today() {
   const { run, api } = useDemo();
   const { loading, capable, me, practitionerId, idx, state, error } = usePractitionerProfile();
@@ -28,6 +30,7 @@ export default function Today() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6" data-testid="pro-today">
+      <ProfileReminder person={me} />
       <div className="rounded-[30px] p-5 text-white nb-tide">
         <div className="flex items-center gap-3">
           <Avatar person={me} size={46} />
