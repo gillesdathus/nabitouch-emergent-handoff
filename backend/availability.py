@@ -960,10 +960,14 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "onboardingStatus": 1}) or {}
         schedule["acceptingBookings"] = bool(payload.get("acceptingBookings"))
         await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, schedule, upsert=True)
-        bookable = schedule["acceptingBookings"] and schedule.get("status") == "approved" and person.get("onboardingStatus") in (None, "approved")
-        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {"available": bookable}})
+        bookable = (
+            schedule["acceptingBookings"]
+            and schedule.get("status") == "approved"
+            and person.get("onboardingStatus") in (None, "approved")
+        )
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {"available": bookable, "bookable": bookable}})
         await add_audit(user["name"], f"New bookings {'opened' if schedule['acceptingBookings'] else 'paused'} for {practitioner_id}", None)
-        return {"acceptingBookings": schedule["acceptingBookings"]}
+        return {"acceptingBookings": schedule["acceptingBookings"], "bookable": bookable}
 
     @router.get("/onboarding")
     async def onboarding_board(request: Request):
@@ -986,7 +990,8 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
                 "bookable": profile.get("bookable") is True,
                 "gaps": gaps,
                 "specialties": profile.get("specialties") or [],
-                "activationReady": profile.get("onboardingStatus") in ("draft", "pending") and not activation_blockers(gaps),
+                "activationReady": profile.get("onboardingStatus") in ("invited", "draft", "pending") and not activation_blockers(gaps),
+                "accountStatus": (loaded.get("account") or {}).get("status"),
             })
         return {"practitioners": rows, "launch": launch_readiness(settings), "mfaEnforced": bool(settings.get("mfaEnforcePrivileged"))}
 
@@ -1012,44 +1017,75 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
 
     @router.post("/practitioners/{practitioner_id}/onboarding/approve")
     async def approve_onboarding(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Activate the practitioner profile. Does not open booking or approve the schedule."""
         user = await require(request, "owner")
         if payload.get("confirm") is not True:
             raise HTTPException(400, "Confirm that you are approving this practitioner")
-        return await _activate(user, practitioner_id)
+        return await _activate_profile(user, practitioner_id)
 
     @router.post("/schedules/{practitioner_id}/approve")
     async def approve(practitioner_id: str, request: Request):
+        """Approve weekly hours. Does not open new bookings; use pause/open for that."""
         user = await require(request, "owner")
-        return await _activate(user, practitioner_id)
+        return await _approve_schedule(user, practitioner_id)
 
-    async def _activate(user, practitioner_id):
+    async def _activate_profile(user, practitioner_id):
         from onboarding import activation_blockers, load_practitioner_onboarding
+        loaded = await load_practitioner_onboarding(db, coll, practitioner_id)
+        if not loaded:
+            raise HTTPException(404, "Practitioner not found")
+        person = loaded["person"]
+        status = person.get("onboardingStatus")
+        if status in ("invited", "draft", "pending"):
+            blockers = activation_blockers(loaded["gaps"])
+            if blockers:
+                raise HTTPException(409, {"message": "Link a staff login before activating this profile", "gaps": blockers})
+        elif status not in (None, "approved"):
+            raise HTTPException(409, "This practitioner cannot be activated from its current status")
+        updates = {"onboardingStatus": "approved"}
+        # Never auto-open booking from activation.
+        if person.get("bookable") is not True:
+            updates["bookable"] = False
+        if person.get("available") is not True:
+            updates["available"] = False
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": updates})
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0})
+        from media import sync_practitioner_visibility
+        from profiles import profile_media_public
+        await sync_practitioner_visibility(db, practitioner_id, profile_media_public({**(saved or person), "onboardingStatus": "approved"}))
+        await add_audit(user["name"], f"Practitioner profile activated: {practitioner_id}", None)
+        schedule = loaded.get("schedule") or draft_schedule(practitioner_id)
+        return {
+            "onboardingStatus": "approved",
+            "available": bool((saved or {}).get("available")),
+            "bookable": bool((saved or {}).get("bookable")),
+            "acceptingBookings": bool(schedule.get("acceptingBookings")),
+            "schedule": schedule,
+        }
+
+    async def _approve_schedule(user, practitioner_id):
+        from onboarding import load_practitioner_onboarding
         loaded = await load_practitioner_onboarding(db, coll, practitioner_id)
         if not loaded or not loaded.get("schedule"):
             raise HTTPException(404, "Practitioner schedule not found")
         person = loaded["person"]
-        schedule = loaded["schedule"]
-        if person.get("onboardingStatus") in ("draft", "pending"):
-            blockers = activation_blockers(loaded["gaps"])
-            if blockers:
-                raise HTTPException(409, {"message": "Finish practitioner onboarding before approving the schedule", "gaps": blockers})
-            person["onboardingStatus"] = "approved"
-        elif person.get("onboardingStatus") not in (None, "approved"):
-            raise HTTPException(409, "Finish practitioner onboarding before approving the schedule")
+        schedule = dict(loaded["schedule"])
+        if person.get("onboardingStatus") not in (None, "approved"):
+            raise HTTPException(409, "Activate the practitioner profile before approving the schedule")
         if not schedule.get("weekly"):
             raise HTTPException(409, "Add weekly hours before approving the schedule")
+        was_accepting = schedule.get("acceptingBookings") is True
         schedule["status"] = "approved"
-        schedule["acceptingBookings"] = True
+        # Approving hours does not open new bookings unless they were already open.
+        schedule["acceptingBookings"] = was_accepting
         await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, schedule, upsert=True)
+        bookable = was_accepting and person.get("onboardingStatus") in (None, "approved")
         await coll("practitioners").update_one(
             {"id": practitioner_id},
-            {"$set": {"onboardingStatus": person.get("onboardingStatus") or "approved", "available": True, "bookable": True}},
+            {"$set": {"available": bookable, "bookable": bookable}},
         )
-        from media import sync_practitioner_visibility
-        from profiles import profile_media_public
-        await sync_practitioner_visibility(db, practitioner_id, profile_media_public({**person, "onboardingStatus": person.get("onboardingStatus") or "approved"}))
         await add_audit(user["name"], f"Schedule approved for {practitioner_id}", None)
-        return {"schedule": schedule, "onboardingStatus": person.get("onboardingStatus") or "approved", "available": True}
+        return {"schedule": schedule, "onboardingStatus": person.get("onboardingStatus") or "approved", "available": bookable, "bookable": bookable}
 
     @router.get("/schedules/{practitioner_id}/route")
     async def daily_route(practitioner_id: str, request: Request, date: str):

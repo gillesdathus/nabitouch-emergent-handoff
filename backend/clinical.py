@@ -235,35 +235,56 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/credentials")
     async def list_credentials(request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
-            raise HTTPException(403, "Credential review is limited to the owner")
-        return await db.nt_credentials.find({}, {"_id": 0}).to_list(200)
+        if user["role"] == "owner":
+            return await db.nt_credentials.find({}, {"_id": 0}).to_list(200)
+        if user["role"] == "practitioner" and user.get("subject"):
+            return await db.nt_credentials.find({"practitionerId": user["subject"]}, {"_id": 0}).to_list(50)
+        raise HTTPException(403, "Credential review is limited to the owner and the treating practitioner")
 
     @r.post("/credentials")
     async def add_credential(request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
-            raise HTTPException(403, "Only the owner records credentials")
         body = await request.json()
-        if body.get("kind") not in CREDENTIAL_KINDS or not body.get("practitionerId"):
+        practitioner_id = body.get("practitionerId")
+        if user["role"] == "owner":
+            if not practitioner_id:
+                raise HTTPException(400, "Choose the practitioner and credential")
+        elif user["role"] == "practitioner":
+            practitioner_id = user.get("subject")
+            if not practitioner_id or (body.get("practitionerId") and body.get("practitionerId") != practitioner_id):
+                raise HTTPException(403, "You can only add credentials for your own profile")
+        else:
+            raise HTTPException(403, "Only the owner or the practitioner may record credentials")
+        if body.get("kind") not in CREDENTIAL_KINDS or not practitioner_id:
             raise HTTPException(400, "Choose the practitioner and credential")
         from onboarding import acceptable_identifier, expiry_date
         if not acceptable_identifier(body.get("identifier")):
             raise HTTPException(400, "Enter the real registration or policy number. A placeholder is not accepted.")
         if expiry_date(body.get("expiresOn")) is None:
             raise HTTPException(400, "Enter the expiry date")
+        effective = body.get("effectiveOn")
+        if effective and expiry_date(effective) is None:
+            raise HTTPException(400, "Enter a valid effective date")
         row = {
             "id": "cred-" + uuid.uuid4().hex[:12],
-            "practitionerId": body["practitionerId"],
+            "practitionerId": practitioner_id,
             "kind": body["kind"],
             "identifier": _clip(body.get("identifier"), 80),
+            "issuingAuthority": _clip(body.get("issuingAuthority"), 120),
+            "province": _clip(body.get("province"), 40),
+            "provider": _clip(body.get("provider"), 120),
+            "effectiveOn": _clip(effective, 10) if effective else None,
             "expiresOn": _clip(body.get("expiresOn"), 10),
+            "documentNote": _clip(body.get("documentNote"), 200),
             "status": "uploaded",
             "verifiedAt": None,
             "verifiedBy": None,
+            "submittedBy": user.get("name"),
             "at": datetime.now(TZ).isoformat(),
         }
         await db.nt_credentials.insert_one(dict(row))
+        await add_audit(user.get("name") or "staff", f"Credential uploaded: {row['kind']} for {practitioner_id}", None)
+        row.pop("_id", None)
         return row
 
     @r.post("/credentials/{credential_id}/verify")

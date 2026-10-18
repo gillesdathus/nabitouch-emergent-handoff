@@ -21,7 +21,7 @@ export default function ServiceDetail() {
   }
   const priced = quote({ service, duration, client: me, promotions: state.promotions, settings: idx.settings });
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome);
+  const eligible = welcomeOfferListed(welcome, "services");
   const practitioners = state.practitioners.filter((person) => publiclyBookable(person) && (person.specialties || []).includes(slug));
   const book = (practitionerId) => {
     patchDraft({ ...serviceSelectionPatch(service, draft), duration: Number(duration), practitionerId: practitionerId || "", step: 0 });

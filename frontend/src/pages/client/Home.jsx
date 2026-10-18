@@ -7,7 +7,7 @@ import { CatalogueImage } from "@/components/ui-kit";
 import { IconTile, Notice, PageHeader, Reveal, TideAvatar } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 import { api } from "@/lib/api";
-import { bookableCatalogueService, clinicBookable, money, publiclyBookable, welcomeOfferListed } from "@/lib/domain";
+import { bookableCatalogueService, clinicBookable, money, promoBannerCopy, publiclyBookable, welcomeOfferListed } from "@/lib/domain";
 
 const GROUPS = [
   ["Relax", Leaf, "tint-mint", "text-nb-teal", (service) => /relax/i.test(service.category || service.name || "") || ["swedish", "hot-stone", "scalp", "foot-reflexology"].includes(service.slug)],
@@ -33,7 +33,9 @@ export default function Home() {
   const [query, setQuery] = useState(draft.addressQuery || "");
   const [campaigns, setCampaigns] = useState([]);
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome);
+  const eligible = welcomeOfferListed(welcome, "home");
+  const welcomeCopy = promoBannerCopy(welcome);
+  const welcomeBadge = welcome?.type === "percent" ? `${Number(welcome.value) || 0}%` : (welcome ? money(welcome.value) : "");
   const services = state.services.filter(bookableCatalogueService);
   const people = state.practitioners.filter(publiclyBookable);
   const clinicOpen = clinicBookable(idx.settings?.clinic);
@@ -50,10 +52,10 @@ export default function Home() {
     <div className="mx-auto max-w-6xl space-y-9 px-5 pt-5">
       {eligible && (
         <Link to="/book" data-testid="hero-promo-chip" className="flex items-center gap-4 rounded-[28px] px-4 py-4 text-white shadow-[0_18px_40px_-16px_rgba(11,46,138,0.75)] nb-lagoon sm:px-6">
-          <span className="grid h-[4.5rem] w-[4.5rem] shrink-0 place-items-center rounded-2xl bg-nb-lime text-2xl font-bold leading-none text-nb-ink">20%</span>
+          <span className="grid h-[4.5rem] w-[4.5rem] shrink-0 place-items-center rounded-2xl bg-nb-lime text-2xl font-bold leading-none text-nb-ink">{welcomeBadge}</span>
           <span className="min-w-0 flex-1">
             <span className="block text-xs font-bold uppercase tracking-[0.16em] text-nb-lime">Welcome offer</span>
-            <span className="mt-1 block text-lg font-semibold leading-tight sm:text-2xl">20% off a qualifying first treatment</span>
+            <span className="mt-1 block text-lg font-semibold leading-tight sm:text-2xl">{welcomeCopy.headline}</span>
             <span className="mt-1 block text-sm font-medium text-white/80">Confirmed when you book</span>
           </span>
           <ArrowRight className="h-5 w-5 shrink-0 text-nb-lime" />
@@ -140,7 +142,7 @@ export default function Home() {
         ))}
       </section>
 
-      {eligible && <PromoBanner eligible={eligible} testid="home-promo-banner" />}
+      {eligible && <PromoBanner eligible={eligible} promo={welcome} testid="home-promo-banner" />}
 
       <section className={`grid gap-3 pb-6 ${clinicOpen ? "sm:grid-cols-2" : ""}`}>
         <Link to="/practitioners" data-testid="home-practitioners" className="nb-card flex items-center gap-4 p-5 transition-transform hover:-translate-y-0.5">

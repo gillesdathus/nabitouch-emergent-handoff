@@ -254,8 +254,24 @@ export function clinicSavePayload(clinic, query, pick) {
 
 const birthdayMonth = (c) => c?.dob && Number(c.dob.split('-')[1]) === new Date().getMonth() + 1;
 
-export function welcomeOfferListed(promo) {
-  return Boolean(promo && promo.enabled && promo.approval === "approved" && promo.eligibility === "first_online");
+export function welcomeOfferListed(promo, placement) {
+  if (!(promo && promo.enabled && promo.approval === "approved" && promo.eligibility === "first_online")) return false;
+  if (!placement) return true;
+  const places = Array.isArray(promo.placements) && promo.placements.length ? promo.placements : ["home", "account"];
+  return places.includes(placement);
+}
+
+export function promoBannerCopy(promo) {
+  if (!promo) return { headline: "Welcome offer", body: "" };
+  const value = Number(promo.value) || 0;
+  const cap = promo.maxDiscount != null ? Number(promo.maxDiscount) : null;
+  const defaultBody = promo.type === "percent"
+    ? `${value}% off the treatment price of a qualifying first booking${cap != null ? `, up to $${cap}` : ""}. Travel and GST are calculated separately.`
+    : `${money(value)} off the treatment price of a qualifying first booking. Travel and GST are calculated separately.`;
+  return {
+    headline: promo.bannerHeadline || promo.name || "Welcome offer",
+    body: promo.bannerBody || defaultBody,
+  };
 }
 
 export function promoEligibility(promo, client, slug) {

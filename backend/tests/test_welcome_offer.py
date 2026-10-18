@@ -48,6 +48,21 @@ def test_swedish_welcome_total_is_100_80():
     assert priced["travel"] == 0
     assert priced["tax"] == 4.8
     assert priced["total"] == 100.8
+
+
+def test_welcome_offer_has_placements_and_edit_does_not_rewrite_invoice_lines():
+    offer = launch_welcome_offer()
+    assert "home" in offer["placements"] and "account" in offer["placements"]
+    snapshot = {
+        "base": 120, "addons": 0, "addonList": [], "discount": 24, "travel": 0, "tax": 4.8, "total": 100.8,
+        "promoId": "promo-welcome", "promoName": "First-booking welcome offer", "promoCode": "WELCOME20",
+        "welcomeOffer": True,
+    }
+    before = lines_from_pricing(snapshot)
+    edited = _offer(value=30, maxDiscount=50, bannerHeadline="New headline")
+    assert edited["value"] == 30
+    after = lines_from_pricing(snapshot)
+    assert before == after
     assert priced["promoName"] == "First-booking welcome offer"
     assert priced["welcomeOffer"] is True
     rows, net, tax, total = lines_from_pricing(priced)

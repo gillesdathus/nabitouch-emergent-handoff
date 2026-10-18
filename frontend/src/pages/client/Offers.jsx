@@ -67,16 +67,37 @@ export default function Offers() {
             <article data-testid={`offer-${row.id}`} className="grid sm:grid-cols-[180px_1fr]">
               <div className="relative h-36 sm:h-full">
                 <CatalogueImage src={row.image} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                <span className="absolute left-3 top-3 grid h-8 place-items-center rounded-full px-3 font-display text-lg text-white nb-lagoon">−{row.discountPercent}%</span>
+                <span className="absolute left-3 top-3 grid h-8 place-items-center rounded-full px-3 font-display text-lg text-white nb-lagoon">
+                  {row.offerKind === "complimentary" ? "Free" : row.offerKind === "fixed" ? `−$${row.discountFixed}` : `−${row.discountPercent}%`}
+                </span>
               </div>
               <div className="p-5">
                 <span className="inline-flex h-6 items-center gap-1 rounded-full bg-nb-coral/10 px-2.5 text-[11px] font-semibold text-nb-coral ring-1 ring-inset ring-nb-coral/25"><Clock className="h-3 w-3" />{expired ? "Expired" : "Ends in"} <span className="nb-num" data-tick={tick}>{expired ? "" : clock(ms)}</span></span>
                 <p className="mt-2 text-lg font-semibold">{row.title}</p>
                 <p className="text-sm text-nb-mute">{row.description}</p>
-                <p className="mt-2 text-sm text-nb-mute">{row.discountPercent}% off · {row.bookingStart} · {row.windowStart}–{row.windowEnd}</p>
-                <p className="text-sm" data-testid={`offer-spots-${row.id}`}>{row.soldOut ? "Sold out" : `${row.remaining} discounted spots left`}</p>
+                <p className="mt-2 text-sm text-nb-mute">
+                  {row.offerKind === "complimentary"
+                    ? `Complimentary ${row.complimentaryMinutes || 10} min in-clinic`
+                    : row.offerKind === "fixed"
+                      ? `$${row.discountFixed} off`
+                      : `${row.discountPercent}% off`}
+                  {" · "}{row.bookingStart} · {row.windowStart}–{row.windowEnd}
+                </p>
+                <p className="text-sm" data-testid={`offer-spots-${row.id}`}>{row.soldOut ? "Sold out" : `${row.remaining} spots left`}</p>
                 {!expired && !row.soldOut && (
-                  <Link to="/book" className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm" data-testid={`offer-book-${row.id}`} onClick={() => patchDraft({ campaignId: row.id, serviceSlug: row.serviceSlug === "all" ? "swedish" : row.serviceSlug, duration: row.minDuration || 60, date: row.bookingStart, idempotencyKey: `cmp-${row.id}-${Date.now()}` })}><Zap className="h-4 w-4" />See route-feasible times</Link>
+                  <Link
+                    to="/book"
+                    className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm"
+                    data-testid={`offer-book-${row.id}`}
+                    onClick={() => patchDraft({
+                      campaignId: row.id,
+                      serviceSlug: row.serviceSlug === "all" ? "swedish" : row.serviceSlug,
+                      duration: row.offerKind === "complimentary" ? (row.complimentaryMinutes || 10) : (row.minDuration || 60),
+                      locationType: row.offerKind === "complimentary" || (row.locationTypes || []).includes("clinic") ? "clinic" : undefined,
+                      date: row.bookingStart,
+                      idempotencyKey: `cmp-${row.id}-${Date.now()}`,
+                    })}
+                  ><Zap className="h-4 w-4" />See route-feasible times</Link>
                 )}
               </div>
             </article>

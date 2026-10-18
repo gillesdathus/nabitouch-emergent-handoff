@@ -6,9 +6,11 @@ import { useDemo } from "@/store/DemoStore";
 import { money } from "@/lib/domain";
 
 const EMPTY = {
-  title: "", description: "", serviceSlug: "", bookingStart: "", bookingEnd: "",
-  windowStart: "14:00", windowEnd: "17:00", expiresLocal: "", discountPercent: 20, maxRedemptions: 5,
-  perClientLimit: 1, audience: "all", minDuration: 60, public: true, stackable: false, code: "",
+  title: "", description: "", serviceSlug: "all", bookingStart: "", bookingEnd: "",
+  windowStart: "14:00", windowEnd: "17:00", expiresLocal: "", discountPercent: 20, discountFixed: 0,
+  offerKind: "percent", complimentaryMinutes: 10, locationTypes: [],
+  followUp: { enabled: false, percent: 20, validDays: 14, autoIssueOnComplete: true },
+  maxRedemptions: 5, perClientLimit: 1, audience: "all", minDuration: 60, public: true, stackable: false, code: "",
 };
 const FILTERS = ["all", "draft", "scheduled", "active", "completed", "archived"];
 const STEPS = ["Details", "Offer", "Schedule", "Audience", "Review"];
@@ -81,17 +83,29 @@ export default function Campaigns() {
   }), [rows, filter, query, services]);
 
   const openNew = () => {
-    setEditor({ ...EMPTY, serviceSlug: services[0]?.slug || "" });
+    setEditor({ ...EMPTY, serviceSlug: services[0]?.slug || "all" });
     setStep(0);
   };
   const openEdit = (row) => {
     setEditor({
       ...EMPTY,
       ...row,
+      offerKind: row.offerKind || "percent",
+      followUp: { ...EMPTY.followUp, ...(row.followUp || {}) },
+      locationTypes: row.locationTypes || [],
       expiresLocal: toEdmontonInput(row.expiresAt),
     });
     setStep(0);
     setMenu(null);
+  };
+  const createTenMinutes = async () => {
+    try {
+      await api.createTenMinutesCampaign();
+      toast.success("10 Minutes. On Us. saved as a draft.");
+      await load();
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || "Template could not be created");
+    }
   };
   const payload = (form) => ({
     ...form,
@@ -102,8 +116,8 @@ export default function Campaigns() {
   });
   const save = async () => {
     const form = editor;
-    if (!form.title || !form.serviceSlug || !form.bookingStart || !form.expiresLocal) {
-      toast.error("Add a name, service, appointment date, and expiration.");
+    if (!form.title || !form.bookingStart || !form.expiresLocal) {
+      toast.error("Add a name, appointment date, and expiration.");
       return;
     }
     try {
@@ -126,10 +140,18 @@ export default function Campaigns() {
     catch (error) { toast.error(error?.response?.data?.detail || "The campaign was not copied"); }
   };
   const priceFor = (form) => {
-    const service = services.find((item) => item.slug === form.serviceSlug);
+    const service = services.find((item) => item.slug === form.serviceSlug) || services[0];
     const prices = service?.prices || {};
-    const base = Number(prices[form.minDuration] || prices[60] || Object.values(prices)[0] || 0);
+    const minutes = form.offerKind === "complimentary" ? Number(form.complimentaryMinutes || 10) : Number(form.minDuration || 60);
+    const base = Number(prices[minutes] || prices[60] || Object.values(prices)[0] || 0);
+    if (form.offerKind === "complimentary") return { base, offer: 0 };
+    if (form.offerKind === "fixed") return { base, offer: Math.max(0, base - Number(form.discountFixed || 0)) };
     return { base, offer: Math.round(base * (100 - Number(form.discountPercent || 0))) / 100 };
+  };
+  const offerLabel = (row) => {
+    if (row.offerKind === "complimentary") return `Complimentary ${row.complimentaryMinutes || 10} min (clinic)`;
+    if (row.offerKind === "fixed") return `$${Number(row.discountFixed || 0)} off`;
+    return `${row.discountPercent || 0}% off the treatment`;
   };
 
   return (
@@ -140,7 +162,10 @@ export default function Campaigns() {
           <h1 className="text-3xl font-semibold tracking-tight">Flash Campaigns</h1>
           <p className="mt-1 text-sm text-nb-mute" data-testid="campaign-sending">{sending ? "Promotional sending is on." : "Promotional sending is off. A live campaign can be booked in the app, and no commercial message is sent."}</p>
         </div>
-        <button type="button" className="nb-btn-primary h-11 px-4" onClick={openNew} data-testid="campaign-create"><Plus className="h-4 w-4" />Create campaign</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="nb-btn-ghost h-11 px-4" onClick={createTenMinutes} data-testid="campaign-ten-minutes">Create 10 Minutes. On Us. (draft)</button>
+          <button type="button" className="nb-btn-primary h-11 px-4" onClick={openNew} data-testid="campaign-create"><Plus className="h-4 w-4" />Create campaign</button>
+        </div>
       </header>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Campaign status">
@@ -160,7 +185,7 @@ export default function Campaigns() {
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold">{row.title}</p>
-                  <p className="text-sm text-nb-mute">{serviceName(row.serviceSlug)} · {row.discountPercent}% off the treatment</p>
+                  <p className="text-sm text-nb-mute">{serviceName(row.serviceSlug)} · {offerLabel(row)}</p>
                   <p className="mt-1 text-sm">Appointment {row.bookingStart} · {row.windowStart}–{row.windowEnd} Edmonton</p>
                   <p className="text-sm text-nb-mute">Expires {edmontonLabel(row.expiresAt)} · {row.redemptions || 0} booked of {row.maxRedemptions}</p>
                 </div>
@@ -204,13 +229,45 @@ export default function Campaigns() {
                 <label className="block text-sm">Description<textarea className="nb-input h-auto py-3" value={editor.description} onChange={(event) => setEditor({ ...editor, description: event.target.value })} /></label>
               </div>}
               {step === 1 && <div className="space-y-3">
+                <label className="block text-sm">Offer kind
+                  <select className="nb-input" value={editor.offerKind} onChange={(event) => {
+                    const kind = event.target.value;
+                    setEditor({
+                      ...editor,
+                      offerKind: kind,
+                      stackable: kind === "complimentary" ? false : editor.stackable,
+                      locationTypes: kind === "complimentary" ? ["clinic"] : editor.locationTypes,
+                      minDuration: kind === "complimentary" ? Number(editor.complimentaryMinutes || 10) : editor.minDuration,
+                      followUp: kind === "complimentary" ? { ...editor.followUp, enabled: true } : editor.followUp,
+                    });
+                  }} data-testid="campaign-offer-kind">
+                    <option value="percent">Percent off</option>
+                    <option value="fixed">Fixed amount off</option>
+                    <option value="complimentary">Complimentary session</option>
+                  </select>
+                </label>
                 <label className="block text-sm">Service
                   <select className="nb-input" value={editor.serviceSlug} onChange={(event) => setEditor({ ...editor, serviceSlug: event.target.value })} data-testid="campaign-service">
+                    <option value="all">All services</option>
                     {services.map((service) => <option key={service.slug} value={service.slug}>{service.name}</option>)}
                   </select>
                 </label>
-                <label className="block text-sm">Discount percent<input className="nb-input" type="number" min="1" max="80" value={editor.discountPercent} onChange={(event) => setEditor({ ...editor, discountPercent: Number(event.target.value) })} data-testid="campaign-discount" /></label>
-                <label className="block text-sm">Minimum duration (minutes)<input className="nb-input" type="number" min="30" step="15" value={editor.minDuration} onChange={(event) => setEditor({ ...editor, minDuration: Number(event.target.value) })} /></label>
+                {editor.offerKind === "percent" && <label className="block text-sm">Discount percent<input className="nb-input" type="number" min="1" max="80" value={editor.discountPercent} onChange={(event) => setEditor({ ...editor, discountPercent: Number(event.target.value) })} data-testid="campaign-discount" /></label>}
+                {editor.offerKind === "fixed" && <label className="block text-sm">Fixed discount ($)<input className="nb-input" type="number" min="1" value={editor.discountFixed} onChange={(event) => setEditor({ ...editor, discountFixed: Number(event.target.value) })} data-testid="campaign-discount-fixed" /></label>}
+                {editor.offerKind === "complimentary" && (
+                  <>
+                    <label className="block text-sm">Complimentary minutes<input className="nb-input" type="number" min="5" max="120" value={editor.complimentaryMinutes} onChange={(event) => setEditor({ ...editor, complimentaryMinutes: Number(event.target.value), minDuration: Number(event.target.value) })} data-testid="campaign-complimentary-minutes" /></label>
+                    <p className="text-xs text-nb-mute">Clinic only. Capacity defaults to 30 for the template. Travel is $0.</p>
+                  </>
+                )}
+                {editor.offerKind !== "complimentary" && <label className="block text-sm">Minimum duration (minutes)<input className="nb-input" type="number" min="30" step="15" value={editor.minDuration} onChange={(event) => setEditor({ ...editor, minDuration: Number(event.target.value) })} /></label>}
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!editor.followUp?.enabled} onChange={(event) => setEditor({ ...editor, followUp: { ...editor.followUp, enabled: event.target.checked } })} data-testid="campaign-followup-enabled" />Issue follow-up coupon after completed visit</label>
+                {editor.followUp?.enabled && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block text-sm">Follow-up %<input className="nb-input" type="number" min="1" max="80" value={editor.followUp.percent} onChange={(event) => setEditor({ ...editor, followUp: { ...editor.followUp, percent: Number(event.target.value) } })} data-testid="campaign-followup-percent" /></label>
+                    <label className="block text-sm">Valid days<input className="nb-input" type="number" min="1" max="90" value={editor.followUp.validDays} onChange={(event) => setEditor({ ...editor, followUp: { ...editor.followUp, validDays: Number(event.target.value) } })} data-testid="campaign-followup-days" /></label>
+                  </div>
+                )}
                 <p className="text-sm text-nb-mute">Treatment price {money(priceFor(editor).base)} · with this offer {money(priceFor(editor).offer)}. Travel and GST stay separate.</p>
               </div>}
               {step === 2 && <div className="space-y-3">
@@ -232,7 +289,7 @@ export default function Campaigns() {
               </div>}
               {step === 4 && <div className="space-y-2 rounded-3xl bg-sky-50 p-4 text-sm" data-testid="campaign-review">
                 <p className="text-lg font-semibold">{editor.title || "Untitled campaign"}</p>
-                <p>{serviceName(editor.serviceSlug)} · {editor.discountPercent}% off</p>
+                <p>{serviceName(editor.serviceSlug)} · {offerLabel(editor)}</p>
                 <p>Treatment {money(priceFor(editor).base)} → {money(priceFor(editor).offer)}</p>
                 <p>Appointments {editor.bookingStart || "date not set"} · {editor.windowStart}–{editor.windowEnd} Edmonton</p>
                 <p>Expires {editor.expiresLocal ? edmontonLabel(edmontonToUtc(editor.expiresLocal)) : "not set"} · {editor.maxRedemptions} spots</p>
@@ -254,7 +311,7 @@ export default function Campaigns() {
           {preview && <div className="mt-4 space-y-2 text-sm">
             <p className="text-2xl font-semibold">{preview.title}</p>
             <p>{serviceName(preview.serviceSlug)}</p>
-            <p>{preview.discountPercent}% off the treatment price. Travel and GST are calculated separately.</p>
+            <p>{offerLabel(preview)}. Travel and GST are calculated separately.</p>
             <p>Valid for appointments on {preview.bookingStart}, {preview.windowStart}–{preview.windowEnd} Edmonton.</p>
             <p>Offer expires {edmontonLabel(preview.expiresAt)}.</p>
             <p>{preview.audience === "all" ? "Open to eligible clients." : preview.audience === "new" ? "New clients only." : "Returning clients only."}</p>

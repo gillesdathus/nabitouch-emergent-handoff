@@ -64,6 +64,7 @@ const OwnerSchedule = lazy(() => import("@/pages/owner/Schedule"));
 const Dispatch = lazy(() => import("@/pages/ops/Dispatch"));
 const Manage = lazy(() => import("@/pages/owner/Manage"));
 const Promos = lazy(() => import("@/pages/owner/Promos"));
+const OwnerMarketing = lazy(() => import("@/pages/owner/Marketing"));
 const Zones = lazy(() => import("@/pages/owner/Zones"));
 const Insights = lazy(() => import("@/pages/owner/Insights"));
 const Permissions = lazy(() => import("@/pages/owner/Permissions"));
@@ -147,6 +148,7 @@ export default function App() {
                   <Route path="/owner/messages" element={<Messages />} />
                   <Route path="/owner/manage" element={<Manage />} />
                   <Route path="/owner/promos" element={<Promos />} />
+                  <Route path="/owner/marketing" element={<OwnerMarketing />} />
                   <Route path="/owner/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />

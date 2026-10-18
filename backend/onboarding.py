@@ -61,10 +61,15 @@ def _current(credentials, kind, today):
     return found[-1] if found else None
 
 
+TRACKED_STATUSES = ("invited", "draft", "pending", "approved")
+# Hard stops for profile activation only. Credentials, MFA, services, and hours stay tracking gaps.
+ACTIVATION_HARD_GAPS = frozenset({"login_email"})
+
+
 def assignment_credential_problem(person, credentials, today=None):
-    """Legacy demo profiles are unchanged. An approved profile needs current registration and insurance."""
+    """Legacy demo profiles are unchanged. An approved profile needs current registration and insurance to take bookings."""
     status = (person or {}).get("onboardingStatus")
-    if status in ("draft", "pending"):
+    if status in ("invited", "draft", "pending"):
         return "This practitioner profile is not active"
     if status != "approved":
         return None
@@ -77,18 +82,23 @@ def assignment_credential_problem(person, credentials, today=None):
 
 
 def activation_blockers(gaps):
-    """Schedule approval is the owner's explicit activation, so it is not a prerequisite of itself."""
-    return [row for row in gaps or [] if row.get("id") != "schedule_approval"]
+    """Optional credentials and schedule do not block profile activation. Booking stays separately gated."""
+    return [row for row in gaps or [] if row.get("id") in ACTIVATION_HARD_GAPS]
 
 
 def onboarding_gaps(*, person, credentials, login_email, owner_email, schedule, mfa_enrolled, mfa_required, today=None):
-    """Draft and approved profiles report what is still missing. Legacy demo profiles are not in this flow."""
-    if (person or {}).get("onboardingStatus") not in ("draft", "pending", "approved"):
+    """Invited, draft, pending, and approved profiles report what is still missing."""
+    if (person or {}).get("onboardingStatus") not in TRACKED_STATUSES:
         return []
     today = today or date.today()
     gaps = []
-    if not acceptable_login(login_email, owner_email):
-        gaps.append({"id": "login_email", "label": "Separate practitioner login email", "status": "pending owner input"})
+    if not login_email or not acceptable_login(login_email, owner_email):
+        # Dual owner+practitioner accounts may legitimately share the business email when subject is linked.
+        if not login_email:
+            gaps.append({"id": "login_email", "label": "Staff login linked to this profile", "status": "pending owner input"})
+        elif not acceptable_login(login_email, owner_email):
+            # Still show as a tracking gap for invite-created practitioners, but only hard-block when no login at all.
+            gaps.append({"id": "login_email_review", "label": "Practitioner login email review", "status": "pending owner input"})
     registration = _current(credentials, "registration", today)
     if not registration:
         gaps.append({"id": "registration", "label": "Professional registration number", "status": "pending verification"})
@@ -104,8 +114,10 @@ def onboarding_gaps(*, person, credentials, login_email, owner_email, schedule, 
     weekly = (schedule or {}).get("weekly") or []
     if not weekly:
         gaps.append({"id": "weekly", "label": "Weekly availability", "status": "pending owner approval"})
-    elif (schedule or {}).get("status") != "approved" or (schedule or {}).get("acceptingBookings") is not True:
-        gaps.append({"id": "schedule_approval", "label": "Weekly availability", "status": "pending owner approval"})
+    elif (schedule or {}).get("status") != "approved":
+        gaps.append({"id": "schedule_approval", "label": "Weekly availability approval", "status": "pending owner approval"})
+    elif (schedule or {}).get("acceptingBookings") is not True:
+        gaps.append({"id": "bookings_paused", "label": "New bookings paused", "status": "owner control"})
     return gaps
 
 
@@ -169,7 +181,13 @@ async def load_practitioner_onboarding(db, coll, practitioner_id):
     if not person:
         return None
     credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(50)
-    account = await db.nt_users.find_one({"role": "practitioner", "subject": practitioner_id}, {"_id": 0, "id": 1, "email": 1})
+    # Dual-role owner accounts keep primary role=owner while subject points at the practitioner profile.
+    account = await db.nt_users.find_one(
+        {"subject": practitioner_id, "$or": [{"role": "practitioner"}, {"roles": "practitioner"}]},
+        {"_id": 0, "id": 1, "email": 1, "role": 1, "roles": 1, "status": 1},
+    )
+    if not account:
+        account = await db.nt_users.find_one({"role": "practitioner", "subject": practitioner_id}, {"_id": 0, "id": 1, "email": 1, "status": 1})
     owner = await db.nt_users.find_one({"role": "owner"}, {"_id": 0, "email": 1})
     schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
     settings = await coll("settings").find_one({"id": "app"}, {"_id": 0, "mfaEnforcePrivileged": 1, "scheduling": 1, "clinic": 1, "cancellationPolicy": 1, "cancellationFee": 1, "rewards": 1, "gst": 1}) or {}
@@ -185,4 +203,4 @@ async def load_practitioner_onboarding(db, coll, practitioner_id):
         mfa_enrolled=enrolled,
         mfa_required=bool(settings.get("mfaEnforcePrivileged")),
     )
-    return {"person": person, "schedule": schedule, "settings": settings, "gaps": gaps}
+    return {"person": person, "schedule": schedule, "settings": settings, "gaps": gaps, "account": account}

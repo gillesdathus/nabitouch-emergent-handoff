@@ -134,7 +134,20 @@ def launch_welcome_offer():
         "approval": "approved",
         "appliesTo": "treatment",
         "requiresMarketingConsent": False,
+        "placements": ["home", "account", "booking", "services"],
+        "bannerHeadline": None,
+        "bannerBody": None,
     }
+
+
+def promo_shows(promo, placement):
+    """Gate banner display by placement list. Missing placements default to home + account."""
+    if not promo:
+        return False
+    places = promo.get("placements")
+    if not isinstance(places, list) or not places:
+        places = ["home", "account"]
+    return placement in places
 
 
 def promo_eligible(promo, client, slug, today=None):

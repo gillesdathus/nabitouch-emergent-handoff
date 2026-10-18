@@ -113,9 +113,15 @@ export default function Me() {
   const { me, state, idx, patchDraft, logout, api, user } = useDemo();
   const nav = useNavigate();
   const [receipt, setReceipt] = useState(null);
+  const [followups, setFollowups] = useState([]);
   const lastStatus = useRef({});
   const seenNotices = useRef(new Set());
   const noticesReady = useRef(false);
+  useEffect(() => {
+    if (!me) return undefined;
+    api.followupMine().then((r) => setFollowups(r.coupons || [])).catch(() => setFollowups([]));
+    return undefined;
+  }, [me, api]);
   useEffect(() => {
     if (user?.role !== "client") return undefined;
     let stop = false;
@@ -209,6 +215,20 @@ export default function Me() {
             <div className="flex-1"><p className="font-semibold">Happy birthday month, {me.firstName}!</p><p className="text-sm text-nb-mute">Enjoy $15 off a treatment this month — applied automatically at checkout.</p><p className="text-[11px] text-slate-500">Shown because you opted in to offers. Manage in Profile.</p></div>
             <button onClick={() => rebook(null, me.favorites[0] || "swedish")} data-testid="birthday-rebook-btn" className="nb-btn-primary h-10 px-4 text-sm">Treat yourself</button></div>
         </motion.div>
+      )}
+
+      {followups.length > 0 && (
+        <section className="nb-card mt-6 space-y-3 p-5" data-testid="me-followup-coupons">
+          <p className="font-semibold">Follow-up offers</p>
+          <p className="text-xs text-nb-mute">Personal codes from a completed complimentary visit. They do not combine with other discounts.</p>
+          {followups.map((row) => (
+            <div key={row.id} className="flex flex-wrap items-center gap-3 text-sm" data-testid={`me-followup-${row.id}`}>
+              <span className="font-mono text-xs">{row.code}</span>
+              <span>{row.percent}% off until {fmtDate(row.expiresAt.slice(0, 10))}</span>
+              <Link to="/book" className="nb-btn-primary h-9 px-3 text-xs" onClick={() => patchDraft({ useFollowup: true })}>Book with code</Link>
+            </div>
+          ))}
+        </section>
       )}
 
       {next ? (

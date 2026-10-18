@@ -37,7 +37,7 @@ export default function Services() {
   const nav = useNavigate();
   const [filter, setFilter] = useState("all");
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome);
+  const eligible = welcomeOfferListed(welcome, "services");
   const list = state.services.filter((service) => bookableCatalogueService(service) && match(filter, service));
 
   const bookService = (service) => {

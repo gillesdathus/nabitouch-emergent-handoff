@@ -1,20 +1,23 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowRight, Gift, Home as HomeIcon, Building2 } from "lucide-react";
-import { money, clinicBookable } from "@/lib/domain";
+import { money, clinicBookable, promoBannerCopy } from "@/lib/domain";
 import { useDemo } from "@/store/DemoStore";
 import { CatalogueImage } from "@/components/ui-kit";
 
-export function PromoBanner({ compact, eligible = true, testid = "promo-banner" }) {
+export function PromoBanner({ compact, eligible = true, promo, testid = "promo-banner" }) {
   if (!eligible) return null;
+  const { state } = useDemo();
+  const offer = promo || state?.promotions?.find((row) => row.id === "promo-welcome");
+  const copy = promoBannerCopy(offer);
   return (
     <div data-testid={testid} className={`relative overflow-hidden rounded-3xl bg-nb-ink text-white ${compact ? "p-4" : "p-6 sm:p-8"}`}>
       <div className="nb-breathe absolute -right-16 -top-16 h-56 w-56 rounded-full bg-[radial-gradient(circle,#14D8C470,transparent_65%)]" aria-hidden="true" />
       <div className="relative flex items-center gap-4">
         <span className="nb-gradient flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl"><Gift className="h-6 w-6" /></span>
         <div className="min-w-0">
-          <p className={`font-bold tracking-tight ${compact ? "text-sm" : "text-lg sm:text-xl"}`}>First-booking welcome offer</p>
-          <p className={`text-cyan-100/90 ${compact ? "text-xs" : "text-sm"}`}>20% off the treatment price of a qualifying first booking, up to $40. Travel and GST are calculated separately.</p>
+          <p className={`font-bold tracking-tight ${compact ? "text-sm" : "text-lg sm:text-xl"}`}>{copy.headline}</p>
+          <p className={`text-cyan-100/90 ${compact ? "text-xs" : "text-sm"}`}>{copy.body}</p>
           {!compact && <p className="mt-1 text-[11px] text-white/60">Nabitouch confirms eligibility when you submit. This offer is not combined with other discounts, rewards, or referrals.</p>}
         </div>
       </div>

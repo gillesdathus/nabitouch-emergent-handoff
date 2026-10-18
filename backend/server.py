@@ -68,6 +68,10 @@ from plans import available_credit, build_plans_router, consume_credit, credit_q
 from safety import build_safety_router, ensure_safety
 from devices import build_devices_router, ensure_devices, notify as push_notify
 from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
+from followup_coupons import (
+    build_followup_router, ensure_followup, followup_quote, issue_on_complete,
+    reserve_followup, settle_followup, valid_followup,
+)
 from finance import build_finance_router
 from readiness import build_readiness_router
 from email_templates import invoice_email, payment_link_email, receipt_email, statement_email, email_test_message, review_invitation_email, billing_update_email
@@ -230,6 +234,7 @@ async def lifespan(_app):
     await ensure_safety(db)
     await ensure_devices(db)
     await ensure_winback(db)
+    await ensure_followup(db)
     await ensure_sms(db)
     await db.nt_cron_runs.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("id", unique=True)
@@ -780,6 +785,12 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
         await release_credit(db, appt["id"], actor, "Visit cancelled")
     if to in ("completed", "cancelled", "no_show"):
         await settle_invite(db, appt["id"], to)
+        await settle_followup(db, appt["id"], to)
+    if to == "completed":
+        try:
+            await issue_on_complete(db, saved, add_audit)
+        except Exception:
+            logging.getLogger(__name__).exception("Follow-up coupon not issued")
     if to == "cancelled":
         await push_notify(db, "visit_cancelled", appt["id"], appt)
     if to == "en_route":
@@ -1504,12 +1515,22 @@ async def resolve_booking(payload, user):
     use_credit = bool(payload.get("useCredit"))
     credit = None
     invite = None
+    followup = None
+    if payload.get("winbackCode") and payload.get("followupCode"):
+        raise HTTPException(409, "Welcome-back and follow-up codes do not combine")
     if payload.get("winbackCode"):
         if use_credit:
             raise HTTPException(409, "A welcome-back code does not combine with a package credit")
         if not client:
             raise HTTPException(400, "Sign in to use a welcome-back code")
         invite = await valid_invite(db, payload["winbackCode"], client["id"])
+        promotions = []
+    if payload.get("followupCode"):
+        if use_credit:
+            raise HTTPException(409, "A follow-up code does not combine with a package credit")
+        if not client:
+            raise HTTPException(400, "Sign in to use a follow-up code")
+        followup = await valid_followup(db, payload["followupCode"], client["id"])
         promotions = []
     if use_credit:
         if not client:
@@ -1524,6 +1545,8 @@ async def resolve_booking(payload, user):
     )
     if invite:
         quoted = winback_quote(quoted, float(invite["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
+    if followup:
+        quoted = followup_quote(quoted, float(followup["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     if credit:
         quoted = credit_quote(quoted, credit["unitCents"], float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     payment_policy = resolve_payment_policy(
@@ -1537,7 +1560,9 @@ async def resolve_booking(payload, user):
         "incoming": incoming, "source": source, "fields": fields, "service": service, "duration": duration,
         "location": location, "address": address, "zone": zone, "km": km, "settings": settings,
         "practitioner_id": practitioner_id, "client": client, "person": person, "promotions": promotions, "quoted": quoted,
-        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit), "winbackCode": invite["code"] if invite else None,
+        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit),
+        "winbackCode": invite["code"] if invite else None,
+        "followupCode": followup["code"] if followup else None,
     }
 
 
@@ -1546,13 +1571,16 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     """Provisional server price. It does not reserve the welcome benefit or create a visit."""
     ctx = await resolve_booking(payload, await user_from(request))
     pricing = dict(ctx["quoted"])
-    if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not pricing.get("welcomeOffer"):
+    if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not ctx.get("followupCode") and not pricing.get("welcomeOffer"):
         offer = await campaign_quote(
-            db, payload["campaignId"], ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"],
+            db, payload["campaignId"], ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
         )
         if offer:
             pricing["campaignTitle"] = offer["title"]
-            pricing = apply_campaign_price(pricing, offer["percent"], ctx["settings"].get("gst", 0.05), offer["stackable"])
+            pricing["campaignId"] = payload["campaignId"]
+            if offer.get("complimentaryMinutes"):
+                pricing["complimentaryMinutes"] = offer["complimentaryMinutes"]
+            pricing = apply_campaign_price(pricing, offer, ctx["settings"].get("gst", 0.05), offer.get("stackable"))
     try:
         due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"])
     except ValueError as exc:
@@ -1639,9 +1667,15 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         client_id = client["id"]
     campaign_reservation = None
     if payload.get("campaignId"):
+        if ctx.get("followupCode") or ctx.get("winbackCode") or ctx.get("useCredit"):
+            await release_promotions(claimed_ids)
+            await release_welcome(welcome_token)
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise HTTPException(409, "Campaigns do not combine with package credits, welcome-back, or follow-up codes")
         try:
             campaign_reservation = await reserve_campaign(
-                db, payload["campaignId"], client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"],
+                db, payload["campaignId"], client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"], location,
             )
         except HTTPException:
             await release_promotions(claimed_ids)
@@ -1658,14 +1692,17 @@ async def create_booking(request: Request, payload: dict = Body(...)):
                 claimed_ids = []
                 quoted = {**quoted, "discount": 0, "appliedPromoIds": [], "promoId": None, "promoName": None, "promoCode": None, "welcomeOffer": False}
             quoted["campaignTitle"] = campaign_reservation.get("title")
-            quoted = apply_campaign_price(quoted, campaign_reservation["percent"], settings.get("gst", 0.05), campaign_reservation.get("stackable"))
+            quoted["campaignId"] = payload["campaignId"]
+            if campaign_reservation.get("complimentaryMinutes"):
+                quoted["complimentaryMinutes"] = campaign_reservation["complimentaryMinutes"]
+            quoted = apply_campaign_price(quoted, campaign_reservation, settings.get("gst", 0.05), campaign_reservation.get("stackable"))
     appt_id = f"a-{uuid.uuid4().hex[:8]}"
     loyalty_points = 0
-    if (ctx.get("useCredit") or ctx.get("winbackCode")) and (payload.get("redeemPoints") or campaign_reservation):
+    if (ctx.get("useCredit") or ctx.get("winbackCode") or ctx.get("followupCode")) and (payload.get("redeemPoints") or campaign_reservation):
         await release_campaign(db, campaign_reservation)
         if counted_online:
             await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
-        raise HTTPException(409, "Package credits and welcome-back codes do not combine with campaigns or rewards")
+        raise HTTPException(409, "Package credits, welcome-back, and follow-up codes do not combine with campaigns or rewards")
     if payload.get("redeemPoints") and quoted.get("welcomeOffer"):
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)
@@ -1706,7 +1743,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback") if k in quoted},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
@@ -1759,6 +1796,15 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     if ctx.get("winbackCode"):
         try:
             await reserve_invite(db, ctx["winbackCode"], client_id, appt["id"])
+        except HTTPException:
+            await coll("appointments").delete_one({"id": appt["id"]})
+            await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise
+    if ctx.get("followupCode"):
+        try:
+            await reserve_followup(db, ctx["followupCode"], client_id, appt["id"])
         except HTTPException:
             await coll("appointments").delete_one({"id": appt["id"]})
             await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
@@ -1946,7 +1992,8 @@ CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "do
                  "emergencyContact", "marketingConsent", "smsConsent", "photo", "addresses", "paymentPreference", "insurance",
                  "favorites", "preferredPractitioners"}
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
-                "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval"}
+                "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval",
+                "placements", "bannerHeadline", "bannerBody"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
 SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
@@ -2054,12 +2101,17 @@ async def promotion_create(request: Request, doc: dict = Body(...)):
         raise HTTPException(400, "The discount must be a number")
     if value <= 0 or (kind == "percent" and value > 100):
         raise HTTPException(400, "Enter a discount greater than zero, up to 100 percent")
+    placements = doc.get("placements") if isinstance(doc.get("placements"), list) else ["home", "account"]
+    placements = [str(p) for p in placements if isinstance(p, str)][:12] or ["home", "account"]
     stored = {
         "id": f"promo-{uuid.uuid4().hex[:8]}", "name": name, "code": code, "type": kind, "value": value,
         "maxDiscount": doc.get("maxDiscount"), "eligibility": eligibility, "start": start, "end": end,
         "services": doc.get("services") if doc.get("services") not in (None, "") else "all",
         "stackable": False, "redemptionLimit": doc.get("redemptionLimit"),
         "enabled": False, "approval": "pending", "redemptions": 0,
+        "placements": placements,
+        "bannerHeadline": (str(doc.get("bannerHeadline") or "")[:120] or None),
+        "bannerBody": (str(doc.get("bannerBody") or "")[:300] or None),
     }
     await coll("promotions").insert_one(dict(stored))
     stored.pop("_id", None)
@@ -2246,6 +2298,13 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             raise HTTPException(409, "Approve this offer before it can be turned on")
         if (target.get("eligibility") == "first_online" or doc.get("eligibility") == "first_online") and doc.get("stackable") is True:
             raise HTTPException(409, "The first-booking welcome offer cannot be combined with other discounts")
+        if "placements" in doc:
+            places = doc["placements"] if isinstance(doc["placements"], list) else []
+            doc["placements"] = [str(p) for p in places if isinstance(p, str)][:12] or ["home", "account"]
+        if "bannerHeadline" in doc and doc["bannerHeadline"] is not None:
+            doc["bannerHeadline"] = str(doc["bannerHeadline"])[:120] or None
+        if "bannerBody" in doc and doc["bannerBody"] is not None:
+            doc["bannerBody"] = str(doc["bannerBody"])[:300] or None
         parts = []
         for key in sorted(doc):
             value = doc[key]
@@ -2448,6 +2507,7 @@ app.include_router(build_reviews_router(db, coll, add_audit, user_from))
 app.include_router(build_turnaround_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))
+app.include_router(build_followup_router(db, coll, add_audit, user_from))
 app.include_router(build_sms_router(db, coll, add_audit, user_from))
 
 

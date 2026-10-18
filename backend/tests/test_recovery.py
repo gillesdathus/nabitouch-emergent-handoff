@@ -6,8 +6,9 @@ import pytest
 from recovery import (
     FEE_TEXT, OUTBOUND_PROMOTIONS, OUTBOUND_RECOVERY, active_exclusive, analytics, apply_campaign_price,
     audience_ok, broadcast_ready, campaign_fits, campaign_live, consent_state, decline_then_next, fee_amount,
-    fill_case, launch_fee, next_candidate, public_campaign, rank_broadcast, rank_exclusive, record_consent,
-    release_count, reserve_decision, sending_allowed, take_claim, unsubscribe, validate_fee, can_manage_campaign,
+    fill_case, launch_fee, launch_ten_minutes_on_us, next_candidate, public_campaign, rank_broadcast,
+    rank_exclusive, record_consent, release_count, reserve_decision, sending_allowed, take_claim, unsubscribe,
+    validate_fee, can_manage_campaign,
 )
 
 AT = datetime(2026, 10, 20, 18, 0, tzinfo=timezone.utc)
@@ -147,3 +148,25 @@ def test_consent_unsubscribe_and_fees_stay_off():
     assert can_manage_campaign("owner") is True
     assert can_manage_campaign("practitioner") is False
     assert can_manage_campaign("desk") is False
+
+
+def test_ten_minutes_template_stays_draft_and_clinic_only():
+    row = launch_ten_minutes_on_us()
+    assert row["status"] == "draft"
+    assert row["offerKind"] == "complimentary"
+    assert row["complimentaryMinutes"] == 10
+    assert row["maxRedemptions"] == 30
+    assert row["locationTypes"] == ["clinic"]
+    assert row["followUp"]["enabled"] is True
+    assert campaign_live(row, AT) is False
+    live = {**row, "status": "live", "expiresAt": later(24)}
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "clinic") is True
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "home") is False
+    assert campaign_fits(live, live["bookingStart"], "10:00", 60, "swedish", "clinic") is False
+    free = apply_campaign_price({"base": 45, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "complimentary", "complimentaryMinutes": 10, "title": row["title"]}, 0.05)
+    assert free["total"] == 0 and free["travel"] == 0 and free["discount"] == 45
+    fixed = apply_campaign_price({"base": 120, "addons": 0, "travel": 0, "discount": 0}, {"offerKind": "fixed", "discountFixed": 25, "title": "Flash $25"}, 0.05)
+    assert fixed["discount"] == 25
+    assert reserve_decision({**live, "redemptions": 30, "maxRedemptions": 30}, {}, AT, 0) == "sold_out"
+    exclusive = apply_campaign_price({"base": 120, "addons": 0, "travel": 0, "discount": 24, "welcomeOffer": True}, {"offerKind": "percent", "percent": 20, "stackable": False, "title": "Flash"}, 0.05, False)
+    assert exclusive["discount"] == 24
