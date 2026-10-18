@@ -834,9 +834,9 @@ async def locate_visit(address, zones, settings):
     place_id = str(address.get("mapboxId") or "")
     try:
         if not line and not place_id and address.get("lat") is not None:
-            hit = await GEO.reverse(address.get("lat"), address.get("lng"))
+            hit = await GEO.reverse(address.get("lat"), address.get("lng"), persist=True)
         else:
-            hit = await GEO.resolve(line=line, mapbox_id=place_id, point=address if address.get("lat") is not None else None)
+            hit = await GEO.resolve(line=line, mapbox_id=place_id, point=address if address.get("lat") is not None else None, persist=True)
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -896,7 +896,7 @@ async def geo_clinic_confirm(request: Request, body: dict = Body(...)):
     if not str(body.get("mapboxId") or "").strip():
         raise HTTPException(400, "Choose an address suggestion before confirming the clinic.")
     try:
-        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None)
+        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None, persist=True)
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -912,13 +912,13 @@ async def geo_clinic_confirm(request: Request, body: dict = Body(...)):
 
 @api.post("/geo/confirm")
 async def geo_confirm(request: Request, body: dict = Body(...)):
-    """Classify a civic address. The arrival pin is returned separately and does not rewrite the street."""
+    """Classify a civic address for storage. Requires permanent geocoding when Mapbox is configured."""
     if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
         raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
     zones = await coll("zones").find({}, NO_ID).to_list(20)
     try:
-        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None)
+        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None, persist=True)
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -945,7 +945,7 @@ async def geo_suggest(request: Request, q: str = ""):
     try:
         suggestions = await GEO.suggest(q, client_key(request))
     except RateLimit as exc:
-        raise HTTPException(429, str(exc)) from exc
+        raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"suggestions": [{"id": item["id"], "label": item["line"], "area": item.get("area") or ""} for item in suggestions]}
@@ -953,15 +953,21 @@ async def geo_suggest(request: Request, q: str = ""):
 
 @api.post("/geo/check")
 async def geo_check(request: Request, body: dict = Body(...)):
+    """Ephemeral service-area check. Uses temporary geocoding; does not require storage permission."""
     if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
         raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
     zones = await coll("zones").find({}, NO_ID).to_list(20)
     try:
         if body.get("lat") is not None and body.get("lng") is not None and not (body.get("line") or body.get("mapboxId")):
-            hit = await GEO.reverse(body.get("lat"), body.get("lng"))
+            hit = await GEO.reverse(body.get("lat"), body.get("lng"), persist=False)
         else:
-            hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=body if body.get("lat") is not None else None)
+            hit = await GEO.resolve(
+                line=body.get("line") or "",
+                mapbox_id=body.get("mapboxId") or "",
+                point=body if body.get("lat") is not None else None,
+                persist=False,
+            )
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -2276,7 +2282,7 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             provider_down = False
             if confirmation.get("clientConfirmed") is True and confirmation.get("mapboxId"):
                 try:
-                    hit = await GEO.resolve(line=confirmation.get("line") or incoming.get("address") or "", mapbox_id=confirmation.get("mapboxId"), point=None)
+                    hit = await GEO.resolve(line=confirmation.get("line") or incoming.get("address") or "", mapbox_id=confirmation.get("mapboxId"), point=None, persist=True)
                 except GeocodeError as exc:
                     raise HTTPException(400, str(exc)) from exc
                 except ProviderError:

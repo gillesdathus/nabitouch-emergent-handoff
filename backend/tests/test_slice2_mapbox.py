@@ -223,17 +223,18 @@ def test_mapbox_resolve_ignores_client_coordinates_and_hides_provider_errors(mon
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
     async def run():
-        hit = await GEO.resolve(line="4950 Gateway Blvd, Leduc, AB", point={"lat": 53.5461, "lng": -113.4938})
+        # Ephemeral resolve (coverage check) must not require permanent storage.
+        hit = await GEO.resolve(line="4950 Gateway Blvd, Leduc, AB", point={"lat": 53.5461, "lng": -113.4938}, persist=False)
         assert hit["lat"] == 53.2594
         assert hit["provider"] == "mapbox"
         calls["mode"] = "down"
         with pytest.raises(ProviderError) as caught:
-            await GEO.resolve(line="10150 104 St NW, Edmonton, AB")
+            await GEO.resolve(line="10150 104 St NW, Edmonton, AB", persist=False)
         assert SECRET not in str(caught.value)
         assert "access_token" not in str(caught.value)
         calls["mode"] = "empty"
         with pytest.raises(GeocodeError):
-            await GEO.resolve(line="missing address Edmonton AB")
+            await GEO.resolve(line="missing address Edmonton AB", persist=False)
 
     try:
         asyncio.run(run())

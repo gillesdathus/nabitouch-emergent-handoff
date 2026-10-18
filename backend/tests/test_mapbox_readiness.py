@@ -7,8 +7,15 @@ import pytest
 
 from addresses import classify
 from geo import Geocoder, ProviderError, RateLimit, _feature
+from pricing import zone_for
 from redact import AccessPathRedact, RedactLogFilter
 from tracking import MapboxDirections
+
+EDMONTON_ZONES = [
+    {"id": "z-central", "name": "Central Edmonton", "radiusKm": 12, "fee": 0, "perKm": 0},
+    {"id": "z-outer", "name": "Outer metro", "radiusKm": 25, "fee": 25, "perKm": 0},
+]
+EDMONTON_CENTER = {"lat": 53.5461, "lng": -113.4938}
 
 
 def feature(confidence="exact"):
@@ -49,9 +56,33 @@ def test_temporary_geocodes_are_not_cached_or_used_for_stored_visits(monkeypatch
         await geo.suggest("10150", "synthetic")
         assert len(calls) == 2 and all(p["permanent"] == "false" for p in calls)
         assert geo.cache == {}
+        # Ephemeral coverage check is allowed without storage permission.
+        hit = await geo.resolve(line="10150 104 St NW, Edmonton", persist=False)
+        assert hit["provider"] == "mapbox" and calls[-1]["permanent"] == "false"
+        assert geo.cache == {}
+        # Persisting a confirmed visit still requires storage configuration.
         with pytest.raises(ProviderError, match="storage configuration"):
-            await geo.resolve(line="10150 104 St NW, Edmonton")
+            await geo.resolve(line="10150 104 St NW, Edmonton", persist=True)
+        with pytest.raises(ProviderError, match="storage configuration"):
+            await geo.reverse(53.54, -113.49, persist=True)
     asyncio.run(run())
+
+
+def test_ephemeral_gps_reverse_uses_temporary_geocoding(monkeypatch):
+    monkeypatch.setenv("MAPBOX_TOKEN", "pk.synthetic-only")
+    monkeypatch.setenv("MAPBOX_PERMANENT_GEOCODING", "false")
+    geo = Geocoder()
+    async def fetch(url, params):
+        assert "reverse" in url
+        assert params["permanent"] == "false"
+        return {"features": [feature()]}
+    geo.fetch = fetch
+    hit = asyncio.run(geo.reverse(53.54, -113.49, persist=False))
+    assert hit["lat"] == 53.54 and hit["provider"] == "mapbox"
+    inside, _ = zone_for({"lat": hit["lat"], "lng": hit["lng"]}, EDMONTON_ZONES, EDMONTON_CENTER)
+    assert inside and inside["id"] == "z-central"
+    outside, _ = zone_for({"lat": 53.2594, "lng": -113.5492}, EDMONTON_ZONES, EDMONTON_CENTER)
+    assert outside is None
 
 
 def test_confirmation_resolves_selected_id_with_storage_permission(monkeypatch):
@@ -63,7 +94,7 @@ def test_confirmation_resolves_selected_id_with_storage_permission(monkeypatch):
         assert params["autocomplete"] == "false"
         return {"features": [feature()]}
     geo.fetch = fetch
-    assert asyncio.run(geo.resolve(line="untrusted edited label", mapbox_id="provider-address"))["provider"] == "mapbox"
+    assert asyncio.run(geo.resolve(line="untrusted edited label", mapbox_id="provider-address", persist=True))["provider"] == "mapbox"
 
 
 @pytest.mark.parametrize("failure", [429, 503, "timeout"])
