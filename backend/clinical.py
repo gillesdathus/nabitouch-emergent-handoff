@@ -15,7 +15,7 @@ AMENDMENT_FIELDS = (
     "clientResponse", "homeCare", "followUp", "contraindications",
 )
 CONSENT_KINDS = ("treatment", "informed", "mobile")
-CREDENTIAL_KINDS = ("association", "registration", "liability", "membership", "municipal", "other")
+CREDENTIAL_KINDS = ("association", "registration", "liability", "membership", "municipal", "cpr", "other")
 
 
 def _today():

@@ -48,8 +48,10 @@ def test_published_profile_does_not_bypass_credentials_or_service_assignment():
     assert person_booking_block({**published, "profileVisibility": "hidden"}, service, []) == "That practitioner is not available"
     assert person_booking_block({**published, "profileVisibility": "draft"}, service, []) == "That practitioner is not available"
     assert "does not offer" in person_booking_block(published, {**service, "slug": "prenatal"}, [])
-    approved = {**published, "onboardingStatus": "approved"}
-    assert "Registration" in person_booking_block(approved, service, [])
+    past = "2026-01-01T12:00:00+00:00"
+    approved = {**published, "onboardingStatus": "approved", "activatedAt": past}
+    blocked = person_booking_block(approved, service, [])
+    assert blocked and ("Association" in blocked or "Credentials missing" in blocked)
 
 
 def test_owner_can_publish_a_profile_without_making_it_bookable_and_a_selected_practitioner_is_checked():

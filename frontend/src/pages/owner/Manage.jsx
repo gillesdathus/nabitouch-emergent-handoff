@@ -329,7 +329,7 @@ export default function Manage() {
           <HubLink icon={Users} tint="tint-ice" title="Clients" detail="Profiles, visits, and balances on file." meta={state.clients?.length ? String(state.clients.length) : undefined} testid="manage-open-clients" onClick={() => openTab("clients")} />
           <HubLink icon={UserRound} tint="tint-mint" title="Practitioners" detail="Photos, bookable status, and public profiles." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-open-practitioners" onClick={() => openTab("practitioners")} />
           <HubLink icon={MailPlus} tint="tint-lagoon" title="Invitations" detail="Create a practitioner invite. Email delivery stays off." testid="manage-open-invites" onClick={() => openTab("practitioners", () => setShowInvite(true))} />
-          <HubLink to="/owner/credentials" icon={BadgeCheck} tint="tint-meadow" title="Credentials" detail="Registration, insurance, and activation." meta={expiring ? `${expiring} due` : undefined} testid="manage-link-credentials" />
+          <HubLink to="/owner/credentials" icon={BadgeCheck} tint="tint-meadow" title="Credentials" detail="Association, liability, municipal, CPR — 14-day grace after approval." meta={expiring ? `${expiring} due` : undefined} testid="manage-link-credentials" />
         </HubSection>
         <HubSection title="Services and growth" testid="manage-section-growth">
           <HubLink icon={Sparkles} tint="tint-lagoon" title="Service catalogue" detail="Durations, prices, photos, and publication." meta={published ? String(published) : undefined} testid="manage-open-services" onClick={() => openTab("services")} />

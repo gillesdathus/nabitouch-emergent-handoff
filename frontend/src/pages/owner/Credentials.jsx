@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { useDemo } from "@/store/DemoStore";
 
-const KINDS = [["association", "Association"], ["registration", "Registration"], ["liability", "Liability insurance"], ["membership", "Membership"], ["municipal", "Municipal licence"], ["other", "Other"]];
+const KINDS = [
+  ["association", "Association license #"],
+  ["liability", "Insurance liability policy #"],
+  ["municipal", "Municipality license #"],
+  ["cpr", "CPR / First Aid"],
+  ["registration", "Registration (optional)"],
+  ["membership", "Membership (optional)"],
+  ["other", "Other"],
+];
 
 export default function Credentials() {
   const { api, run, state } = useDemo();
@@ -9,7 +17,7 @@ export default function Credentials() {
   const [board, setBoard] = useState(null);
   const [reminders, setReminders] = useState([]);
   const [chosen, setChosen] = useState({});
-  const [form, setForm] = useState({ practitionerId: "", kind: "registration", identifier: "", expiresOn: "" });
+  const [form, setForm] = useState({ practitionerId: "", kind: "association", identifier: "", expiresOn: "" });
   const [adding, setAdding] = useState(false);
   const [editingServices, setEditingServices] = useState("");
   const people = state.practitioners || [];
@@ -41,8 +49,8 @@ export default function Credentials() {
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
       <section className="nb-card p-5 text-sm">
-        <h2 className="font-semibold">What approval requires</h2>
-        <p className="mt-2 text-nb-mute">A practitioner stays draft until the owner approves a separate login, verified registration, verified liability insurance, services, and a real weekly schedule. Placeholder numbers are refused. Reminder windows are 60, 30, 14, and 7 days unless you change them in settings.</p>
+        <h2 className="font-semibold">Activation and the 14-day grace</h2>
+        <p className="mt-2 text-nb-mute">Owner approval activates the profile as soon as a staff login is linked. Association license #, insurance liability policy #, municipality license #, and CPR / First Aid can be added within 14 days. After that grace, new bookings pause until all four verified numbers are on file. Placeholder numbers are refused. Expiry reminder windows are 60, 30, 14, and 7 days unless you change them in settings.</p>
       </section>
       {launch && (
         <section className="nb-card space-y-2 p-5 text-sm" data-testid="launch-readiness">
@@ -94,7 +102,7 @@ export default function Credentials() {
             )}
           </fieldset>
           <button type="button" className="nb-btn-primary h-10" disabled={!person.activationReady} data-testid={`onboarding-approve-${person.practitionerId}`} onClick={async () => { await run(() => api.approveOnboarding(person.practitionerId, { confirm: true }), "Practitioner approved"); load(); }}>Approve activation</button>
-          {!person.activationReady && <p className="text-xs text-nb-mute">Approval stays disabled until every item above is a real record.</p>}
+          {!person.activationReady && <p className="text-xs text-nb-mute">Approval stays disabled until a staff login is linked to this profile. Credentials have a 14-day grace after activation.</p>}
         </section>
       ))}
       <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setAdding((value) => !value)} data-testid="credential-add">{adding ? "Close" : "Add credential"}</button>

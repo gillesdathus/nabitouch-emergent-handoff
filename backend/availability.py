@@ -1027,7 +1027,7 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
 
     @router.post("/practitioners/{practitioner_id}/credential-attestation")
     async def attest_credential(practitioner_id: str, request: Request, payload: dict = Body(...)):
-        """Owner vouches for a credential not yet on file. Booking opens; the gap stays tracked until a verified record exists."""
+        """Owner note that a credential was seen. Does not open booking; the 14-day grace after approval does."""
         from onboarding import ATTESTABLE_KINDS
         user = await require(request, "owner")
         kind = payload.get("kind")
