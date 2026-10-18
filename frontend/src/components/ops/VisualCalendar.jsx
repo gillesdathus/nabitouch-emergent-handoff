@@ -46,83 +46,121 @@ export function VisualCalendar({ appointments = [], practitioners = [], services
     return Array.from({ length: 42 }, (_, index) => addDays(start, index - offset));
   }, [day]);
   const visible = personId ? appointments.filter((item) => item.practitionerId === personId) : appointments;
+  const dayVisits = visible.filter((appointment) => appointment.date === day).sort((a, b) => String(a.time).localeCompare(String(b.time)));
   const hours = Array.from({ length: (END - START) / 60 }, (_, index) => START + index * 60);
   const label = (mins) => fmtTime(`${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`);
 
   return (
-    <div className="space-y-4" data-testid="visual-calendar">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100" role="tablist" aria-label="Calendar view">
-          {["day", "week", "month"].map((item) => (
-            <button key={item} type="button" role="tab" aria-selected={view === item} className={`rounded-full px-4 py-2 text-sm font-semibold capitalize ${view === item ? "bg-nb-ink text-white" : "text-nb-mute"}`} onClick={() => setView(item)} data-testid={`calendar-view-${item}`}>{item}</button>
-          ))}
+    <div className="min-w-0 space-y-4" data-testid="visual-calendar">
+      <div className="flex min-w-0 flex-col gap-3 sm:gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex max-w-full overflow-x-auto rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100 no-scrollbar" role="tablist" aria-label="Calendar view">
+            {["day", "week", "month"].map((item) => (
+              <button key={item} type="button" role="tab" aria-selected={view === item} className={`shrink-0 rounded-full px-3.5 py-2 text-sm font-semibold capitalize sm:px-4 ${view === item ? "bg-nb-ink text-white" : "text-nb-mute"}`} onClick={() => setView(item)} data-testid={`calendar-view-${item}`}>{item}</button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <button type="button" className="nb-btn-ghost h-10 w-10 px-0" aria-label="Previous" onClick={() => onCursor(addDays(day, view === "month" ? -30 : view === "week" ? -7 : -1))}><ChevronLeft className="h-4 w-4" /></button>
+            <button type="button" className="nb-btn-ghost h-10 px-3" onClick={() => onCursor(todayISO())} data-testid="calendar-today">Today</button>
+            <button type="button" className="nb-btn-ghost h-10 w-10 px-0" aria-label="Next" onClick={() => onCursor(addDays(day, view === "month" ? 30 : view === "week" ? 7 : 1))}><ChevronRight className="h-4 w-4" /></button>
+          </div>
         </div>
-        <button type="button" className="nb-btn-ghost h-10 w-10 px-0" aria-label="Previous" onClick={() => onCursor(addDays(day, view === "month" ? -30 : view === "week" ? -7 : -1))}><ChevronLeft className="h-4 w-4" /></button>
-        <button type="button" className="nb-btn-ghost h-10" onClick={() => onCursor(todayISO())} data-testid="calendar-today">Today</button>
-        <button type="button" className="nb-btn-ghost h-10 w-10 px-0" aria-label="Next" onClick={() => onCursor(addDays(day, view === "month" ? 30 : view === "week" ? 7 : 1))}><ChevronRight className="h-4 w-4" /></button>
-        <p className="text-sm font-semibold text-nb-ink">{fmtDate(day, { weekday: "long", month: "long", day: "numeric" })}</p>
-        {onPerson && (
-          <select className="nb-input h-10 w-auto" value={personId} onChange={(event) => onPerson(event.target.value)} aria-label="Practitioner" data-testid="calendar-practitioner">
-            <option value="">All practitioners</option>
-            {practitioners.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-          </select>
-        )}
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <p className="min-w-0 text-sm font-semibold text-nb-ink">{fmtDate(day, { weekday: "long", month: "long", day: "numeric" })}</p>
+          {onPerson && (
+            <select className="nb-input h-10 w-full max-w-full sm:w-auto sm:max-w-xs" value={personId} onChange={(event) => onPerson(event.target.value)} aria-label="Practitioner" data-testid="calendar-practitioner">
+              <option value="">All practitioners</option>
+              {practitioners.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+            </select>
+          )}
+        </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto md:hidden" data-testid="calendar-day-strip">
-        {(view === "month" ? month.filter((item) => item.slice(0, 7) === day.slice(0, 7)) : week).map((item) => (
-          <button key={item} type="button" onClick={() => { onCursor(item); setView("day"); }} className={`min-w-14 rounded-2xl px-3 py-2 text-center ${item === day ? "text-white nb-gradient" : "bg-white text-nb-ink ring-1 ring-sky-100"}`}>
-            <span className="block text-[10px] uppercase">{fmtDate(item, { weekday: "short" })}</span>
-            <span className="text-lg font-semibold">{item.slice(-2)}</span>
-          </button>
-        ))}
+      <div className="-mx-1 overflow-x-auto px-1 md:hidden" data-testid="calendar-day-strip">
+        <div className="flex w-max gap-2 pb-1">
+          {(view === "month" ? month.filter((item) => item.slice(0, 7) === day.slice(0, 7)) : week).map((item) => (
+            <button key={item} type="button" onClick={() => { onCursor(item); setView("day"); }} className={`min-w-14 rounded-2xl px-3 py-2 text-center ${item === day ? "text-white nb-gradient" : "bg-white text-nb-ink ring-1 ring-sky-100"}`}>
+              <span className="block text-[10px] uppercase">{fmtDate(item, { weekday: "short" })}</span>
+              <span className="text-lg font-semibold">{item.slice(-2)}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {view !== "month" && (
-        <div className="md:hidden" data-testid="calendar-mobile-day">
-          <div className="relative ml-12 rounded-2xl bg-white ring-1 ring-sky-100" style={{ height: ((END - START) / 60) * HOUR }}>
-            {hours.map((hour) => <button key={hour} type="button" aria-label={`Open ${day} ${label(hour)}`} className="absolute inset-x-0 border-t border-sky-50" style={{ top: ((hour - START) / 60) * HOUR, height: HOUR }} onClick={() => onSlot?.({ date: day, time: `${String(hour / 60).padStart(2, "0")}:00` })} />)}
-            {visible.filter((appointment) => appointment.date === day).map((appointment) => (
-              <button key={appointment.id} type="button" onClick={() => onOpen?.(appointment.id)} className={`absolute inset-x-1 z-10 overflow-hidden rounded-xl px-2 py-1 text-left text-xs ${FILL[appointment.status] || "bg-sky-100"}`} style={{ top: topFor(appointment.time), height: heightFor(appointment.time, appointment.duration) }}>
-                <b>{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Client"}</b>
-                <span className="block truncate">{services[appointment.serviceSlug]?.name}</span>
+        <div className="min-w-0 space-y-3 md:hidden" data-testid="calendar-mobile-day">
+          <div className="space-y-2" data-testid="calendar-mobile-list">
+            {dayVisits.map((appointment) => (
+              <button
+                key={appointment.id}
+                type="button"
+                onClick={() => onOpen?.(appointment.id)}
+                className={`flex w-full min-w-0 items-start gap-3 rounded-2xl p-3 text-left ring-1 ring-sky-100 ${FILL[appointment.status] || "bg-sky-50"}`}
+                data-testid={`calendar-appointment-${appointment.id}`}
+              >
+                <span className="nb-num w-14 shrink-0 text-sm font-semibold">{fmtTime(appointment.time)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{clients[appointment.clientId]?.firstName || "Client"} {clients[appointment.clientId]?.lastName || ""}</span>
+                  <span className="mt-0.5 block truncate text-xs opacity-80">{services[appointment.serviceSlug]?.name || appointment.serviceSlug}</span>
+                  <span className="mt-0.5 block truncate text-[11px] opacity-70">{practitioners.find((person) => person.id === appointment.practitionerId)?.name || "Unassigned"} · {appointment.status?.replaceAll("_", " ")}</span>
+                </span>
               </button>
             ))}
-            {!visible.some((appointment) => appointment.date === day) && <p className="pointer-events-none absolute left-3 top-3 text-sm text-nb-mute">No visits on this day.</p>}
+            {!dayVisits.length && <p className="rounded-2xl bg-white px-3 py-4 text-sm text-nb-mute ring-1 ring-sky-100">No visits on this day.</p>}
+          </div>
+          <div className="relative overflow-x-auto rounded-2xl bg-white ring-1 ring-sky-100">
+            <div className="relative ml-12 min-w-[280px]" style={{ height: ((END - START) / 60) * HOUR }}>
+              <div className="pointer-events-none absolute inset-y-0 left-[-3rem] w-12">
+                {hours.map((hour) => (
+                  <p key={hour} className="absolute right-2 text-[10px] text-nb-mute" style={{ top: ((hour - START) / 60) * HOUR }}>{label(hour)}</p>
+                ))}
+              </div>
+              {hours.map((hour) => <button key={hour} type="button" aria-label={`Open ${day} ${label(hour)}`} className="absolute inset-x-0 border-t border-sky-50" style={{ top: ((hour - START) / 60) * HOUR, height: HOUR }} onClick={() => onSlot?.({ date: day, time: `${String(hour / 60).padStart(2, "0")}:00` })} />)}
+              {dayVisits.map((appointment) => (
+                <button key={`grid-${appointment.id}`} type="button" onClick={() => onOpen?.(appointment.id)} className={`absolute inset-x-1 z-10 overflow-hidden rounded-xl px-2 py-1 text-left text-xs ${FILL[appointment.status] || "bg-sky-100"}`} style={{ top: topFor(appointment.time), height: heightFor(appointment.time, appointment.duration) }}>
+                  <b className="block truncate">{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Client"}</b>
+                  <span className="block truncate">{services[appointment.serviceSlug]?.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
       {view === "month" ? (
-        <div className="grid grid-cols-7 gap-1" data-testid="calendar-month">
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((name) => <p key={name} className="px-1 text-center text-[10px] font-semibold uppercase text-nb-mute">{name}</p>)}
-          {month.map((item) => {
-            const rows = visible.filter((appointment) => appointment.date === item && appointment.status !== "cancelled");
-            return (
-              <button key={item} type="button" onClick={() => { onCursor(item); setView("day"); }} className={`min-h-16 rounded-2xl p-1 text-left md:min-h-24 ${item === day ? "bg-sky-50 ring-2 ring-sky-300" : "bg-white ring-1 ring-sky-100"} ${item.slice(5, 7) !== day.slice(5, 7) ? "opacity-40" : ""}`} data-testid={`calendar-month-${item}`}>
-                <span className="text-xs font-semibold">{Number(item.slice(-2))}</span>
-                <span className="mt-1 block space-y-0.5">{rows.slice(0, 3).map((appointment) => <span key={appointment.id} className="block truncate rounded-md bg-sky-100 px-1 text-[10px]">{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Visit"}</span>)}</span>
-              </button>
-            );
-          })}
+        <div className="min-w-0 overflow-x-auto" data-testid="calendar-month-wrap">
+          <div className="grid min-w-[520px] grid-cols-7 gap-1 md:min-w-0" data-testid="calendar-month">
+            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((name) => <p key={name} className="px-1 text-center text-[10px] font-semibold uppercase text-nb-mute">{name}</p>)}
+            {month.map((item) => {
+              const rows = visible.filter((appointment) => appointment.date === item && appointment.status !== "cancelled");
+              return (
+                <button key={item} type="button" onClick={() => { onCursor(item); setView("day"); }} className={`min-h-16 rounded-2xl p-1 text-left md:min-h-24 ${item === day ? "bg-sky-50 ring-2 ring-sky-300" : "bg-white ring-1 ring-sky-100"} ${item.slice(5, 7) !== day.slice(5, 7) ? "opacity-40" : ""}`} data-testid={`calendar-month-${item}`}>
+                  <span className="text-xs font-semibold">{Number(item.slice(-2))}</span>
+                  <span className="mt-1 block space-y-0.5">{rows.slice(0, 3).map((appointment) => <span key={appointment.id} className="block truncate rounded-md bg-sky-100 px-1 text-[10px]">{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Visit"}</span>)}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : (
-        <div className={`${view === "week" ? "md:grid-cols-[52px_repeat(7,minmax(0,1fr))]" : "md:grid-cols-[52px_minmax(0,1fr)]"} hidden md:grid`} data-testid="calendar-grid">
-          <div />
-          {(view === "week" ? week : [day]).map((item) => <p key={item} className="px-1 pb-2 text-center text-xs font-semibold">{fmtDate(item, { weekday: "short", day: "numeric" })}</p>)}
-          <div className="relative" style={{ height: ((END - START) / 60) * HOUR }}>
-            {hours.map((hour) => <p key={hour} className="absolute left-0 text-[10px] text-nb-mute" style={{ top: ((hour - START) / 60) * HOUR }}>{label(hour)}</p>)}
-          </div>
-          {(view === "week" ? week : [day]).map((item) => (
-            <div key={item} className="relative rounded-2xl bg-white ring-1 ring-sky-100" style={{ height: ((END - START) / 60) * HOUR }} data-testid={`calendar-column-${item}`}>
-              {hours.map((hour) => <button key={hour} type="button" aria-label={`Open ${item} ${label(hour)}`} className="absolute inset-x-0 border-t border-sky-50" style={{ top: ((hour - START) / 60) * HOUR, height: HOUR }} onClick={() => onSlot?.({ date: item, time: `${String(hour / 60).padStart(2, "0")}:00` })} />)}
-              {visible.filter((appointment) => appointment.date === item).map((appointment) => (
-                <button key={appointment.id} type="button" onClick={() => onOpen?.(appointment.id)} className={`absolute inset-x-1 z-10 overflow-hidden rounded-xl px-2 py-1 text-left text-[11px] shadow-sm ${FILL[appointment.status] || "bg-sky-100"}`} style={{ top: topFor(appointment.time), height: heightFor(appointment.time, appointment.duration), borderLeft: `3px solid ${practitioners.find((person) => person.id === appointment.practitionerId)?.color || "#1565F0"}` }} data-testid={`calendar-appointment-${appointment.id}`}>
-                  <b className="block truncate">{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Client"}</b>
-                  <span className="block truncate">{services[appointment.serviceSlug]?.name || appointment.serviceSlug} · {money(appointment.pricing?.total || 0)}</span>
-                </button>
-              ))}
+        <div className="hidden min-w-0 overflow-x-auto md:block" data-testid="calendar-grid-wrap">
+          <div className={`${view === "week" ? "grid-cols-[52px_repeat(7,minmax(110px,1fr))]" : "grid-cols-[52px_minmax(0,1fr)]"} grid min-w-[720px]`} data-testid="calendar-grid">
+            <div />
+            {(view === "week" ? week : [day]).map((item) => <p key={item} className="px-1 pb-2 text-center text-xs font-semibold">{fmtDate(item, { weekday: "short", day: "numeric" })}</p>)}
+            <div className="relative" style={{ height: ((END - START) / 60) * HOUR }}>
+              {hours.map((hour) => <p key={hour} className="absolute left-0 text-[10px] text-nb-mute" style={{ top: ((hour - START) / 60) * HOUR }}>{label(hour)}</p>)}
             </div>
-          ))}
+            {(view === "week" ? week : [day]).map((item) => (
+              <div key={item} className="relative rounded-2xl bg-white ring-1 ring-sky-100" style={{ height: ((END - START) / 60) * HOUR }} data-testid={`calendar-column-${item}`}>
+                {hours.map((hour) => <button key={hour} type="button" aria-label={`Open ${item} ${label(hour)}`} className="absolute inset-x-0 border-t border-sky-50" style={{ top: ((hour - START) / 60) * HOUR, height: HOUR }} onClick={() => onSlot?.({ date: item, time: `${String(hour / 60).padStart(2, "0")}:00` })} />)}
+                {visible.filter((appointment) => appointment.date === item).map((appointment) => (
+                  <button key={appointment.id} type="button" onClick={() => onOpen?.(appointment.id)} className={`absolute inset-x-1 z-10 overflow-hidden rounded-xl px-2 py-1 text-left text-[11px] shadow-sm ${FILL[appointment.status] || "bg-sky-100"}`} style={{ top: topFor(appointment.time), height: heightFor(appointment.time, appointment.duration), borderLeft: `3px solid ${practitioners.find((person) => person.id === appointment.practitionerId)?.color || "#1565F0"}` }} data-testid={`calendar-appointment-${appointment.id}`}>
+                    <b className="block truncate">{fmtTime(appointment.time)} {clients[appointment.clientId]?.firstName || "Client"}</b>
+                    <span className="block truncate">{services[appointment.serviceSlug]?.name || appointment.serviceSlug} · {money(appointment.pricing?.total || 0)}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

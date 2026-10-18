@@ -243,8 +243,8 @@ function PractitionerCard({ person, soon }) {
   };
   const gallery = Array.isArray(person.gallery) ? person.gallery : [];
   return (
-    <div className="nb-card p-5" data-testid={`manage-pract-${person.id}`}>
-      <div className="flex items-center gap-3"><Avatar person={person} /><div className="flex-1"><p className="font-semibold">{person.name} {person.isOwner && <Pill tone="blue">Owner</Pill>}</p><p className="text-xs text-nb-mute">{(person.specialties || []).join(" · ")}</p></div><Switch checked={person.available} onCheckedChange={(value) => run(() => api.patch("practitioners", person.id, { available: value, _audit: `${person.name} availability → ${value ? "on" : "off"}` }))} data-testid={`manage-avail-${person.id}`} /></div>
+    <div className="nb-card min-w-0 p-4 sm:p-5" data-testid={`manage-pract-${person.id}`}>
+      <div className="flex min-w-0 items-center gap-3"><Avatar person={person} /><div className="min-w-0 flex-1"><p className="break-words font-semibold">{person.name} {person.isOwner && <Pill tone="blue">Owner</Pill>}</p><p className="truncate text-xs text-nb-mute">{(person.specialties || []).join(" · ")}</p></div><Switch checked={person.available} onCheckedChange={(value) => run(() => api.patch("practitioners", person.id, { available: value, _audit: `${person.name} availability → ${value ? "on" : "off"}` }))} data-testid={`manage-avail-${person.id}`} /></div>
       <div className="mt-3 flex flex-wrap gap-2">
         <label className="nb-btn-ghost inline-flex h-9 cursor-pointer items-center px-3 text-xs">
           Replace photo
@@ -332,6 +332,7 @@ export default function Manage() {
         </HubSection>
         <HubSection title="Services and growth" testid="manage-section-growth">
           <HubLink icon={Sparkles} tint="tint-lagoon" title="Service catalogue" detail="Durations, prices, photos, and publication." meta={published ? String(published) : undefined} testid="manage-open-services" onClick={() => openTab("services")} />
+          <HubLink to="/owner/marketing" icon={Tag} tint="tint-mint" title="Marketing" detail="Welcome offer, flash campaigns, follow-up coupons, and light reporting." testid="manage-link-marketing" />
           <HubLink to="/owner/promos" icon={Tag} tint="tint-mint" title="Promotions" detail="Codes and the welcome offer. Gift cards stay inactive." meta={state.promotions?.length ? String(state.promotions.length) : undefined} testid="manage-link-promotions" />
           <HubLink to="/owner/campaigns" icon={Zap} tint="tint-ice" title="Campaigns" detail="The same flash-booking desk, filtered by status." testid="manage-link-campaigns" />
           <HubLink to="/owner/rewards" icon={Gift} tint="tint-meadow" title="Rewards" detail="Draft point rules. Earning and redemption stay off." testid="manage-link-rewards" />
@@ -346,19 +347,21 @@ export default function Manage() {
           <HubLink to="/owner/training" icon={GraduationCap} tint="tint-lagoon" title="Training" detail="Isolated scenarios. They do not write to live clients." testid="manage-link-training" />
         </HubSection>
       </div>
-      <div ref={records} className="scroll-mt-24">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
+      <div ref={records} className="min-w-0 scroll-mt-24">
+      <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <p className="nb-eyebrow">Workspace</p>
           <h2 className="text-xl font-semibold tracking-tight text-nb-ink">Records</h2>
         </div>
         <p className="text-xs text-nb-mute">{state.practitioners.length} practitioners · {state.services.length} services · {state.clients.length} clients</p>
       </div>
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-11 rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100">{["practitioners", "services", "clients"].map((t) => <TabsTrigger key={t} value={t} data-testid={`manage-tab-${t}`} className="rounded-full px-4 capitalize data-[state=active]:bg-nb-ink data-[state=active]:text-white">{t}</TabsTrigger>)}</TabsList>
+        <div className="overflow-x-auto">
+          <TabsList className="inline-flex h-11 w-max min-w-full rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100 sm:w-auto">{["practitioners", "services", "clients"].map((t) => <TabsTrigger key={t} value={t} data-testid={`manage-tab-${t}`} className="rounded-full px-4 capitalize data-[state=active]:bg-nb-ink data-[state=active]:text-white">{t}</TabsTrigger>)}</TabsList>
+        </div>
         <TabsContent value="practitioners" className="mt-5 space-y-3">
-          <div className="nb-card space-y-3 p-4" data-testid="practitioner-invite">
-            <div className="flex items-center justify-between gap-3"><p className="font-semibold">Staff invitations</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Invite staff"}</button></div>
+          <div className="nb-card min-w-0 space-y-3 p-4" data-testid="practitioner-invite">
+            <div className="flex flex-wrap items-center justify-between gap-3"><p className="font-semibold">Staff invitations</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Invite staff"}</button></div>
             {showInvite && <>
             <p className="text-xs text-nb-mute">Invite owner, manager, reception, or practitioner roles. You do not set their password. A single-use link is shown once when email delivery is off.</p>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -400,7 +403,24 @@ export default function Manage() {
             const visits = state.appointments.filter((a) => a.clientId === c.id);
             const next = visits.filter((a) => a.date >= todayISO() && !["cancelled", "no_show"].includes(a.status)).sort((a, b) => a.date.localeCompare(b.date))[0];
             const due = visits.reduce((sum, a) => sum + (a.settle?.balance || 0), 0);
-            return <div key={c.id} className="flex items-center gap-2"><button type="button" onClick={() => setClientId(c.id)} className="nb-card flex min-w-0 flex-1 items-center gap-3 p-4 text-left" data-testid={`manage-client-${c.id}`}><Avatar person={c} photo={c.photo} /><div className="flex-1"><p className="font-semibold">{c.firstName} {c.lastName}</p><p className="text-xs text-nb-mute">{c.email} · {c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p></div>{c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}</button><Link to={`/owner/clients/${c.id}`} data-testid={`manage-client-open-${c.id}`} className="nb-btn-ghost h-10 shrink-0 px-3 text-xs">Full record</Link></div>;
+            return (
+              <div key={c.id} className="nb-card min-w-0 p-4" data-testid={`manage-client-card-${c.id}`}>
+                <button type="button" onClick={() => setClientId(c.id)} className="flex w-full min-w-0 items-start gap-3 text-left" data-testid={`manage-client-${c.id}`}>
+                  <Avatar person={c} photo={c.photo} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <p className="break-words font-semibold">{c.firstName} {c.lastName}</p>
+                      {c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}
+                    </div>
+                    <p className="mt-1 break-all text-xs text-nb-mute">{c.email || "No email"}</p>
+                    <p className="mt-0.5 break-words text-xs text-nb-mute">{c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p>
+                  </div>
+                </button>
+                <div className="mt-3">
+                  <Link to={`/owner/clients/${c.id}`} data-testid={`manage-client-open-${c.id}`} className="nb-btn-ghost inline-flex h-10 w-full items-center justify-center px-3 text-xs sm:w-auto">Full record</Link>
+                </div>
+              </div>
+            );
           })}
         </TabsContent>
       </Tabs>

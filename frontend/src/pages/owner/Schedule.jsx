@@ -28,14 +28,14 @@ export default function Schedule() {
     }
   };
   return (
-    <div className="space-y-5" data-testid="owner-schedule">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+    <div className="min-w-0 space-y-5" data-testid="owner-schedule">
+      <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <p className="nb-eyebrow">Schedule</p>
-          <h1 className="text-3xl font-semibold tracking-tight">Cal<span className="font-display font-normal italic nb-gradient-text">endar</span></h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Cal<span className="font-display font-normal italic nb-gradient-text">endar</span></h1>
           <p className="text-sm text-nb-mute">Edmonton local time. A route estimate is not live GPS.</p>
         </div>
-        <div className="flex gap-2 text-sm font-semibold">
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm font-semibold">
           <Link to="/owner/dispatch" className="text-nb-blue" data-testid="schedule-link-dispatch">Dispatch</Link>
           <Link to="/owner/availability" className="text-nb-blue" data-testid="schedule-link-availability">Hours</Link>
           <Link to="/owner/routes" className="text-nb-blue" data-testid="schedule-link-routes">Routes</Link>

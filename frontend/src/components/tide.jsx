@@ -64,10 +64,10 @@ export const Row = ({ label, value, strong, className = "" }) => (
   </div>
 );
 
-export const EmptyState = ({ icon: Icon = Info, title, body, action, testid }) => (
-  <div data-testid={testid} className="flex flex-col items-center px-6 py-10 text-center">
-    <span className="mb-4 grid h-16 w-16 place-items-center rounded-full text-nb-teal tint-mint"><Icon className="h-7 w-7" strokeWidth={1.5} /></span>
-    <p className="font-semibold text-nb-ink">{title}</p>
+export const EmptyState = ({ icon: Icon = Info, title, body, action, testid, compact = false }) => (
+  <div data-testid={testid} className={cx("flex flex-col items-center text-center", compact ? "px-3 py-5" : "px-6 py-10")}>
+    <span className={cx("grid place-items-center rounded-full text-nb-teal tint-mint", compact ? "mb-2 h-10 w-10" : "mb-4 h-16 w-16")}><Icon className={compact ? "h-5 w-5" : "h-7 w-7"} strokeWidth={1.5} /></span>
+    <p className={cx("font-semibold text-nb-ink", compact && "text-sm")}>{title}</p>
     {body && <p className="mt-1 max-w-xs text-sm text-nb-mute">{body}</p>}
     {action && <div className="mt-4">{action}</div>}
   </div>

@@ -68,6 +68,20 @@
   .tint-lagoon { background: #E9F0FE; }
   .tint-meadow { background: #EFF8E4; }
   .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+  .safe-top { padding-top: max(env(safe-area-inset-top), 0px); }
+  .staff-main-pad { padding-bottom: calc(7.25rem + env(safe-area-inset-bottom, 0px)); }
+  .scroll-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    mask-image: linear-gradient(90deg, #000 0%, #000 calc(100% - 1.5rem), transparent 100%);
+  }
+  .scroll-tabs::-webkit-scrollbar { height: 4px; }
+  .scroll-tabs::-webkit-scrollbar-thumb { background: rgba(21, 101, 240, 0.25); border-radius: 999px; }
   .nb-hatch { background-image: repeating-linear-gradient(135deg, rgba(74,90,122,.10) 0 6px, transparent 6px 12px); }
 }
 

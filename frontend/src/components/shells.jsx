@@ -247,7 +247,7 @@ function StaffShellInner({ role }) {
   const name = me?.name || user?.name || cfg.title;
   useEffect(() => { registerPush().catch(() => {}); }, []);
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen overflow-x-clip">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sky-100 bg-white px-4 py-6 lg:flex">
         <Lockup to={cfg.nav[0].to} testid={`${role}-logo-link`} className="px-2" />
         <p className="nb-eyebrow mb-3 mt-8 px-2">{cfg.title} workspace</p>
@@ -280,11 +280,11 @@ function StaffShellInner({ role }) {
         </div>
       </aside>
       <div className="min-w-0 lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-sky-100 bg-white/90 px-4 backdrop-blur lg:hidden">
-          <Lockup to={cfg.nav[0].to} testid={`${role}-mobile-logo-link`} />
-          <AccountMenu />
+        <header className="safe-top sticky top-0 z-30 flex h-14 items-center justify-between border-b border-sky-100 bg-white/95 px-4 backdrop-blur lg:hidden">
+          <Lockup to={cfg.nav[0].to} testid={`${role}-mobile-logo-link`} className="min-w-0" />
+          <div className="min-w-0 shrink"><AccountMenu /></div>
         </header>
-        <main className="px-4 py-6 pb-28 sm:px-6 lg:px-10 lg:pb-10"><Page><Outlet /></Page></main>
+        <main className="min-w-0 px-4 py-5 staff-main-pad sm:px-6 lg:px-10 lg:pb-10"><Page><Outlet /></Page></main>
       </div>
       <FloatingNav items={cfg.nav} more={cfg.more} testid={`${role}-bottom`} />
     </div>
