@@ -6,6 +6,7 @@ import { PaymentPanel } from "@/components/PaymentPanel";
 import { ClientProfile, PractitionerProfile } from "@/components/ops/Profiles";
 import { LiveTrack } from "@/components/LiveTrack";
 import { useDemo } from "@/store/DemoStore";
+import { RescheduleSheet } from "@/components/RescheduleSheet";
 import { fmtDate, fmtTime, fmtStamp, OPEN, staffActor } from "@/lib/domain";
 
 export function AppointmentSheet({ apptId, role, onClose }) {
@@ -54,13 +55,7 @@ export function AppointmentSheet({ apptId, role, onClose }) {
               {["assigned", "confirmed", "preparing", "arrived"].includes(appt.status) && <button onClick={() => setConfirm("no_show")} data-testid="sheet-noshow-btn" className="nb-btn-ghost h-10 text-sm">No-show</button>}
             </div>
           )}
-          {resched && (
-            <div className="flex flex-wrap items-end gap-2 rounded-2xl bg-sky-50 p-3" data-testid="sheet-reschedule-form">
-              <input type="date" className="nb-input h-10 w-40" value={resched.date} onChange={(e) => setResched({ ...resched, date: e.target.value })} data-testid="sheet-reschedule-date" />
-              <input type="time" step="1800" className="nb-input h-10 w-32" value={resched.time} onChange={(e) => setResched({ ...resched, time: e.target.value })} data-testid="sheet-reschedule-time" />
-              <button onClick={async () => { await run(() => api.event(appt.id, "rescheduled", actor, `${fmtDate(resched.date)} ${fmtTime(resched.time)}`, resched), "Rescheduled"); setResched(null); }} data-testid="sheet-reschedule-save" className="nb-btn-primary h-10 text-sm">Save</button>
-            </div>
-          )}
+          {resched && <RescheduleSheet appt={appt} label={`${appt.ref} · ${c ? `${c.firstName} ${c.lastName}` : "Client"}`} cta="Save new time" onClose={() => setResched(null)} onPick={async (date, time) => { try { await run(() => api.event(appt.id, "rescheduled", actor, `${fmtDate(date)} ${fmtTime(time)}`, { date, time }), "Visit rescheduled"); setResched(null); } catch { /* toast shown; keep sheet open */ } }} />}
           <div className="flex items-center gap-2 text-xs"><span className="text-nb-mute">Clinical notes:</span>{role === "owner" || perm("clinical") ? <Pill tone={appt.soapStatus === "signed" ? "green" : appt.soapStatus === "draft" ? "amber" : "slate"} testid="sheet-soap-status">{appt.soapStatus === "signed" ? "SOAP signed" : appt.soapStatus === "draft" ? "SOAP draft" : "Not started"}</Pill> : <span className="flex items-center gap-1 text-slate-400" data-testid="sheet-soap-restricted"><Lock className="h-3 w-3" />Restricted</span>}</div>
           <div><p className="nb-label">Payment & insurance</p>{can("managePayments") || can("viewInsuranceStatus") ? <PaymentPanel appt={appt} role={role} /> : <p className="text-xs text-slate-400">Hidden by permissions</p>}</div>
           {can("viewHistory") && <div><p className="nb-label">Timeline</p><OpsTimeline appt={appt} /></div>}

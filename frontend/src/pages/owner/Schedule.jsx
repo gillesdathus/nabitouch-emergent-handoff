@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { CalendarPlus, X } from "lucide-react";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RescheduleSheet } from "@/components/RescheduleSheet";
 import { VisualCalendar } from "@/components/ops/VisualCalendar";
 import { PageHeader } from "@/components/ds";
 import { Confirm } from "@/components/ui-kit";
@@ -34,6 +35,7 @@ export default function Schedule() {
   const [note, setNote] = useState("");
   const [move, setMove] = useState(null);
   const [booking, setBooking] = useState(false);
+  const [picking, setPicking] = useState(null);
   const block = async () => {
     try {
       const hour = Number(slot.time.slice(0, 2));
@@ -62,7 +64,8 @@ export default function Schedule() {
           <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setBooking(true)} data-testid="schedule-new-booking"><CalendarPlus className="h-4 w-4" />New booking</button>
         </>}
       />
-      <VisualCalendar appointments={state.appointments} practitioners={state.practitioners} services={idx.services} clients={idx.clients} personId={personId} onPerson={setPersonId} cursor={cursor} onCursor={setCursor} onOpen={setOpenId} onSlot={(s) => { setSlot(s); setNote(""); }} onMove={(appt, date, time) => setMove({ appt, date, time })} />
+      <VisualCalendar appointments={state.appointments} practitioners={state.practitioners} services={idx.services} clients={idx.clients} personId={personId} onPerson={setPersonId} cursor={cursor} onCursor={setCursor} onOpen={setOpenId} onSlot={(s) => { setSlot(s); setNote(""); }} onMove={(appt, date, time) => setMove({ appt, date, time })} onRequestMove={setPicking} />
+      {picking && <RescheduleSheet appt={picking} label={`${picking.ref} · ${idx.clients[picking.clientId]?.firstName || "Client"}`} onClose={() => setPicking(null)} onPick={(date, time) => { setMove({ appt: picking, date, time }); setPicking(null); }} />}
       {slot && <SlotPanel slot={slot} personId={personId} note={note} onBlock={block} onBook={() => { setSlot(null); setBooking(true); }} onClose={() => setSlot(null)} />}
       <Confirm open={Boolean(move)} onOpenChange={(o) => !o && setMove(null)} testid="reschedule-confirm" title="Reschedule this visit?" confirmLabel="Reschedule"
         body={move ? `${move.appt.ref} · ${client ? `${client.firstName} ${client.lastName}` : "Client"}: ${fmtDate(move.appt.date)} ${fmtTime(move.appt.time)} → ${fmtDate(move.date)} ${fmtTime(move.time)}. The client is notified only if lifecycle email is enabled.` : ""}

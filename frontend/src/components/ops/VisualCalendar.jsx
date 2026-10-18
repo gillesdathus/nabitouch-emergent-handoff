@@ -58,7 +58,7 @@ function DayStrip({ week, day, onCursor }) {
   );
 }
 
-export function VisualCalendar({ appointments = [], practitioners = [], services = {}, clients = {}, personId = "", onPerson, cursor, onCursor, onOpen, onSlot, onMove, defaultView }) {
+export function VisualCalendar({ appointments = [], practitioners = [], services = {}, clients = {}, personId = "", onPerson, cursor, onCursor, onOpen, onSlot, onMove, onRequestMove, defaultView }) {
   const desktop = useDesktop();
   const [view, setView] = useState(defaultView || "day");
   const day = cursor || todayISO();
@@ -66,7 +66,7 @@ export function VisualCalendar({ appointments = [], practitioners = [], services
   const visible = personId ? appointments.filter((a) => a.practitionerId === personId) : appointments;
   const byId = useMemo(() => Object.fromEntries(practitioners.map((p) => [p.id, p])), [practitioners]);
   const ctx = {
-    onOpen, onSlot, onMove,
+    onOpen, onSlot, onMove, onRequestMove,
     personFor: (id) => byId[id],
     clientName: (a) => { const c = clients[a.clientId]; return c ? `${c.firstName || "Client"} ${c.lastName || ""}`.trim() : "Client"; },
     serviceName: (a) => services[a.serviceSlug]?.name || a.serviceSlug,

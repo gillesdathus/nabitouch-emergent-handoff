@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ClientDirectory } from "@/components/clients/ClientDirectory";
 import { Avatar, CatalogueImage, Pill } from "@/components/ui-kit";
 import { HubLink, HubSection, PageHeader } from "@/components/tide";
 import { BadgeCheck, BarChart3, CalendarClock, Gift, GraduationCap, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
@@ -397,32 +398,7 @@ export default function Manage() {
             </div>
           ))}
         </TabsContent>
-        <TabsContent value="clients" className="mt-5 space-y-3">
-          <input className="nb-input" placeholder="Search clients" value={q} onChange={(e) => setQ(e.target.value)} data-testid="manage-client-search" />
-          {state.clients.filter((c) => `${c.firstName} ${c.lastName} ${c.email}`.toLowerCase().includes(q.toLowerCase())).map((c) => {
-            const visits = state.appointments.filter((a) => a.clientId === c.id);
-            const next = visits.filter((a) => a.date >= todayISO() && !["cancelled", "no_show"].includes(a.status)).sort((a, b) => a.date.localeCompare(b.date))[0];
-            const due = visits.reduce((sum, a) => sum + (a.settle?.balance || 0), 0);
-            return (
-              <div key={c.id} className="nb-card min-w-0 p-4" data-testid={`manage-client-card-${c.id}`}>
-                <button type="button" onClick={() => setClientId(c.id)} className="flex w-full min-w-0 items-start gap-3 text-left" data-testid={`manage-client-${c.id}`}>
-                  <Avatar person={c} photo={c.photo} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <p className="break-words font-semibold">{c.firstName} {c.lastName}</p>
-                      {c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}
-                    </div>
-                    <p className="mt-1 break-all text-xs text-nb-mute">{c.email || "No email"}</p>
-                    <p className="mt-0.5 break-words text-xs text-nb-mute">{c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p>
-                  </div>
-                </button>
-                <div className="mt-3">
-                  <Link to={`/owner/clients/${c.id}`} data-testid={`manage-client-open-${c.id}`} className="nb-btn-ghost inline-flex h-10 w-full items-center justify-center px-3 text-xs sm:w-auto">Full record</Link>
-                </div>
-              </div>
-            );
-          })}
-        </TabsContent>
+        <TabsContent value="clients" className="mt-5"><ClientDirectory role="owner" /></TabsContent>
       </Tabs>
       {clientId && <ClientProfile clientId={clientId} onClose={() => setClientId(null)} />}
       {personId && <PractitionerProfile personId={personId} onClose={() => setPersonId(null)} />}

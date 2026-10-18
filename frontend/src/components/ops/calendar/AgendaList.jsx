@@ -1,13 +1,15 @@
-import { CalendarX2 } from "lucide-react";
+import { CalendarClock, CalendarX2 } from "lucide-react";
 import { EmptyState } from "@/components/ds";
 import { StatusPill } from "@/components/ui-kit";
 import { endTime, fmtDate, fmtTime, money } from "@/lib/domain";
-import { edmontonNow } from "./time";
+import { MOVABLE, edmontonNow } from "./time";
 
 function AgendaRow({ appt, ctx }) {
   const person = ctx.personFor(appt.practitionerId);
+  const now = edmontonNow();
+  const movable = ctx.onRequestMove && MOVABLE.includes(appt.status) && `${appt.date}${appt.time}` >= `${now.date}${now.time}`;
   return (
-    <li>
+    <li className="flex min-w-0 items-start gap-1">
       <button type="button" onClick={() => ctx.onOpen?.(appt.id)} className="nb-row items-start" data-testid={`calendar-appointment-${appt.id}`}>
         <span className="w-16 shrink-0">
           <span className="nb-num block text-sm font-semibold">{fmtTime(appt.time)}</span>
@@ -20,6 +22,7 @@ function AgendaRow({ appt, ctx }) {
           <span className="mt-1 flex flex-wrap items-center gap-1.5"><StatusPill status={appt.status} /><span className="truncate text-[11px] text-nb-mute">{person?.name || "Unassigned"}</span></span>
         </span>
       </button>
+      {movable && <button type="button" onClick={() => ctx.onRequestMove(appt)} aria-label={`Move ${appt.ref}`} className="mt-2 inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold text-nb-blue ring-1 ring-sky-200 hover:bg-sky-50" data-testid={`calendar-move-${appt.id}`}><CalendarClock className="h-3.5 w-3.5" />Move</button>}
     </li>
   );
 }

@@ -9,14 +9,17 @@ import { InvoiceDrawer } from "@/components/billing/InvoiceDrawer";
 import { Conversation } from "@/components/Conversation";
 import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
-import { fmtDate } from "@/lib/domain";
+import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { sumInvoices, useInvoices } from "@/lib/useInvoices";
 import { useDemo } from "@/store/DemoStore";
 import { cn } from "@/lib/utils";
 
-function Hero({ c, appts, totals, canMoney }) {
+function Hero({ c, appts, totals, canMoney, actions }) {
   const done = appts.filter((a) => ["completed", "closed"].includes(a.status)).length;
   const upcoming = appts.filter((a) => ["requested", "confirmed", "en_route", "assigned", "preparing", "arrived", "in_session"].includes(a.status)).length;
+  const next = appts.filter((a) => OPEN.includes(a.status)).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))[0];
   return (
     <section className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100 sm:p-5" data-testid="cw-hero">
       <div className="flex min-w-0 items-start gap-3">
@@ -33,6 +36,8 @@ function Hero({ c, appts, totals, canMoney }) {
           )}
         </div>
       </div>
+      {next && <p className="mt-3 rounded-2xl bg-sky-50 px-3 py-2 text-xs text-nb-navy" data-testid="cw-next-visit"><b>Next visit:</b> {fmtDate(next.date, { weekday: "short", month: "short", day: "numeric" })} · {fmtTime(next.time)} · {next.ref}</p>}
+      {actions && <div className="mt-3 flex flex-wrap gap-2" data-testid="cw-actions">{actions}</div>}
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
         {[["Visits", done, "cw-stat-visits"], ["Upcoming", upcoming, "cw-stat-upcoming"], ["Owing", canMoney ? formatCents(totals.balance) : "—", "cw-stat-owing"]].map(([k, v, id]) => (
           <div key={k} className="min-w-0 rounded-2xl bg-sky-50/80 px-2 py-2.5 ring-1 ring-sky-100" data-testid={id}>
@@ -47,9 +52,21 @@ function Hero({ c, appts, totals, canMoney }) {
 
 function Visits({ appts, idx }) {
   if (!appts.length) return <EmptyState compact icon={CalendarDays} title="No visits yet" testid="cw-visits-empty" />;
+  const sorted = [...appts].sort((a, b) => `${b.date}${b.time}`.localeCompare(`${a.date}${a.time}`));
+  const upcoming = sorted.filter((a) => OPEN.includes(a.status)).reverse();
+  const past = sorted.filter((a) => !OPEN.includes(a.status));
   return (
-    <div className="space-y-2.5" data-testid="cw-visits">
-      {appts.map((a, i) => (
+    <div className="space-y-5" data-testid="cw-visits">
+      {upcoming.length > 0 && <div><p className="nb-eyebrow mb-2">Upcoming</p><VisitCards rows={upcoming} idx={idx} /></div>}
+      {past.length > 0 && <div><p className="nb-eyebrow mb-2">Past</p><VisitCards rows={past} idx={idx} /></div>}
+    </div>
+  );
+}
+
+function VisitCards({ rows, idx }) {
+  return (
+    <div className="space-y-2.5">
+      {rows.map((a, i) => (
         <Reveal key={a.id} i={i}>
           <div className="nb-card flex min-w-0 flex-wrap items-center gap-3 p-3.5 sm:gap-4 sm:p-4" data-testid={`cw-visit-${a.id}`}>
             <div className="w-14 shrink-0 text-center sm:w-16"><p className="text-[11px] uppercase text-nb-mute">{fmtDate(a.date, { month: "short" })}</p><p className="nb-num text-xl font-semibold text-nb-navy sm:text-2xl">{a.date?.slice(8, 10)}</p></div>
@@ -138,7 +155,9 @@ function ScrollTabs({ tabs }) {
 
 export default function ClientWorkspace() {
   const { id } = useParams();
-  const { idx, user } = useDemo();
+  const { idx, user, perm } = useDemo();
+  const [book, setBook] = useState(false);
+  const [invoice, setInvoice] = useState(false);
   const role = user?.role;
   const [thread, setThread] = useState(null);
   const [ws, setWs] = useState(null);
@@ -146,7 +165,7 @@ export default function ClientWorkspace() {
   const [openId, setOpenId] = useState(null);
   useEffect(() => { api.clientWorkspace(id).then(setWs).catch((e) => setError(apiError(e))); }, [id]);
   const money = ws?.access?.invoices;
-  const { rows, replace } = useInvoices({ clientId: id }, Boolean(money));
+  const { rows, replace, reload } = useInvoices({ clientId: id }, Boolean(money));
   if (error) return <div className="mx-auto max-w-3xl py-6"><Notice testid="cw-error">{error}</Notice></div>;
   if (!ws) return <div className="mx-auto max-w-6xl space-y-3 py-2"><div className="h-36 rounded-3xl nb-skeleton" /><div className="h-48 rounded-3xl nb-skeleton" /></div>;
   const invoiceRows = money ? rows : [];
@@ -154,10 +173,15 @@ export default function ClientWorkspace() {
   const tabs = [["overview", "Visits"], money && ["invoices", "Invoices"], ws.access.insurance && ["insurance", "Insurance"], ["consents", "Consents"], ws.access.threads && ["messages", "Messages"], ws.access.plans && ["plans", "Care plans"]].filter(Boolean);
   return (
     <div className="mx-auto max-w-6xl min-w-0" data-testid="client-workspace">
-      <Link to={role === "owner" ? "/owner/manage" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
+      <Link to={role === "owner" ? "/owner/clients" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
         <ArrowLeft className="h-4 w-4" />Clients
       </Link>
-      <Hero c={ws.client} appts={ws.appointments} totals={sumInvoices(invoiceRows)} canMoney={money} />
+      <Hero c={ws.client} appts={ws.appointments} totals={sumInvoices(invoiceRows)} canMoney={money} actions={<>
+        {(role === "owner" || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-dark h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
+        {money && (role === "owner" || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
+        {ws.client.phone && <a href={`tel:${ws.client.phone}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-call"><Phone className="h-3.5 w-3.5" />Call</a>}
+        {ws.client.email && <a href={`mailto:${ws.client.email}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-email"><Mail className="h-3.5 w-3.5" />Email</a>}
+      </>} />
       {ws.client.intake?.precautions && <Notice tone="info" className="mt-3" testid="cw-precautions">Precautions: {ws.client.intake.precautions}</Notice>}
       <Tabs defaultValue="overview" className="mt-4">
         <ScrollTabs tabs={tabs} />
@@ -169,6 +193,8 @@ export default function ClientWorkspace() {
         {ws.access.plans && <TabsContent value="plans" className="mt-3"><Plans rows={ws.plans} /></TabsContent>}
       </Tabs>
       <p className="mt-8 flex items-center gap-1.5 text-[11px] text-nb-mute" data-testid="cw-privacy-note"><Lock className="h-3 w-3 shrink-0" />Clinical notes are not shown in this record. Opening it is logged.</p>
+      {book && <NewBookingDialog open clientId={id} onClose={() => setBook(false)} />}
+      {invoice && <CreateInvoiceDialog open clientId={id} onClose={(created) => { setInvoice(false); if (created?.id) { reload(); setOpenId(created.id); } }} />}
       <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
     </div>
   );

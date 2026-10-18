@@ -1,12 +1,17 @@
 import { EtransferSettings } from "@/components/EtransferSettings";
 import { WhatsAppSettings } from "@/components/WhatsAppSettings";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { ZoneMap, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { AddressPicker } from "@/components/AddressPicker";
 import { clinicBookable, clinicSavePayload, staffActor } from "@/lib/domain";
 import { dollarsToCents } from "@/lib/billing";
+import { OPEN } from "@/lib/domain";
+import { AddonsEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
+
+const ZoneStreetMap = lazy(() => import("@/components/maps/ZoneStreetMap"));
+const HAS_MAPBOX = String(process.env.REACT_APP_MAPBOX_PUBLIC_TOKEN || "").startsWith("pk.");
 
 function ZoneRow({ z }) {
   const { run, api, user } = useDemo();
@@ -65,19 +70,23 @@ export default function Zones() {
       cashEnabled: !!policy.cashAccepted,
     }, "Payment policy saved");
   };
+  const pins = useMemo(() => state.appointments
+    .filter((a) => OPEN.includes(a.status) && Number.isFinite(Number(a.address?.lat)) && Number.isFinite(Number(a.address?.lng)) && a.address?.clientConfirmed === true)
+    .slice(0, 50)
+    .map((a) => ({ lat: Number(a.address.lat), lng: Number(a.address.lng), label: `${a.ref} · ${a.date} ${a.time}`, color: idx.practitioners[a.practitionerId]?.color || "#1565F0" })), [state.appointments, idx.practitioners]);
   const policyLabel = { full: "Full online payment required", deposit: "Deposit required", choice: "Customer chooses full payment or deposit" };
   return (
     <div className="space-y-6" data-testid="owner-zones">
       <SectionHead eyebrow="Mobile operations" title="Service zones & travel fees" />
-      <ZoneMap zones={state.zones} height={300} pins={state.appointments.slice(0, 12).map((a) => a.address)} />
+      {HAS_MAPBOX
+        ? <Suspense fallback={<div className="nb-skeleton h-[340px] rounded-[var(--nb-r-lg)]" />}><ZoneStreetMap zones={state.zones} center={st.center} pins={pins} clinic={clinic.coordinatesVerified && clinic.lat ? { lat: clinic.lat, lng: clinic.lng, label: clinic.address } : null} /></Suspense>
+        : <ZoneMap zones={state.zones} height={300} pins={pins} />}
+      <p className="text-[11px] text-nb-mute">Pins show upcoming visits whose address the client confirmed. Practitioner locations appear only on the live fleet during an authorized trip.</p>
       <div className="space-y-3">{state.zones.map((z) => <ZoneRow key={z.id} z={z} />)}</div>
       <SectionHead eyebrow="Service locations" title="Mobile is on. In-clinic stays off until you activate it." className="mt-10" />
       <div className="grid gap-4 md:grid-cols-2">
         <label className="nb-card flex items-center justify-between p-4 text-sm"><span><b>Mobile visits</b><span className="block text-xs text-nb-mute">Zones, travel fees, and the buffers below</span></span><Switch checked={clinic.mobileEnabled !== false} onCheckedChange={(v) => save({ clinic: { ...clinic, address: shownAddress, enabled: clinicBookable(clinic), mobileEnabled: v } }, `Mobile visits ${v ? "enabled" : "disabled"}`)} data-testid="settings-mobile-switch" /></label>
-        <div className="nb-card p-4 text-sm" data-testid="settings-scheduling">
-          <b>Scheduling buffers</b>
-          <p className="text-xs text-nb-mute">Setup {scheduling.setupMin ?? 0} min · cleanup {scheduling.cleanupMin ?? 0} min · travel buffer {scheduling.travelBufferMin ?? 0} min · lead time {scheduling.leadMin ?? 0} min</p>
-        </div>
+        <SchedulingEditor scheduling={scheduling} />
         <div className="nb-card space-y-3 p-4 text-sm md:col-span-2">
           <b>In-clinic address</b>
           <p className="text-xs text-nb-mute">Saving an address does not turn clinic booking on. Choose a suggestion and confirm it before navigation coordinates are saved.</p>
@@ -133,13 +142,12 @@ export default function Zones() {
           <p className="text-xs text-nb-mute">The server calculates the deposit from the booking total. Cash stays unpaid until it is recorded at the visit.</p>
         </div>
         <div className="nb-card flex items-center gap-3 p-4 text-sm"><span className="flex-1"><b>GST rate</b><span className="block text-xs text-nb-mute">Confirm tax treatment with your accountant</span></span>{editing === "gst" ? <><input type="number" value={gst} onChange={(e) => setGst(e.target.value)} className="h-9 w-20 rounded-xl border border-sky-200 px-2" data-testid="settings-gst-input" /><button type="button" onClick={() => { setGst(st.gst * 100); setEditing(""); }} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button><button onClick={() => finish({ gst: Number(gst) / 100 }, `GST set to ${gst}%`)} data-testid="settings-gst-save" className="nb-btn-primary h-9 px-4 text-xs">Save</button></> : <><span data-testid="settings-gst-value">{st.gst * 100}%</span><button type="button" onClick={() => { setGst(st.gst * 100); setEditing("gst"); }} className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-gst-edit">Edit</button></>}</div>
-        <div className="nb-card p-4 text-sm"><b>Enhancements</b>{st.addons.map((a) => <p key={a.id} className="text-xs text-nb-mute">{a.name} · ${a.price}</p>)}</div>
+        <AddonsEditor addons={st.addons || []} />
       </div>
-      <section className="nb-card mt-6 p-5" data-testid="cancellation-fee">
-        <p className="font-semibold">Cancellation policy</p>
-        <p className="mt-1 text-sm text-nb-mute">Off. No-show fee off. Automatic collection off. No notice penalty. No fee applies to visits already booked.</p>
-        <p className="mt-2 text-sm">We understand that plans can change. If you need to cancel or reschedule your massage appointment, please contact Nabitouch as soon as possible. We currently do not charge an automatic cancellation fee.</p>
-      </section>
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <CancellationPolicyEditor policy={st.cancellationPolicy || {}} />
+        <ReminderDaysEditor days={st.credentialReminderDays} />
+      </div>
       <SectionHead eyebrow="Insurance integrations" title="Not connected" className="mt-10" />
       <div className="space-y-3" data-testid="insurance-integrations">
         {(insurers.length ? insurers : [

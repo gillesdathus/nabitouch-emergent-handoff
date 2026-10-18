@@ -75,7 +75,7 @@ const Payments = lazy(() => import("@/pages/owner/Payments"));
 const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
-const DeskClients = lazy(() => import("@/pages/reception/Clients"));
+const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
 const Messages = lazy(() => import("@/pages/reception/Messages"));
 const Thread = lazy(() => import("@/pages/messages/Thread"));
@@ -158,6 +158,7 @@ export default function App() {
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
+                  <Route path="/owner/clients" element={<StaffClients role="owner" />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />
@@ -176,7 +177,7 @@ export default function App() {
                 <Route element={<StaffShell role="desk" />}>
                   <Route path="/desk" element={<Desk />} />
                   <Route path="/desk/dispatch" element={<Dispatch role="desk" />} />
-                  <Route path="/desk/clients" element={<DeskClients />} />
+                  <Route path="/desk/clients" element={<StaffClients role="desk" />} />
                   <Route path="/desk/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/desk/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/desk/verify" element={<Verify />} />
