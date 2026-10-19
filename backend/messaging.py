@@ -71,14 +71,31 @@ def presets_for(role):
     return []
 
 
+def _roles_of(user):
+    roles = set(user.get("roles") or [])
+    if user.get("role"):
+        roles.add(user.get("role"))
+    return roles
+
+
+def acting_chat_role(user, appt=None):
+    """Dual Owner+Practitioner accounts chat as practitioner on their assigned visits."""
+    subject = user.get("subject")
+    roles = _roles_of(user)
+    if appt and subject and subject == appt.get("practitionerId") and ("practitioner" in roles or "owner" in roles):
+        return "practitioner"
+    return user.get("role")
+
+
 def can_access(user, appt, perms, write=False):
     role = user.get("role")
     subject = user.get("subject")
-    if role == "owner":
+    roles = _roles_of(user)
+    if role == "owner" or "owner" in roles:
         return not write or appt.get("status") not in WRITE_BLOCKED
     if role == "client" and subject and subject == appt.get("clientId"):
         return not write or appt.get("status") not in WRITE_BLOCKED
-    if role == "practitioner" and subject and subject == appt.get("practitionerId"):
+    if subject and subject == appt.get("practitionerId") and ("practitioner" in roles or role == "practitioner"):
         return not write or appt.get("status") not in WRITE_BLOCKED
     if role == "desk":
         if write:
@@ -213,13 +230,26 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
     @router.get("/messages/presets")
     async def list_presets(request: Request):
         user = await viewer(request)
-        return {"presets": presets_for(user.get("role")), "delays": sorted(DELAYS), "sms": False, "email": False}
+        role = user.get("role")
+        if "practitioner" in _roles_of(user):
+            role = "practitioner"
+        return {"presets": presets_for(role), "delays": sorted(DELAYS), "sms": False, "email": False}
 
     @router.get("/inbox")
     async def inbox(request: Request):
         user = await viewer(request)
         role = user.get("role")
         subject = user.get("subject")
+        roles = _roles_of(user)
+        # Dual-role practitioners (e.g. Nabitu) count unread on their assigned visits.
+        if subject and "practitioner" in roles:
+            query = {
+                "practitionerId": subject,
+                "authorRole": {"$nin": ["practitioner", "owner"]},
+                "readBy.practitioner": {"$exists": False},
+            }
+            unread = await db.nt_messages.count_documents(query)
+            return {"unread": unread, "channel": "in_app", "sms": False, "email": False}
         query = {"authorRole": {"$ne": role}, f"readBy.{role}": {"$exists": False}}
         if role == "client":
             query["clientId"] = subject
@@ -282,7 +312,8 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             raise HTTPException(429, "Too many messages. Wait a few minutes and try again.")
         delay = None
         if body.get("recordDelay"):
-            if user.get("role") not in ("practitioner", "owner"):
+            roles = _roles_of(user)
+            if not ({"practitioner", "owner"} & roles):
                 raise HTTPException(403, "Only the assigned practitioner can record a delay")
             chosen = int(minutes) if str(minutes).isdigit() else None
             if chosen not in DELAYS:
@@ -293,6 +324,7 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
                 return {"message": _public_message(existing), "duplicate": True}
             delay = (chosen, _clean(reason) if reason else f"Running {chosen} minutes late")
         stamp = _now()
+        chat_role = acting_chat_role(user, appt)
         labels = {"client": "Client", "practitioner": "Practitioner", "desk": "Reception", "owner": "Owner"}
         doc = {
             "id": "msg-" + uuid.uuid4().hex[:16],
@@ -301,15 +333,15 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
             "clientId": appt.get("clientId"),
             "practitionerId": appt.get("practitionerId"),
             "authorId": user.get("id"),
-            "authorRole": user.get("role"),
-            "authorLabel": labels.get(user.get("role"), "Participant"),
+            "authorRole": chat_role,
+            "authorLabel": labels.get(chat_role, "Participant"),
             "body": text,
             "presetId": preset_id,
             "channel": "in_app",
             "kind": "chat",
             "createdAt": stamp,
             "deliveredAt": stamp,
-            "readBy": {user.get("role"): stamp},
+            "readBy": {chat_role: stamp},
             "sms": False,
             "email": False,
         }
@@ -339,8 +371,8 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
     @router.post("/appointments/{aid}/messages/read")
     async def mark_read(aid: str, request: Request):
         user = await viewer(request)
-        await load(aid, user)
-        role = user.get("role")
+        appt = await load(aid, user)
+        role = acting_chat_role(user, appt)
         stamp = _now()
         await db.nt_messages.update_many(
             {"appointmentId": aid, "authorRole": {"$ne": role}, f"readBy.{role}": {"$exists": False}},

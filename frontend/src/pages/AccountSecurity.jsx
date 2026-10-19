@@ -6,6 +6,7 @@ import { AuthenticatorSetup } from "@/components/AuthenticatorSetup";
 import { SectionHead } from "@/components/ui-kit";
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
+import { AppBuildLabel } from "@/components/PwaUpdateBanner";
 
 function RecoveryCodesOnce({ codes, onDone }) {
   return (
@@ -234,6 +235,7 @@ export default function AccountSecurity() {
         <p className="text-sm" data-testid="security-active-sessions">{status ? `${status.activeSessions} active session${status.activeSessions === 1 ? "" : "s"}` : "—"}</p>
         <button type="button" disabled={busy} onClick={revokeOthers} className="nb-btn-ghost h-10 w-full" data-testid="security-revoke-others">Sign out other devices</button>
       </section>
+      <AppBuildLabel className="text-center" />
     </div>
   );
 }

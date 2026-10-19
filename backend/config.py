@@ -45,6 +45,15 @@ def email_lifecycle_enabled():
     return _flag("EMAIL_LIFECYCLE_ENABLED", False)
 
 
+def practitioner_booking_email_enabled():
+    """Email the assigned practitioner on booking / reassignment / cancel / reschedule.
+
+    Defaults on so dual-role practitioners (e.g. Nabitu) receive operational alerts.
+    Still requires a live EMAIL_PROVIDER. Set PRACTITIONER_BOOKING_EMAIL_ENABLED=false to suppress.
+    """
+    return _flag("PRACTITIONER_BOOKING_EMAIL_ENABLED", True)
+
+
 def payments_simulated():
     if is_production():
         return False

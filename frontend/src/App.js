@@ -9,6 +9,7 @@ import { ClientShell, StaffShell } from "@/components/shells";
 import { PractitionerErrorBoundary } from "@/components/PractitionerRouteGuard";
 import { PageSkeleton } from "@/components/ui-kit";
 import { AppErrorBoundary, installChunkRecovery } from "@/components/AppErrorBoundary";
+import { PwaUpdateBanner } from "@/components/PwaUpdateBanner";
 
 installChunkRecovery();
 
@@ -56,6 +57,7 @@ const ProSoap = lazy(() => import("@/pages/practitioner/Soap"));
 const ProPlans = lazy(() => import("@/pages/practitioner/Plans"));
 const ProAvailability = lazy(() => import("@/pages/practitioner/Availability"));
 const ProRoute = lazy(() => import("@/pages/practitioner/DailyRoute"));
+const ProMessages = lazy(() => import("@/pages/practitioner/Messages"));
 const ProRecovery = lazy(() => import("@/pages/practitioner/Recovery"));
 const OwnerCampaigns = lazy(() => import("@/pages/owner/Campaigns"));
 const TrainingCenter = lazy(() => import("@/pages/owner/TrainingCenter"));
@@ -140,6 +142,9 @@ export default function App() {
                     <Route path="/pro/earnings" element={<ProEarnings />} />
                     <Route path="/pro/ratings" element={<ProClientRatings />} />
                     <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
+                    <Route path="/pro/schedule" element={<Navigate to="/pro/availability" replace />} />
+                    <Route path="/pro/hours" element={<Navigate to="/pro/availability" replace />} />
+                    <Route path="/pro/messages" element={<ProMessages />} />
                     <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                     <Route path="/pro/recovery" element={<ProRecovery />} />
                   </Route>
@@ -193,6 +198,7 @@ export default function App() {
             </Suspense>
             </AppErrorBoundary>
           </Gate>
+          <PwaUpdateBanner />
           <Toaster position="bottom-right" richColors closeButton offset={{ bottom: "var(--nb-toast-offset)", right: "1.5rem" }} mobileOffset={{ bottom: "var(--nb-toast-offset)" }} />
         </BrowserRouter>
       </DemoProvider>

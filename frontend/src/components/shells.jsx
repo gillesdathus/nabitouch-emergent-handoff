@@ -54,7 +54,8 @@ const STAFF = {
     nav: [
       { to: "/pro", label: "Today", icon: Sun, end: true },
       { to: "/pro/route", label: "Route", icon: RouteIcon },
-      { to: "/pro/availability", label: "Hours", icon: Clock },
+      { to: "/pro/messages", label: "Messages", icon: MessageSquare },
+      { to: "/pro/availability", label: "Schedule", icon: Clock },
       { to: "/pro/profile", label: "Me", icon: UserRound },
     ],
     more: [
@@ -97,30 +98,37 @@ function Page({ children }) {
 
 const slug = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
 
-function DockItem({ icon: Icon, label, active, primary }) {
+function DockItem({ icon: Icon, label, active, primary, badge }) {
   return (
     <span className={cn("relative flex h-full flex-col items-center justify-center gap-0.5 rounded-2xl px-0 transition-colors duration-200", active ? "text-nb-ink" : primary ? "text-nb-blue" : "text-nb-mute")}>
       {active && <motion.span layoutId="dock-active" transition={{ type: "spring", stiffness: 420, damping: 34 }} className="absolute inset-x-2 top-0 h-[3px] rounded-full bg-nb-ink" />}
-      {Icon && <Icon className="h-5 w-5 shrink-0" strokeWidth={active ? 2.3 : 1.9} aria-hidden="true" />}
+      <span className="relative">
+        {Icon && <Icon className="h-5 w-5 shrink-0" strokeWidth={active ? 2.3 : 1.9} aria-hidden="true" />}
+        {badge > 0 && <span className="absolute -right-1.5 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-nb-coral px-1 text-[9px] font-bold text-white" data-testid="nav-unread-badge">{badge > 9 ? "9+" : badge}</span>}
+      </span>
       <span className={cn("max-w-full truncate text-[10px] leading-tight tracking-tight min-[360px]:text-[10.5px]", active ? "font-semibold" : "font-medium")}>{label}</span>
     </span>
   );
 }
 
-function MoreSheet({ more, testid, active }) {
+function MoreSheet({ more, testid, active, badges = {} }) {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
+  const badgeTotal = Object.values(badges).reduce((sum, n) => sum + (Number(n) || 0), 0);
   useEffect(() => { setOpen(false); }, [pathname]);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger data-testid={`${testid}-more`} aria-label="More" className="min-w-0 flex-1">
-        <DockItem icon={MoreHorizontal} label="More" active={active} />
+        <DockItem icon={MoreHorizontal} label="More" active={active} badge={badgeTotal} />
       </SheetTrigger>
       <SheetContent side="bottom" className="max-h-[80dvh] overflow-y-auto rounded-t-[28px] pb-[calc(1.25rem+var(--nb-safe-b))]" data-testid={`${testid}-more-sheet`}>
         <SheetTitle className="mb-3 text-base">More</SheetTitle>
         <div className="grid grid-cols-2 gap-2">
           {more.map((item) => (
-            <NavLink key={item.to} to={item.to} data-testid={`${testid}-more-${slug(item.label)}`} className={({ isActive }) => cn("flex min-h-11 items-center rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100", isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50")}>{item.label}</NavLink>
+            <NavLink key={item.to} to={item.to} data-testid={`${testid}-more-${slug(item.label)}`} className={({ isActive }) => cn("flex min-h-11 items-center justify-between gap-2 rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100", isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50")}>
+              <span>{item.label}</span>
+              {badges[item.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${slug(item.label)}`}>{badges[item.to] > 9 ? "9+" : badges[item.to]}</span>}
+            </NavLink>
           ))}
         </div>
       </SheetContent>
@@ -128,7 +136,7 @@ function MoreSheet({ more, testid, active }) {
   );
 }
 
-export function FloatingNav({ items, more = [], testid = "bottom-nav" }) {
+export function FloatingNav({ items, more = [], testid = "bottom-nav", badges = {} }) {
   const { pathname } = useLocation();
   const moreActive = more.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
   return (
@@ -136,10 +144,10 @@ export function FloatingNav({ items, more = [], testid = "bottom-nav" }) {
       <div className="mx-auto flex h-[var(--nb-nav-h)] max-w-xl items-stretch justify-between gap-0.5 px-1.5">
         {items.map((it) => (
           <NavLink key={it.to} to={it.to} end={it.end} data-testid={`${testid}-${slug(it.label)}`} aria-label={it.label} className="min-w-0 flex-1">
-            {({ isActive }) => <DockItem icon={it.icon || ICONS[it.label]} label={it.short || it.label} active={isActive} primary={it.primary} />}
+            {({ isActive }) => <DockItem icon={it.icon || ICONS[it.label]} label={it.short || it.label} active={isActive} primary={it.primary} badge={badges[it.to]} />}
           </NavLink>
         ))}
-        {more.length > 0 && <MoreSheet more={more} testid={testid} active={moreActive} />}
+        {more.length > 0 && <MoreSheet more={more} testid={testid} active={moreActive} badges={badges} />}
       </div>
     </nav>
   );
@@ -254,10 +262,20 @@ export function StaffShell({ role }) {
 
 function StaffShellInner({ role }) {
   const cfg = STAFF[role];
-  const { idx, practitionerId, user } = useDemo();
+  const { idx, practitionerId, user, api } = useDemo();
   const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
+  const [unread, setUnread] = useState(0);
   useEffect(() => { registerPush().catch(() => {}); }, []);
+  useEffect(() => {
+    if (role !== "pro") return undefined;
+    let stop = false;
+    const load = () => api.inbox().then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); }).catch(() => {});
+    load();
+    const timer = setInterval(load, 20000);
+    return () => { stop = true; clearInterval(timer); };
+  }, [api, role, practitionerId]);
+  const badges = role === "pro" && unread > 0 ? { "/pro/messages": unread } : {};
   return (
     <div className="min-h-screen overflow-x-clip">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sky-100 bg-white px-4 py-6 lg:flex">
@@ -265,10 +283,16 @@ function StaffShellInner({ role }) {
         <p className="nb-eyebrow mb-3 mt-8 px-2">{cfg.title} workspace</p>
         <nav className="space-y-1" aria-label={`${cfg.title} navigation`}>
           {cfg.nav.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center gap-3 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}><n.icon className="h-[18px] w-[18px]" />{n.label}</NavLink>
+            <NavLink key={n.to} to={n.to} end={n.end} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center justify-between gap-2 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}>
+              <span className="flex items-center gap-3"><n.icon className="h-[18px] w-[18px]" />{n.label}</span>
+              {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${n.label.toLowerCase()}`}>{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
+            </NavLink>
           ))}
           {cfg.more.map((n) => (
-            <NavLink key={n.to} to={n.to} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center gap-3 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}><n.icon className="h-[18px] w-[18px]" />{n.label}</NavLink>
+            <NavLink key={n.to} to={n.to} data-testid={`${role}-side-${n.label.toLowerCase().replace(/\s+/g, "-")}`} className={({ isActive }) => cn("flex h-11 items-center justify-between gap-2 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}>
+              <span className="flex items-center gap-3"><n.icon className="h-[18px] w-[18px]" />{n.label}</span>
+              {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white">{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
+            </NavLink>
           ))}
         </nav>
         {role === "owner" && (
@@ -298,7 +322,7 @@ function StaffShellInner({ role }) {
         </header>
         <main className="nb-main-clear mx-auto min-w-0 max-w-[1600px] px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8"><Page><Outlet /></Page></main>
       </div>
-      <FloatingNav items={cfg.nav} more={role === "owner" ? OWNER_MORE.map(([to, label]) => ({ to, label })) : cfg.more} testid={`${role}-bottom`} />
+      <FloatingNav items={cfg.nav} more={role === "owner" ? OWNER_MORE.map(([to, label]) => ({ to, label })) : cfg.more} testid={`${role}-bottom`} badges={badges} />
     </div>
   );
 }

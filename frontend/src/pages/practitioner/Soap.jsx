@@ -5,6 +5,7 @@ import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Pill } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
+import { markDirty, clearDirty } from "@/lib/dirtyForms";
 import { RestrictionList, useSessionReadiness } from "@/components/session/SessionReadiness";
 
 function SoapConsentBanner({ apptId, enabled }) {
@@ -59,16 +60,16 @@ export default function Soap() {
   useEffect(() => {
     const warn = (event) => { if (!dirty.current) return; event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, []);
+    return () => { window.removeEventListener("beforeunload", warn); clearDirty(`soap:${id}`); };
+  }, [id]);
   useEffect(() => {
     if (!dirty.current || signed) return;
-    const t = setTimeout(async () => { const r = await api.saveSoap(id, { ...note, clientId: appt.clientId, practitionerId: appt.practitionerId }); setSaved(r.updatedAt); dirty.current = false; }, 900);
+    const t = setTimeout(async () => { const r = await api.saveSoap(id, { ...note, clientId: appt.clientId, practitionerId: appt.practitionerId }); setSaved(r.updatedAt); dirty.current = false; clearDirty(`soap:${id}`); }, 900);
     return () => clearTimeout(t);
   }, [note]); // eslint-disable-line
   if (!appt) return <p>Not found</p>;
 
-  const upd = (sec, patch) => { dirty.current = true; setNote((n) => ({ ...n, [sec]: { ...n[sec], ...patch } })); };
+  const upd = (sec, patch) => { dirty.current = true; markDirty(`soap:${id}`); setNote((n) => ({ ...n, [sec]: { ...n[sec], ...patch } })); };
   const chip = (sec, c) => upd(sec, { chips: note[sec].chips.includes(c) ? note[sec].chips.filter((x) => x !== c) : [...note[sec].chips, c] });
   const applyTpl = (t) => { dirty.current = true; setNote((n) => Object.fromEntries(["S", "O", "A", "P"].map((k) => [k, { ...n[k], chips: [...new Set([...n[k].chips, ...t[k]])] }]))); };
   const carry = () => { const p = prior[prior.length - 1]; if (!p) return; dirty.current = true; setNote((n) => ({ ...n, S: { ...n.S, chips: [...new Set([...n.S.chips, ...p.S.chips])] }, O: { ...n.O, areas: [...new Set([...(n.O.areas || []), ...(p.O.areas || [])])] } })); };

@@ -165,7 +165,18 @@ async def _audience(db, kind, appt):
     pid = (appt or {}).get("practitionerId")
     if not pid:
         return set()
-    return {u["id"] for u in await db.nt_users.find({"role": {"$in": ["practitioner", "owner"]}, "subject": pid}, {"_id": 0, "id": 1}).to_list(5)}
+    # Dual Owner+Practitioner accounts (e.g. Nabitu) may store practitioner only in roles[].
+    rows = await db.nt_users.find(
+        {
+            "subject": pid,
+            "$or": [
+                {"role": {"$in": ["practitioner", "owner"]}},
+                {"roles": {"$in": ["practitioner", "owner"]}},
+            ],
+        },
+        {"_id": 0, "id": 1},
+    ).to_list(10)
+    return {u["id"] for u in rows}
 
 
 async def notify(db, kind, dedupe, appt=None, **fields):

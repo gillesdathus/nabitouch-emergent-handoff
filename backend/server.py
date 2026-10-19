@@ -41,7 +41,10 @@ from emailer import send_email
 from html import escape
 import asyncio
 from math import radians, sin, cos, asin, sqrt
-from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, profile_photos_enabled, stripe_card_checkout_enabled, validate_env
+from config import (
+    cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider,
+    is_production, practitioner_booking_email_enabled, profile_photos_enabled, stripe_card_checkout_enabled, validate_env,
+)
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
     assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, gps_origin, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
@@ -60,7 +63,8 @@ from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
 from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
-    enqueue_booking_confirmation, enqueue_operational, ensure_notifications, notification_summary, process_available,
+    enqueue_booking_confirmation, enqueue_operational, enqueue_practitioner_notice, ensure_notifications,
+    notification_summary, process_available, resolve_practitioner_account,
     enqueue_email_test, freeze_delivery, enqueue_due_email_reminders, reconcile_pending_email_receipts,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
@@ -338,7 +342,12 @@ def _email_status():
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     return {"provider": email_provider(), "resendKey": bool(key), "sender": sender or None, "replyTo": (os.environ.get("EMAIL_REPLY_TO") or "").strip() or None,
             "webhookSecret": bool((os.environ.get("RESEND_WEBHOOK_SECRET") or "").strip()), "testRecipient": (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip() or None,
-            "types": {"lifecycle": email_lifecycle_enabled(), "invoices": invoice_email_enabled(), "statements": statement_email_enabled()}}
+            "types": {
+                "lifecycle": email_lifecycle_enabled(),
+                "invoices": invoice_email_enabled(),
+                "statements": statement_email_enabled(),
+                "practitionerBooking": practitioner_booking_email_enabled(),
+            }}
 
 
 @api.get("/ops/email/status")
@@ -777,8 +786,10 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
         await record_trip_notice(db, saved, to)
     if to == "cancelled":
         await _maybe_lifecycle_mail(saved, "cancellation")
+        await _queue_practitioner_mail(saved, "practitioner_cancellation")
     if to == "assigned" and saved.get("practitionerId"):
         await _maybe_lifecycle_mail(saved, "assignment")
+        await _queue_practitioner_mail(saved, "practitioner_booking")
     if to in ("completed", "processing", "closed"):
         await settle_appointment_points(db, coll, saved)
     if to == "completed":
@@ -1141,10 +1152,12 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
             await queue_sms(db, coll, "running_late", saved, f"{appt_id}:{upd['delayMin']}", minutes=upd["delayMin"])
     if kind == "rescheduled":
         await _maybe_lifecycle_mail(saved, "reschedule")
+        await _queue_practitioner_mail(saved, "practitioner_reschedule")
         await push_notify(db, "visit_rescheduled", f"{appt_id}:{saved['date']}:{saved['time']}", saved)
         await queue_sms(db, coll, "booking_changed", saved, f"{appt_id}:{saved['date']}:{saved['time']}")
     if kind == "reassigned":
         await _maybe_lifecycle_mail(saved, "assignment")
+        await _queue_practitioner_mail(saved, "practitioner_reassignment")
         await push_notify(db, "visit_assigned", f"{appt_id}:{saved['practitionerId']}", saved)
     return saved
 
@@ -1931,6 +1944,9 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         await award_campaign(db, campaign_reservation, appt["id"], quoted.get("total") or 0, quoted.get("discount") or 0)
     await add_audit(user["name"] if user else (incoming.get("firstName") or "client"), f"{appt['ref']} booked ({appt['source']})", appt["id"])
     await _queue_booking_mail(appt, client_id)
+    if practitioner_id:
+        await _queue_practitioner_mail(appt, "practitioner_booking")
+        await push_notify(db, "visit_assigned", f"{appt['id']}:{practitioner_id}:create", appt)
     tracking = await issue_guest_capability(appt_id) if not user else None
     body = {"appointment": appt, "clientId": client_id}
     if tracking:
@@ -1944,6 +1960,15 @@ async def _queue_booking_mail(appt, client_id):
         await add_audit("system", f"{appt['ref']} confirmation email queued", appt["id"])
 
 
+async def _queue_practitioner_mail(appt, kind):
+    """Queue practitioner operational email when the feature flag is on."""
+    if not practitioner_booking_email_enabled() or not appt.get("practitionerId"):
+        return
+    _note, created = await enqueue_practitioner_notice(db, appt, kind)
+    if created:
+        await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
+
+
 async def _maybe_lifecycle_mail(appt, kind):
     """Queue cancellation, reschedule, or assignment mail only when that flag is on."""
     if not email_lifecycle_enabled() or not appt.get("clientId"):
@@ -1951,6 +1976,51 @@ async def _maybe_lifecycle_mail(appt, kind):
     _note, created = await enqueue_operational(db, appt, appt["clientId"], kind)
     if created:
         await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
+
+
+async def _deliver_practitioner_notice(note):
+    """Practitioner operational email. No clinical notes or health details."""
+    appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
+    if not appt:
+        raise PermanentDelivery("appointment_missing")
+    account = await resolve_practitioner_account(db, note.get("practitionerId") or appt.get("practitionerId"))
+    if not account:
+        raise CancelDelivery("no_recipient")
+    service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID) or {}
+    when = datetime.strptime(f"{appt['date']} {appt['time']}", "%Y-%m-%d %H:%M")
+    pretty = when.strftime("%A, %B %d, %Y at %I:%M %p")
+    brand = escape(os.environ["EMAIL_FROM_NAME"])
+    link = f"{os.environ['APP_URL'].rstrip('/')}/pro/visit/{appt['id']}"
+    location = "In clinic" if appt.get("locationType") == "clinic" else "Mobile / at client"
+    titles = {
+        "practitioner_booking": "New booking assigned to you",
+        "practitioner_cancellation": "A visit was cancelled",
+        "practitioner_reschedule": "A visit was rescheduled",
+        "practitioner_reassignment": "A visit was assigned to you",
+    }
+    title = titles.get(note.get("kind"), "Visit update")
+    rows = [
+        ("Service", f"{service.get('name') or appt.get('serviceSlug')} · {appt.get('duration')} min"),
+        ("When", pretty),
+        ("Where", location),
+        ("Booking ref", appt.get("ref") or ""),
+        ("Status", str(appt.get("status") or "").replace("_", " ")),
+    ]
+    table = "".join(
+        f'<tr><td style="padding:6px 12px 6px 0;color:#6B8296;font-size:13px">{escape(k)}</td>'
+        f'<td style="padding:6px 0;font-size:14px;font-weight:bold">{escape(str(v))}</td></tr>'
+        for k, v in rows
+    )
+    html = (
+        f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
+        f'<p style="font-size:20px;font-weight:bold;margin:0">{brand}</p>'
+        f'<p>Hi {escape(account.get("name") or "there")},</p>'
+        f'<p>{escape(title)}.</p>'
+        f'<table role="presentation" style="margin:12px 0 20px">{table}</table>'
+        f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#1565F0;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Open visit</a></p>'
+        f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Times are America/Edmonton. Clinical notes are not included in this email.</p></td></tr></table>'
+    )
+    return await _send_note(note, to=account["email"], subject=f"{title} — {os.environ['EMAIL_FROM_NAME']}", html=html)
 
 
 async def _send_note(note, *, to, subject, html, idempotency_key=None):
@@ -1997,8 +2067,8 @@ async def _deliver_booking(note):
         return await _deliver_billing(note)
     if note.get("kind") == "statement":
         row = await db.nt_pay_statements.find_one({"id": note.get("statementId")}, NO_ID)
-        account = await db.nt_users.find_one({"role": "practitioner", "subject": (row or {}).get("practitionerId")}, NO_ID) if row else None
-        if not row or not account or not account.get("email") or account["email"].endswith("@example.com"):
+        account = await resolve_practitioner_account(db, (row or {}).get("practitionerId")) if row else None
+        if not row or not account:
             raise CancelDelivery("no_recipient")
         subject, html = statement_email(os.environ["EMAIL_FROM_NAME"], account.get("name") or "there", f"{row['start']} to {row['end']}", row["kpis"][0][1],
                                         f"{os.environ['APP_URL'].rstrip('/')}/pro/earnings")
@@ -2006,6 +2076,8 @@ async def _deliver_booking(note):
             return await _send_note(note, to=account["email"], subject=subject, html=html)
         except HTTPException as exc:
             raise (TransientDelivery("provider_unavailable") if exc.status_code in (408, 429, 500, 503) else PermanentDelivery("provider_rejected")) from exc
+    if note.get("kind") in ("practitioner_booking", "practitioner_cancellation", "practitioner_reschedule", "practitioner_reassignment"):
+        return await _deliver_practitioner_notice(note)
     appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
     if not appt:
         raise PermanentDelivery("appointment_missing")

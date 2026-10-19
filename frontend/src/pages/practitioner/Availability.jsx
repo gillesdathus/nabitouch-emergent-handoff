@@ -79,9 +79,9 @@ export default function Availability({ mode = "pro" }) {
   return (
     <div className="mx-auto max-w-5xl space-y-5" data-testid="availability-page">
       <div>
-        <p className="nb-eyebrow">Schedule</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Availa<span className="font-display font-normal italic nb-gradient-text">bility</span></h1>
-        <p className="text-sm text-nb-mute">Times use Edmonton local time. A new practitioner stays closed until onboarding and the schedule are approved. Existing visits are never cancelled from this screen.</p>
+        <p className="nb-eyebrow">Your calendar</p>
+        <h1 className="text-3xl font-semibold tracking-tight">Sche<span className="font-display font-normal italic nb-gradient-text">dule</span></h1>
+        <p className="text-sm text-nb-mute">You control your hours here. Times use Edmonton local time. Reception may assist when authorized. Existing visits are never cancelled from this screen.</p>
       </div>
       {mode === "owner" && (
         <label className="block text-sm"><span className="nb-label">Practitioner</span>

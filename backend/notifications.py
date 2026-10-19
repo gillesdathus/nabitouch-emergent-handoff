@@ -159,7 +159,76 @@ async def enqueue_booking_confirmation(db, appt, client_id):
 
 
 OPERATIONAL_KINDS = {"cancellation", "reschedule", "assignment", "reminder_24h", "reminder_2h", "review_invite"}
+PRACTITIONER_KINDS = {
+    "practitioner_booking",
+    "practitioner_cancellation",
+    "practitioner_reschedule",
+    "practitioner_reassignment",
+}
 BILLING_KINDS = {"invoice", "receipt", "payment_link", "billing_update"}
+
+
+async def resolve_practitioner_account(db, practitioner_id):
+    """Login email for the assigned practitioner. Supports dual Owner+Practitioner accounts."""
+    if not practitioner_id:
+        return None
+    account = await db.nt_users.find_one(
+        {
+            "subject": practitioner_id,
+            "$or": [
+                {"role": {"$in": ["practitioner", "owner"]}},
+                {"roles": {"$in": ["practitioner", "owner"]}},
+            ],
+            "status": {"$ne": "disabled"},
+        },
+        {"_id": 0, "id": 1, "email": 1, "name": 1, "role": 1, "roles": 1, "subject": 1},
+    )
+    if not account:
+        return None
+    email = str(account.get("email") or "").strip().lower()
+    if not email or email.endswith("@example.com"):
+        return None
+    return account
+
+
+async def enqueue_practitioner_notice(db, appt, kind):
+    """Queue one practitioner operational email. Deduped per visit stamp + kind."""
+    if kind not in PRACTITIONER_KINDS:
+        raise ValueError("Unknown practitioner email")
+    practitioner_id = appt.get("practitionerId")
+    if not practitioner_id:
+        return None, False
+    now = _iso()
+    stamp = f"{appt.get('date')}:{appt.get('time')}:{practitioner_id}:{appt.get('status')}"
+    doc = {
+        "id": "ntf-" + uuid.uuid4().hex[:16],
+        "dedupeKey": f"{kind}:{appt['id']}:{stamp}",
+        "kind": kind,
+        "appointmentId": appt["id"],
+        "ref": appt.get("ref"),
+        "clientId": appt.get("clientId"),
+        "practitionerId": practitioner_id,
+        "recipientRole": "practitioner",
+        "status": PENDING,
+        "attempts": 0,
+        "maxAttempts": max_attempts(),
+        "nextAttemptAt": now,
+        "leaseUntil": None,
+        "leaseOwner": None,
+        "providerId": None,
+        "providerAcceptedAt": None,
+        "deliveredAt": None,
+        "lastError": None,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    try:
+        await db.nt_notifications.insert_one(dict(doc))
+    except DuplicateKeyError:
+        found = await db.nt_notifications.find_one({"dedupeKey": doc["dedupeKey"]}, {"_id": 0})
+        return found, False
+    doc.pop("_id", None)
+    return doc, True
 
 
 async def enqueue_billing(db, invoice, kind, key):
