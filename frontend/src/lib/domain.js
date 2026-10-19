@@ -28,7 +28,12 @@ export function servicePublication(service) {
 }
 
 export function bookableCatalogueService(service) {
+  if (!service || service.kind === "trial" || service.slug === "ten-minutes-on-us") return false;
   return servicePublication(service) === "published";
+}
+
+export function isTrialService(service) {
+  return Boolean(service && (service.kind === "trial" || service.slug === "ten-minutes-on-us"));
 }
 
 export function managedMediaPath(src, size) {

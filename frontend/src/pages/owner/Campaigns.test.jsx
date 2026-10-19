@@ -24,6 +24,7 @@ test("flash campaigns stay closed until create is chosen", async () => {
   expect(host.querySelector("[data-testid='campaign-form']")).toBeNull();
   expect(host.querySelector("[data-testid='campaign-create']")).toBeTruthy();
   expect(host.querySelector("[data-testid='campaign-ten-minutes']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='campaign-ten-minutes']").textContent).toContain("10 Minutes. On Us.");
   expect(host.querySelector("[data-testid='campaign-empty']").textContent).toContain("No flash campaigns");
   await act(async () => { host.querySelector("[data-testid='campaign-create']").click(); });
   expect(document.body.querySelector("[data-testid='campaign-editor']")).toBeTruthy();

@@ -76,7 +76,8 @@ def test_launch_seed_has_catalogue_and_no_patients():
     assert fee["published"] is False and fee["effectiveOn"] is None
     assert seed["settings"][0]["recovery"]["exclusiveMinutes"] == 20
     assert "revenueTrend" not in seed["settings"][0]
-    assert len(seed["services"]) == 10
+    assert len(seed["services"]) == 11
+    assert any(row.get("slug") == "ten-minutes-on-us" and row.get("kind") == "trial" for row in seed["services"])
     assert [zone["fee"] for zone in seed["zones"]] == [0, 15, 30]
     swedish = next(service for service in seed["services"] if service["slug"] == "swedish")
     assert swedish["prices"]["60"] == 120

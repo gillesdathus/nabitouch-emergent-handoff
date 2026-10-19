@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui-kit";
 import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
-import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice } from "@/lib/domain";
+import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
 
@@ -64,23 +64,29 @@ export function StepWhere() {
 export function StepService() {
   const { draft, patchDraft, state, idx } = useDemo();
   const s = idx.services[draft.serviceSlug];
+  const trialFlow = Boolean(draft.campaignId && isTrialService(s));
+  const visible = state.services.filter((x) => {
+    if (trialFlow && x.slug === draft.serviceSlug) return true;
+    if (isTrialService(x)) return false;
+    return bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile);
+  });
   return (
     <div>
-      <H t="Choose your treatment" s="The total is confirmed before you book." />
+      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "The total is confirmed before you book."} />
       <div className="grid gap-3 sm:grid-cols-2">
-        {state.services.filter((x) => bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile)).map((x) => (
-          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }))}>
+        {visible.map((x) => (
+          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => !trialFlow && patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }))}>
             <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" loading="lazy" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{x.name}</p><p className="line-clamp-2 text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="h-5 w-5 shrink-0 text-nb-blue" />}</div>
           </Tile>))}
       </div>
       {s && (
         <div className="mt-8 space-y-6">
           <div><p className="nb-label">Duration</p><div className="grid grid-cols-3 gap-2">
-            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => patchDraft({ duration: Number(d), time: null, idempotencyKey: undefined, checkoutSessionId: null, checkoutAmountCents: null, depositCents: null, invoiceId: null })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{money(p)}</span></Tile>)}
+            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => !trialFlow && patchDraft({ duration: Number(d), time: null, idempotencyKey: undefined, checkoutSessionId: null, checkoutAmountCents: null, depositCents: null, invoiceId: null })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span></Tile>)}
           </div></div>
-          <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
+          {!trialFlow && <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
             {idx.settings.addons.map((a) => <button key={a.id} onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>{a.name} · +{money(a.price)}</button>)}
-          </div></div>
+          </div></div>}
         </div>
       )}
     </div>
@@ -90,7 +96,12 @@ export function StepService() {
 export function StepWhen() {
   const { draft, patchDraft, state, api } = useDemo();
   const days = Array.from({ length: 10 }, (_, i) => addDays(todayISO(), i));
-  const pros = state.practitioners.filter((person) => publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug)));
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
+  const pros = state.practitioners.filter((person) => {
+    if (draft.practitionerId && person.id === draft.practitionerId) return true;
+    return publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug) || trialFlow);
+  });
   const held = state.practitioners.find((person) => person.id === draft.practitionerId);
   const date = draft.date || days[0];
   const [slots, setSlots] = useState([]);
@@ -202,11 +213,21 @@ export function StepYou() {
 }
 
 export function StepPay() {
-  const { draft, patchDraft, idx } = useDemo();
+  const { draft, patchDraft, idx, state } = useDemo();
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   const policy = idx.settings.paymentPolicy || {};
   const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
   const selected = paymentChoice(draft, idx.settings);
   const choose = (payNow) => patchDraft({ paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card" });
+  if (trialFlow) {
+    return (
+      <div data-testid="step-pay-trial">
+        <H t="No payment for this trial" s="10 Minutes. On Us. is free. Neck and shoulders only." />
+        <p className="rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy">$0 due now. After your trial you can book a regular massage — any eligible first-booking welcome offer is preserved.</p>
+      </div>
+    );
+  }
   return (
     <div>
       <H t="How would you like to pay?" s="The appointment total is calculated first. What you pay now depends on the payment policy." />

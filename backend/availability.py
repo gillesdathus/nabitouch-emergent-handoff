@@ -632,18 +632,21 @@ def draft_schedule(practitioner_id):
 
 
 def launch_practitioner():
+    from trial import TRIAL_SERVICE_SLUG
+
     return {
         "id": "p-nabitu-kahindo",
         "name": "Nabitu Kahindo",
         "initials": "NK",
         "color": "#1565F0",
         "isOwner": False,
-        "specialties": [],
+        # Trial specialty is catalogued only — available/bookable stay false until owner authorizes.
+        "specialties": [TRIAL_SERVICE_SLUG],
         "available": False,
         "onboardingStatus": "draft",
         "bookable": False,
         "mobile": True,
-        "clinic": False,
+        "clinic": True,
         "directBilling": False,
         "bio": "",
     }

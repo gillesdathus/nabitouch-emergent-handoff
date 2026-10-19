@@ -55,11 +55,51 @@ export default function Offers() {
     }
   };
 
+  const trialOffers = campaigns.filter((row) => row.offerKind === "trial");
+  const flashOffers = campaigns.filter((row) => row.offerKind !== "trial");
+
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-5 pt-6" data-testid="client-offers">
+      {trialOffers.length > 0 && (
+        <section className="space-y-3" data-testid="trial-offers">
+          <PageHeader eyebrow="Meet Nabitouch" title="10 Minutes. On Us." sub="Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." />
+          {trialOffers.map((row, index) => {
+            const ms = left(row.expiresAt, serverTime, fetchedAt);
+            const expired = ms <= 0;
+            return (
+              <Reveal key={row.id} i={index} className="nb-card overflow-hidden">
+                <article data-testid={`offer-${row.id}`} className="p-5">
+                  <p className="text-lg font-semibold" data-testid={`trial-title-${row.id}`}>{row.headline || row.title || "10 Minutes. On Us."}</p>
+                  <p className="text-sm text-nb-mute" data-testid={`trial-subhead-${row.id}`}>{row.subhead || "Free 10-minute neck-and-shoulder massage."}</p>
+                  <p className="mt-1 text-sm text-nb-mute">{row.body || row.description || "Meet your massage therapist and experience Nabitouch."}</p>
+                  <p className="mt-2 text-sm text-nb-mute">$0 · {row.durationMinutes || row.complimentaryMinutes || 10} min · neck and shoulders · {(row.locationTypes || ["clinic"]).join(", ")}</p>
+                  <p className="text-sm" data-testid={`offer-spots-${row.id}`}>{row.soldOut ? "Fully booked" : expired ? "Offer ended" : `${row.remaining} openings left`}</p>
+                  {!expired && !row.soldOut && (
+                    <Link
+                      to="/book"
+                      className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm"
+                      data-testid={`offer-book-${row.id}`}
+                      onClick={() => patchDraft({
+                        campaignId: row.id,
+                        serviceSlug: row.serviceSlug || "ten-minutes-on-us",
+                        duration: row.durationMinutes || row.complimentaryMinutes || 10,
+                        locationType: (row.locationTypes || ["clinic"])[0] || "clinic",
+                        practitionerId: row.practitionerId || undefined,
+                        date: row.bookingStart,
+                        idempotencyKey: `cmp-${row.id}-${Date.now()}`,
+                      })}
+                    >Book your free trial</Link>
+                  )}
+                </article>
+              </Reveal>
+            );
+          })}
+        </section>
+      )}
       <PageHeader eyebrow="Flash booking" title="Last-minute openings" sub="Times and remaining spots come from Nabitouch. The countdown displays the server expiry." />
-      {campaigns.length === 0 && <EmptyState icon={Zap} title="No live offers right now" body="When an opening is published it appears here first." testid="offers-empty" />}
-      {campaigns.map((row, index) => {
+      {flashOffers.length === 0 && trialOffers.length === 0 && <EmptyState icon={Zap} title="No live offers right now" body="When an opening is published it appears here first." testid="offers-empty" />}
+      {flashOffers.length === 0 && trialOffers.length > 0 && <p className="text-sm text-nb-mute" data-testid="flash-offers-empty">No flash openings right now.</p>}
+      {flashOffers.map((row, index) => {
         const ms = left(row.expiresAt, serverTime, fetchedAt);
         const expired = ms <= 0;
         return (

@@ -49,7 +49,8 @@ from availability import (
 )
 from payment_policy import due_for_booking, resolve_payment_policy
 from recovery import (
-    apply_campaign_price, award_campaign, build_recovery_router, campaign_quote, consume_recovery_hold, release_campaign, reserve_campaign, validate_fee,
+    apply_campaign_price, award_campaign, build_recovery_router, campaign_quote, consume_recovery_hold,
+    release_campaign, release_campaign_for_appointment, reserve_campaign, validate_fee,
 )
 from pricing import (
     BLOCKING_STATUSES, client_matches_person, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
@@ -64,6 +65,10 @@ from notifications import (
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
+from trial import (
+    TRIAL_DURATION_MIN, TRIAL_SERVICE_SLUG, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
+    trial_duration_ok,
+)
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
 from devices import build_devices_router, ensure_devices, notify as push_notify
@@ -230,6 +235,7 @@ async def lifespan(_app):
     await ensure_notifications(db)
     await ensure_messaging(db)
     await ensure_giftcards(db)
+    await ensure_trial_service(db)
     await ensure_plans(db)
     await ensure_safety(db)
     await ensure_devices(db)
@@ -784,6 +790,7 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
         await consume_credit(db, appt["id"], actor)
     if to == "cancelled":
         await release_credit(db, appt["id"], actor, "Visit cancelled")
+        await release_campaign_for_appointment(db, appt["id"])
     if to in ("completed", "cancelled", "no_show"):
         await settle_invite(db, appt["id"], to)
         await settle_followup(db, appt["id"], to)
@@ -1457,6 +1464,27 @@ async def price_welcome(*, service, duration, addons, zone, client, incoming, pr
     return person, offers, quoted
 
 
+async def bind_trial_campaign(payload):
+    """Force standalone trial fields from the campaign. Never invent prices or flip practitioner availability."""
+    campaign_id = payload.get("campaignId")
+    if not campaign_id:
+        return payload, None
+    campaign = await db.nt_campaigns.find_one({"id": campaign_id}, NO_ID)
+    if not campaign or not is_trial_offer(campaign):
+        return payload, campaign
+    appointment = dict(payload.get("appointment") or {})
+    appointment["serviceSlug"] = campaign.get("serviceSlug") or TRIAL_SERVICE_SLUG
+    appointment["duration"] = int(campaign.get("durationMinutes") or campaign.get("complimentaryMinutes") or TRIAL_DURATION_MIN)
+    locations = campaign.get("locationTypes") or ["clinic"]
+    if appointment.get("locationType") not in locations:
+        appointment["locationType"] = locations[0]
+    appointment["addonIds"] = []
+    bound = {**payload, "appointment": appointment, "useCredit": False, "redeemPoints": None, "winbackCode": None, "followupCode": None}
+    if campaign.get("practitionerId"):
+        bound["practitionerId"] = campaign["practitionerId"]
+    return bound, campaign
+
+
 async def resolve_booking(payload, user):
     """Read the catalogue and appointment history and return a server quote. This does not reserve the offer."""
     incoming = payload.get("client") or {}
@@ -1470,6 +1498,7 @@ async def resolve_booking(payload, user):
         incoming = {"id": user["subject"]}
     elif (not user) and incoming.get("id"):
         raise HTTPException(403, "Sign in to book for an existing profile")
+    payload, trial_campaign = await bind_trial_campaign(payload)
     fields = payload.get("appointment") or {}
     service = await coll("services").find_one({"slug": fields.get("serviceSlug")}, NO_ID)
     duration = fields.get("duration")
@@ -1477,6 +1506,9 @@ async def resolve_booking(payload, user):
     reason = booking_block_reason(service, duration, location)
     if reason:
         raise HTTPException(400, reason)
+    trial_visit = bool(trial_campaign) or is_trial_service(service)
+    if trial_visit and not trial_duration_ok(duration):
+        raise HTTPException(400, "The trial visit is exactly 10 minutes")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fields.get("date") or "")) or not re.fullmatch(r"\d{2}:\d{2}", str(fields.get("time") or "")):
         raise HTTPException(400, "Choose a date and time")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
@@ -1517,6 +1549,10 @@ async def resolve_booking(payload, user):
     credit = None
     invite = None
     followup = None
+    if trial_visit:
+        if use_credit or payload.get("winbackCode") or payload.get("followupCode") or payload.get("redeemPoints"):
+            raise HTTPException(409, "The free trial does not combine with credits, rewards, or other offers")
+        promotions = []
     if payload.get("winbackCode") and payload.get("followupCode"):
         raise HTTPException(409, "Welcome-back and follow-up codes do not combine")
     if payload.get("winbackCode"):
@@ -1536,6 +1572,8 @@ async def resolve_booking(payload, user):
     if use_credit:
         if not client:
             raise HTTPException(400, "Sign in to use a package credit")
+        if is_trial_service(service):
+            raise HTTPException(409, "Package credits do not apply to the free trial")
         credit = await available_credit(db, client["id"], service["slug"], duration)
         if not credit:
             raise HTTPException(409, "No package credit is available for this treatment")
@@ -1544,6 +1582,26 @@ async def resolve_booking(payload, user):
         service=service, duration=duration, addons=fields.get("addonIds") or [], zone=zone, client=client,
         incoming=incoming, promotions=promotions, settings=settings, location=location, km=km, source=source,
     )
+    if trial_visit:
+        quoted = {
+            **quoted,
+            "discount": 0,
+            "appliedPromoIds": [],
+            "promoId": None,
+            "promoName": None,
+            "promoCode": None,
+            "welcomeOffer": False,
+            "addons": 0,
+            "addonList": [],
+            "travel": 0,
+            "tax": 0,
+            "total": 0,
+            "base": 0,
+            "treatmentAfterDiscount": 0,
+            "campaignOfferKind": "trial",
+            "complimentaryMinutes": TRIAL_DURATION_MIN,
+            "campaignTitle": (trial_campaign or {}).get("title") or "10 Minutes. On Us.",
+        }
     if invite:
         quoted = winback_quote(quoted, float(invite["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     if followup:
@@ -1564,6 +1622,8 @@ async def resolve_booking(payload, user):
         "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit),
         "winbackCode": invite["code"] if invite else None,
         "followupCode": followup["code"] if followup else None,
+        "trialVisit": trial_visit,
+        "trialCampaign": trial_campaign,
     }
 
 
@@ -1582,13 +1642,22 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
             if offer.get("complimentaryMinutes"):
                 pricing["complimentaryMinutes"] = offer["complimentaryMinutes"]
             pricing = apply_campaign_price(pricing, offer, ctx["settings"].get("gst", 0.05), offer.get("stackable"))
+    if ctx.get("trialVisit"):
+        pricing = {
+            **pricing,
+            "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0, "discount": 0,
+            "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN,
+            "campaignTitle": pricing.get("campaignTitle") or "10 Minutes. On Us.",
+            "campaignId": payload.get("campaignId"),
+        }
     try:
-        due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"])
+        due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"]) if float(pricing.get("total") or 0) > 0 else None
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {
         "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")), "packageCredit": bool(pricing.get("packageCredit")),
-        "settlement": due, "paymentPolicy": ctx.get("paymentPolicy"),
+        "settlement": due, "paymentPolicy": ctx.get("paymentPolicy"), "trialVisit": bool(ctx.get("trialVisit")),
+        "paymentRequired": False if ctx.get("trialVisit") else bool(due and due.get("dueNowCents")),
     }
 
 
@@ -1620,10 +1689,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     person = ctx["person"]
     promotions = ctx["promotions"]
     quoted = ctx["quoted"]
+    trial_visit = bool(ctx.get("trialVisit"))
     claimed_ids = []
     counted_online = False
     welcome_token = None
-    if quoted.get("welcomeOffer"):
+    if quoted.get("welcomeOffer") and not trial_visit:
         keys = identity_keys(person)
         token = uuid.uuid4().hex if keys else None
         if not keys or not await claim_welcome(keys, token):
@@ -1635,7 +1705,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             )
         else:
             welcome_token = token
-    if source == "online" and client:
+    if source == "online" and client and not trial_visit:
         await clients.update_one({"id": client["id"]}, {"$inc": {"onlineBookings": 1}})
         counted_online = True
     applied = promotion_rows(promotions, quoted["appliedPromoIds"])
@@ -1661,7 +1731,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         client = {"id": client_id, "firstName": incoming.get("firstName") or "Guest", "lastName": incoming.get("lastName") or "",
                   "email": str(incoming.get("email") or "").lower(), "phone": incoming.get("phone") or "", "dob": incoming.get("dob") or "",
                   "marketingConsent": bool(incoming.get("marketingConsent")), "smsConsent": bool(incoming.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [],
-                  "preferredPractitioners": [], "loyaltyPoints": 0, "onlineBookings": 1 if source == "online" else 0,
+                  "preferredPractitioners": [], "loyaltyPoints": 0, "onlineBookings": 0 if trial_visit else (1 if source == "online" else 0),
                   "hasProfile": False, "createdAt": now_iso()}
         await clients.insert_one(dict(client))
     else:
@@ -1684,7 +1754,8 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             if counted_online:
                 await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
             raise
-        if campaign_reservation and quoted.get("welcomeOffer"):
+        if campaign_reservation and quoted.get("welcomeOffer") and not trial_visit:
+            # Flash discounts yield to the first-booking welcome offer.
             await release_campaign(db, campaign_reservation)
             campaign_reservation = None
         elif campaign_reservation:
@@ -1697,6 +1768,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             if campaign_reservation.get("complimentaryMinutes"):
                 quoted["complimentaryMinutes"] = campaign_reservation["complimentaryMinutes"]
             quoted = apply_campaign_price(quoted, campaign_reservation, settings.get("gst", 0.05), campaign_reservation.get("stackable"))
+            if trial_visit or is_trial_offer(campaign_reservation):
+                quoted = {
+                    **quoted, "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0,
+                    "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN,
+                }
     appt_id = f"a-{uuid.uuid4().hex[:8]}"
     loyalty_points = 0
     if (ctx.get("useCredit") or ctx.get("winbackCode") or ctx.get("followupCode")) and (payload.get("redeemPoints") or campaign_reservation):
@@ -1744,21 +1820,34 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes") if k in quoted},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes", "campaignTitle") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
             ([{"status": "assigned", "at": ts, "actor": "system"}] if status == "assigned" else []),
             "timestamps": {"requested": ts, **({"assigned": ts} if status == "assigned" else {})},
             "soapStatus": "none", "timer": {"pausedMs": 0}, "source": source, "createdAt": ts, "payments": []}
+    if trial_visit:
+        appt["appointmentKind"] = "trial"
+        appt["treatmentScope"] = (service or {}).get("treatmentScope") or "neck_shoulders"
+        appt["countsAsRevenue"] = False
+        appt["paymentStatus"] = "waived"
+        quoted["total"] = 0
+        quoted["tax"] = 0
+        appt["pricing"] = {**appt["pricing"], "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0,
+                           "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN}
     if idem:
         appt["idempotencyKey"] = f"{client_id}:{idem}"
-    is_ins = appt["paymentMethod"] == "insurance"
+    is_ins = appt["paymentMethod"] == "insurance" and not trial_visit
+    if trial_visit:
+        appt["paymentMethod"] = "self"
+        appt["selfMethod"] = None
+        appt["payNow"] = None
     appt["claim"] = {"status": "verification_pending" if is_ins else "none",
                      "eligible": claim_eligible(appt["pricing"], settings.get("gst", 0.05)) if is_ins else 0,
                      "approved": 0, "insurerPayment": "none", "insurerPaid": 0, "history": []}
     try:
-        due = due_for_booking(quoted["total"], ctx["paymentPolicy"], fields)
+        due = None if trial_visit or float(quoted.get("total") or 0) <= 0 else due_for_booking(quoted["total"], ctx["paymentPolicy"], fields)
     except ValueError as exc:
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)

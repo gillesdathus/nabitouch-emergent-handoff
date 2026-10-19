@@ -70,7 +70,7 @@ export default function Marketing() {
             <Zap className="h-5 w-5 text-nb-coral" />
             <div className="flex-1">
               <p className="font-semibold">Flash & acquisition campaigns</p>
-              <p className="text-sm text-nb-mute">Percent, fixed, or complimentary clinic sessions. Create “10 Minutes. On Us.” as a draft from the campaigns desk.</p>
+              <p className="text-sm text-nb-mute">Flash openings use percent or fixed discounts. Create “10 Minutes. On Us.” as a separate free standalone trial draft from the campaigns desk — it is not a flash add-on.</p>
             </div>
             <Link to="/owner/campaigns" className="nb-btn-primary h-10 px-4 text-sm" data-testid="marketing-open-campaigns">Open campaigns</Link>
           </div>

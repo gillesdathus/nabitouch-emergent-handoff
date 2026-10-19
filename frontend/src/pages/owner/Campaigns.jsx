@@ -149,6 +149,7 @@ export default function Campaigns() {
     return { base, offer: Math.round(base * (100 - Number(form.discountPercent || 0))) / 100 };
   };
   const offerLabel = (row) => {
+    if (row.offerKind === "trial") return `Standalone trial · ${row.durationMinutes || row.complimentaryMinutes || 10} min · $0`;
     if (row.offerKind === "complimentary") return `Complimentary ${row.complimentaryMinutes || 10} min (clinic)`;
     if (row.offerKind === "fixed") return `$${Number(row.discountFixed || 0)} off`;
     return `${row.discountPercent || 0}% off the treatment`;
@@ -163,7 +164,7 @@ export default function Campaigns() {
           <p className="mt-1 text-sm text-nb-mute" data-testid="campaign-sending">{sending ? "Promotional sending is on." : "Promotional sending is off. A live campaign can be booked in the app, and no commercial message is sent."}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="nb-btn-ghost h-11 px-4" onClick={createTenMinutes} data-testid="campaign-ten-minutes">Create 10 Minutes. On Us. (draft)</button>
+          <button type="button" className="nb-btn-ghost h-11 px-4" onClick={createTenMinutes} data-testid="campaign-ten-minutes">Create 10 Minutes. On Us. trial (draft)</button>
           <button type="button" className="nb-btn-primary h-11 px-4" onClick={openNew} data-testid="campaign-create"><Plus className="h-4 w-4" />Create campaign</button>
         </div>
       </header>
@@ -243,9 +244,16 @@ export default function Campaigns() {
                   }} data-testid="campaign-offer-kind">
                     <option value="percent">Percent off</option>
                     <option value="fixed">Fixed amount off</option>
-                    <option value="complimentary">Complimentary session</option>
+                    <option value="complimentary">Complimentary session (legacy flash)</option>
+                    <option value="trial">Standalone trial (10 Minutes. On Us.)</option>
                   </select>
                 </label>
+                {editor.offerKind === "trial" && (
+                  <p className="text-xs text-nb-mute" data-testid="campaign-trial-note">
+                    Free standalone 10-minute neck-and-shoulder visit at $0. Does not consume the first-booking welcome offer.
+                    Capacity, audience, location, and channel stay editable below — set them before going live. This does not activate Nabitu&apos;s booking status.
+                  </p>
+                )}
                 <label className="block text-sm">Service
                   <select className="nb-input" value={editor.serviceSlug} onChange={(event) => setEditor({ ...editor, serviceSlug: event.target.value })} data-testid="campaign-service">
                     <option value="all">All services</option>

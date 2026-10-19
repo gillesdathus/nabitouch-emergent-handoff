@@ -101,10 +101,18 @@ def welcome_history_blocks(appointments):
     A no-show blocks as well: the visit was not released.
     Cancelled and refunded appointments block only when that visit already received the welcome benefit.
     A cancelled or refunded visit that never received it leaves the person eligible.
+    Free standalone trial appointments never consume first-regular-booking eligibility.
     """
+    from trial import is_trial_appointment
+
     for appt in appointments or []:
         status = str((appt or {}).get("status") or "")
         if not status:
+            continue
+        if is_trial_appointment(appt):
+            # Trial is lead acquisition only; welcome stays for the first regular booking.
+            if welcome_claimed(appt):
+                return True
             continue
         if welcome_claimed(appt):
             return True

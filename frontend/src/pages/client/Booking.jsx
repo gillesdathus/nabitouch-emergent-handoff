@@ -11,7 +11,7 @@ import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepWhen, StepYou, StepPay } from "./BookingSteps";
 import { Stepper } from "@/components/tide";
-import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferListed, paymentChoice, clinicBookable } from "@/lib/domain";
+import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferListed, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import {
   addressReady,
@@ -212,12 +212,13 @@ export default function Booking() {
       .catch((error) => { if (!stop) setQuoteNote(apiError(error)); });
     return () => { stop = true; };
   }, [quoteKey, api]);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(service));
   const ok = [
     (draft.locationType === "clinic" ? clinicBookable(idx.settings.clinic) : (!!zr?.zone && draft.address?.clientConfirmed === true)),
     !!service && !!service.prices[String(draft.duration)],
     !!draft.date && !!draft.time,
     !!me || (g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone && (!g.createProfile || (g.dob && (g.password || "").length >= 8))),
-    !!paymentChoice(draft, idx.settings),
+    trialFlow || !!paymentChoice(draft, idx.settings),
     true,
   ];
   const go = (n) => {
@@ -234,7 +235,7 @@ export default function Booking() {
     setSubmitting(true);
     try {
       let pid = draft.practitionerId || null;
-      const payNow = paymentChoice(draft, idx.settings);
+      const payNow = trialFlow ? undefined : paymentChoice(draft, idx.settings);
       const clinicPin = idx.settings.clinic || {};
       const address = draft.locationType === "clinic" ? { line: clinicPin.address, zoneId: null, ...(Number.isFinite(Number(clinicPin.lat)) && Number.isFinite(Number(clinicPin.lng)) && clinicPin.lat !== "" && clinicPin.lng !== "" ? { lat: Number(clinicPin.lat), lng: Number(clinicPin.lng) } : {}) } : { ...draft.address, zoneId: zr?.zone?.id, notes: draft.addressNotes };
       const client = me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, preferredName: "", email: g.email, phone: g.phone, dob: g.dob, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, hasProfile: g.createProfile, language: "English", contactMethod: "Text", addresses: [{ ...address, id: "ad-1", label: LOCATION_TYPES.find((l) => l.id === draft.locationType).label.replace("My ", "") }], insurance: draft.pendingInsurance ? [draft.pendingInsurance] : [], favorites: [draft.serviceSlug], preferredPractitioners: [], emergencyContact: "", photo: null };
@@ -244,13 +245,13 @@ export default function Booking() {
       }
       const res = await run(() => api.book({
         client, practitionerId: pid, actor: me ? fullNameOf(me) : `${g.firstName} (guest)`,
-        useCredit,
-        winbackCode,
-        followupCode,
+        useCredit: trialFlow ? false : useCredit,
+        winbackCode: trialFlow ? undefined : winbackCode,
+        followupCode: trialFlow ? undefined : followupCode,
         campaignId: useCredit || winbackCode || followupCode ? undefined : draft.campaignId || undefined,
         recoveryCaseId: draft.recoveryCaseId || undefined,
         idempotencyKey: draft.idempotencyKey || undefined,
-        appointment: { serviceSlug: draft.serviceSlug, duration: draft.duration, date: draft.date, time: draft.time, locationType: draft.locationType, address, addonIds: draft.addons, paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card", preferences: { goals: draft.goals, focus: draft.focus, notes: draft.notes }, checkedIn: false, feedback: null },
+        appointment: { serviceSlug: draft.serviceSlug, duration: draft.duration, date: draft.date, time: draft.time, locationType: draft.locationType, address, addonIds: trialFlow ? [] : draft.addons, paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : (payNow ? "card" : undefined), preferences: { goals: draft.goals, focus: draft.focus, notes: draft.notes }, checkedIn: false, feedback: null },
       }));
       setDone(res.appointment);
       setGuestTrack(res.trackingCapability || null);
@@ -262,16 +263,25 @@ export default function Booking() {
     const listed = state.appointments.find((a) => a.id === done.id);
     const live = listed?.serviceSlug ? listed : done;
     const firstBooking = (idx.clients[live.clientId]?.onlineBookings || 1) <= 1;
+    const trialVisit = live.appointmentKind === "trial" || live.pricing?.campaignOfferKind === "trial" || live.serviceSlug === "ten-minutes-on-us";
     return (
       <div className="mx-auto max-w-xl px-5 py-14 text-center" data-testid="booking-confirmation">
         <SuccessMark size={84} />
         <h1 className="mt-6 text-3xl font-semibold tracking-tight">Request <span className="font-display font-normal italic nb-gradient-text">received</span></h1>
-        <p className="mt-2 text-nb-mute">Reference <b data-testid="booking-ref">{live.ref}</b> · {idx.services[live.serviceSlug].name}, {live.duration} min · {fmtDate(live.date)} at {fmtTime(live.time)}</p>
+        <p className="mt-2 text-nb-mute">Reference <b data-testid="booking-ref">{live.ref}</b> · {idx.services[live.serviceSlug]?.name || live.serviceSlug}, {live.duration} min · {fmtDate(live.date)} at {fmtTime(live.time)}</p>
+        {trialVisit && <p className="mt-2 text-sm text-nb-teal" data-testid="confirmation-trial">10 Minutes. On Us. — free neck-and-shoulder trial. No payment due.</p>}
         {(live.status === "requested" || !live.practitionerId) && <p className="mt-2 text-sm" data-testid="booking-unassigned">This is a booking request. A practitioner has not been assigned.</p>}
-        <div className="nb-card mt-8 p-5 text-left"><ClientTracker appt={live} /><div className="mt-5"><Breakdown q={live.pricing} settlement={live.paymentDue} /></div>{live.pricing?.welcomeOffer && <p className="mt-3 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>}<p className="mt-3 text-xs text-nb-mute" data-testid="booking-settlement-note">{live.payNow === "cash" ? "This confirms the appointment request, not a payment. Cash is due at the visit and this booking is not prepaid." : "This confirms the appointment request, not a payment. Online card payment is recorded only after Stripe verifies it."}</p></div>
+        <div className="nb-card mt-8 p-5 text-left"><ClientTracker appt={live} /><div className="mt-5"><Breakdown q={live.pricing} settlement={live.paymentDue} /></div>{live.pricing?.welcomeOffer && <p className="mt-3 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>}{!trialVisit && <p className="mt-3 text-xs text-nb-mute" data-testid="booking-settlement-note">{live.payNow === "cash" ? "This confirms the appointment request, not a payment. Cash is due at the visit and this booking is not prepaid." : "This confirms the appointment request, not a payment. Online card payment is recorded only after Stripe verifies it."}</p>}</div>
         <p className="mt-4 text-xs text-nb-mute">This environment does not send a confirmation text or email.</p>
         {guestTrack?.token && <p className="mt-3 text-sm"><Link to={{ pathname: "/track", hash: guestTrack.token }} data-testid="guest-tracking-link">Follow this visit</Link> <span className="text-xs text-nb-mute">This link expires in two hours and only shows this appointment while location sharing is on.</span></p>}
-        {firstBooking && <InstallCard />}
+        {firstBooking && !trialVisit && <InstallCard />}
+        {trialVisit && (
+          <div className="nb-card mt-6 p-5 text-left" data-testid="trial-next-cta">
+            <p className="font-semibold">Ready for a full massage?</p>
+            <p className="mt-1 text-sm text-nb-mute">Book a regular session when you are ready. Your first-booking welcome offer stays available for an eligible regular booking.</p>
+            <Link to="/book" className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm" data-testid="trial-book-regular">Book a regular massage</Link>
+          </div>
+        )}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link to="/me" data-testid="confirmation-view-visit-btn" className="nb-btn-primary">View my visit</Link>
           <Link to="/" data-testid="confirmation-home-btn" className="nb-btn-ghost h-12">Back home</Link>

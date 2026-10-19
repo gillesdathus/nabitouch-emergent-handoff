@@ -7,6 +7,7 @@ from pricing import launch_welcome_offer
 from rewards import launch_rewards
 from config import is_production
 from payments import with_settle, claim_eligible
+from trial import launch_trial_service
 
 TZ = ZoneInfo("America/Edmonton")
 
@@ -63,6 +64,8 @@ SERVICES = [
       "Lighter pressure, flexible positioning (including seated) and unhurried pacing for older adults — in the comfort of their own home or residence.",
       ["May support comfort and circulation", "Can ease stiffness gently", "Seated or bed-side options"],
       ["Gentle comfort", "Mobility", "Companionship & calm"], {"30": 65, "60": 115}, "/img/senior.jpg"),
+    # Standalone acquisition trial — not a flash discount, add-on, or paid regular service.
+    launch_trial_service(),
 ]
 
 PRACTITIONERS = [

@@ -153,18 +153,22 @@ def test_consent_unsubscribe_and_fees_stay_off():
 def test_ten_minutes_template_stays_draft_and_clinic_only():
     row = launch_ten_minutes_on_us()
     assert row["status"] == "draft"
-    assert row["offerKind"] == "complimentary"
+    assert row["offerKind"] == "trial"
     assert row["complimentaryMinutes"] == 10
+    assert row["serviceSlug"] == "ten-minutes-on-us"
+    assert row["practitionerId"] == "p-nabitu-kahindo"
     assert row["maxRedemptions"] == 30
     assert row["locationTypes"] == ["clinic"]
-    assert row["followUp"]["enabled"] is True
+    assert row["followUp"]["enabled"] is False
     assert campaign_live(row, AT) is False
     live = {**row, "status": "live", "expiresAt": later(24)}
-    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "clinic") is True
-    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "home") is False
-    assert campaign_fits(live, live["bookingStart"], "10:00", 60, "swedish", "clinic") is False
-    free = apply_campaign_price({"base": 45, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "complimentary", "complimentaryMinutes": 10, "title": row["title"]}, 0.05)
-    assert free["total"] == 0 and free["travel"] == 0 and free["discount"] == 45
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "ten-minutes-on-us", "clinic") is True
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "ten-minutes-on-us", "home") is False
+    assert campaign_fits(live, live["bookingStart"], "10:00", 60, "ten-minutes-on-us", "clinic") is False
+    free = apply_campaign_price({"base": 0, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "trial", "complimentaryMinutes": 10, "title": row["title"]}, 0.05)
+    assert free["total"] == 0 and free["travel"] == 0 and free["campaignOfferKind"] == "trial"
+    complimentary = apply_campaign_price({"base": 45, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "complimentary", "complimentaryMinutes": 10, "title": "Legacy"}, 0.05)
+    assert complimentary["total"] == 0 and complimentary["travel"] == 0 and complimentary["discount"] == 45
     fixed = apply_campaign_price({"base": 120, "addons": 0, "travel": 0, "discount": 0}, {"offerKind": "fixed", "discountFixed": 25, "title": "Flash $25"}, 0.05)
     assert fixed["discount"] == 25
     assert reserve_decision({**live, "redemptions": 30, "maxRedemptions": 30}, {}, AT, 0) == "sold_out"
