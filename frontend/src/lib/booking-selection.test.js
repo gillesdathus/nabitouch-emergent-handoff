@@ -1,10 +1,17 @@
+import { vi } from "vitest";
 import {
   BOOKING_DRAFT_KEY,
+  addressReady,
+  addressSelectionPatch,
   bookingPathForService,
   clearStoredBookingDraft,
+  confirmAddressForBooking,
   defaultDurationMinutes,
   isLockedBookingAppointment,
+  preferredBookingAddress,
+  primaryAddress,
   readStoredBookingDraft,
+  rebookStepForAddress,
   resolveCatalogueService,
   serviceSelectionPatch,
   writeStoredBookingDraft,
@@ -90,4 +97,112 @@ test("booking draft persists in sessionStorage across refresh", () => {
   expect(restored.guest.firstName).toBe("Ada");
   clearStoredBookingDraft();
   expect(readStoredBookingDraft(empty).serviceSlug).toBeNull();
+});
+
+const homeReady = {
+  id: "ad-home",
+  label: "Home",
+  line: "10150 104 St NW, Edmonton",
+  lat: 53.54,
+  lng: -113.49,
+  clientConfirmed: true,
+  confidence: "address",
+};
+const officeStale = {
+  id: "ad-office",
+  label: "Office",
+  line: "10060 Jasper Ave, Edmonton",
+  lat: 53.54,
+  lng: -113.5,
+  clientConfirmed: false,
+};
+
+test("primaryAddress is the first saved row", () => {
+  expect(primaryAddress(null)).toBeNull();
+  expect(primaryAddress({ addresses: [] })).toBeNull();
+  expect(primaryAddress({ addresses: [homeReady, officeStale] })).toBe(homeReady);
+});
+
+test("addressReady requires confirmed civic coordinates", () => {
+  expect(addressReady(homeReady)).toBe(true);
+  expect(addressReady(officeStale)).toBe(false);
+  expect(addressReady({ ...homeReady, confidence: "place" })).toBe(false);
+  expect(addressReady({ ...homeReady, lat: null })).toBe(false);
+  expect(addressReady(null)).toBe(false);
+});
+
+test("preferredBookingAddress prefers a confirmed row over an unconfirmed primary", () => {
+  expect(preferredBookingAddress({ addresses: [officeStale, homeReady] })).toBe(homeReady);
+  expect(preferredBookingAddress({ addresses: [officeStale] })).toBe(officeStale);
+  expect(preferredBookingAddress({ addresses: [] })).toBeNull();
+  expect(preferredBookingAddress(null)).toBeNull();
+});
+
+test("addressSelectionPatch clears travel-dependent slot picks without touching profile", () => {
+  const patch = addressSelectionPatch(homeReady, { forceWhere: true });
+  expect(patch.address).toBe(homeReady);
+  expect(patch.addressQuery).toBe(homeReady.line);
+  expect(patch.date).toBeNull();
+  expect(patch.time).toBeNull();
+  expect(patch.forceWhere).toBe(true);
+  expect(addressSelectionPatch(null, { query: "" }).address).toBeNull();
+});
+
+test("rebookStepForAddress lands on When only when the address is ready", () => {
+  expect(rebookStepForAddress(homeReady)).toBe(2);
+  expect(rebookStepForAddress(officeStale)).toBe(0);
+  expect(rebookStepForAddress(null)).toBe(0);
+  expect(rebookStepForAddress(null, { locationType: "clinic" })).toBe(2);
+});
+
+test("confirmAddressForBooking maps a successful geo confirm onto the draft address", async () => {
+  const api = {
+    geoConfirm: vi.fn().mockResolvedValue({
+      accepted: true,
+      confidence: "address",
+      line: "10150 104 Street NW, Edmonton, AB",
+      lat: 53.541,
+      lng: -113.491,
+      mapboxId: "mapbox.1",
+      travel: 15,
+      zone: { id: "z-core" },
+      postalNormalized: "T5J0Z2",
+    }),
+  };
+  const result = await confirmAddressForBooking(api, officeStale);
+  expect(result.ok).toBe(true);
+  expect(result.address.clientConfirmed).toBe(true);
+  expect(result.address.confidence).toBe("address");
+  expect(result.address.travelFee).toBe(15);
+  expect(result.address.quoted).toBe(true);
+  expect(result.address.id).toBe("ad-office");
+  expect(api.geoConfirm).toHaveBeenCalledOnce();
+});
+
+test("confirmAddressForBooking rejects approximate results without marking confirmed", async () => {
+  const api = {
+    geoConfirm: vi.fn().mockResolvedValue({
+      accepted: false,
+      confidence: "place",
+      line: "Edmonton",
+    }),
+  };
+  const result = await confirmAddressForBooking(api, officeStale);
+  expect(result.ok).toBe(false);
+  expect(result.address.clientConfirmed).toBe(false);
+});
+
+test("clearing the stored draft removes prior client address from session (logout path)", () => {
+  sessionStorage.clear();
+  writeStoredBookingDraft({
+    step: 1,
+    address: homeReady,
+    addressQuery: homeReady.line,
+    guest: { firstName: "" },
+  });
+  clearStoredBookingDraft();
+  const empty = () => ({ step: 0, address: null, addressQuery: "", guest: { firstName: "" } });
+  const restored = readStoredBookingDraft(empty);
+  expect(restored.address).toBeNull();
+  expect(restored.step).toBe(0);
 });

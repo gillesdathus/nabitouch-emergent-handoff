@@ -7,7 +7,7 @@ import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
-import { serviceSelectionPatch } from "@/lib/booking-selection";
+import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
 const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
@@ -17,6 +17,13 @@ const toggle = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...a
 export function StepWhere() {
   const { draft, patchDraft, idx, me } = useDemo();
   const clinic = idx.settings.clinic;
+  const selectSaved = (a) => {
+    const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
+    patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
+  };
+  const useDifferentAddress = () => {
+    patchDraft(addressSelectionPatch(null, { query: "", forceWhere: true }));
+  };
   return (
     <div>
       <H t="Where should we meet you?" s={clinicBookable(clinic) ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton."} />
@@ -31,11 +38,21 @@ export function StepWhere() {
       ) : (
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (
-            <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
-              <button key={a.id} onClick={() => patchDraft({ address: { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" }, addressQuery: a.line })} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
+                <button key={a.id} type="button" onClick={() => selectSaved(a)} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
+              </div>
+              <button type="button" onClick={useDifferentAddress} data-testid="step-where-different-address" className="text-xs font-semibold text-nb-blue underline-offset-2 hover:underline">Different address</button>
+              <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>
             </div>
           )}
-          <AddressPicker testid="step-where-address" query={draft.addressQuery} onQuery={(v) => patchDraft({ addressQuery: v })} value={draft.address} onChange={(a) => patchDraft({ address: a })} />
+          <AddressPicker
+            testid="step-where-address"
+            query={draft.addressQuery}
+            onQuery={(v) => patchDraft({ addressQuery: v })}
+            value={draft.address}
+            onChange={(a) => patchDraft(addressSelectionPatch(a, { query: a?.line || draft.addressQuery, forceWhere: true }))}
+          />
           <label className="block"><span className="nb-label">Access notes <span className="font-normal text-nb-mute">(optional)</span></span>
             <input className="nb-input" placeholder="Buzzer, parking, pets, stairs…" value={draft.addressNotes} onChange={(e) => patchDraft({ addressNotes: e.target.value })} data-testid="step-where-notes-input" /></label>
         </div>

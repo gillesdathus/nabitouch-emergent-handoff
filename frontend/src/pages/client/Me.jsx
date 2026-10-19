@@ -18,6 +18,7 @@ import { Avatar, CatalogueImage, ClientTracker, PayPill, StatusPill, SectionHead
 import { Breathing } from "@/components/brand";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, DONE, money, fmtDate, fmtTime, promoEligibility } from "@/lib/domain";
+import { preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
 
 const greet = () => { const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton", hour: "numeric", hourCycle: "h23" }).format(new Date())); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 
@@ -177,15 +178,19 @@ export default function Me() {
     if (!service) { nav("/book"); return; }
     const prices = Object.keys(service.prices || {});
     const duration = a?.duration || Number(prices.includes("60") ? 60 : prices[0]);
+    const locationType = a?.locationType || "home";
+    const address = preferredBookingAddress(me);
+    const step = rebookStepForAddress(address, { locationType });
     patchDraft({
       serviceId: service.id || null,
       serviceSlug: service.slug,
       duration,
       practitionerId: a?.practitionerId || me.preferredPractitioners?.[0] || "",
-      locationType: a?.locationType || "home",
-      address: me.addresses?.[0] || null,
-      addressQuery: me.addresses?.[0]?.line || "",
-      step: 2,
+      locationType,
+      address: address || null,
+      addressQuery: address?.line || "",
+      step,
+      forceWhere: step === 0,
       date: null,
       time: null,
       checkoutSessionId: null,

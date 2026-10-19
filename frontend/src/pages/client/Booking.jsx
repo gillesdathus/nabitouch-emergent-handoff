@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ArrowRight, MapPin, Clock, User, Layers, HeartHandshake, Gift } from "lucide-react";
@@ -13,7 +13,16 @@ import { StepWhere, StepService, StepWhen, StepYou, StepPay } from "./BookingSte
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferListed, paymentChoice, clinicBookable } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
-import { bookingPathForService, isLockedBookingAppointment, resolveCatalogueService, serviceSelectionPatch } from "@/lib/booking-selection";
+import {
+  addressReady,
+  addressSelectionPatch,
+  bookingPathForService,
+  confirmAddressForBooking,
+  isLockedBookingAppointment,
+  preferredBookingAddress,
+  resolveCatalogueService,
+  serviceSelectionPatch,
+} from "@/lib/booking-selection";
 
 const STEPS = ["Where", "Service", "When", "You", "Payment", "Review"];
 
@@ -49,6 +58,7 @@ export default function Booking() {
   const [settlement, setSettlement] = useState(null);
   const [quoteNote, setQuoteNote] = useState("");
   const [wallet, setWallet] = useState([]);
+  const autoAddressKey = useRef("");
   useEffect(() => { if (me) api.plansMine().then((r) => setWallet(r.wallet || [])).catch(() => setWallet([])); }, [me, api]);
   const creditGroup = wallet.find((w) => w.serviceSlug === draft.serviceSlug && Number(w.duration) === Number(draft.duration) && w.available > 0);
   const useCredit = !!(me && creditGroup && draft.useCredit);
@@ -62,6 +72,69 @@ export default function Booking() {
   const g = draft.guest;
   const step = draft.step;
   const service = idx?.services?.[draft.serviceSlug] || resolveCatalogueService(state?.services, draft.serviceId || draft.serviceSlug);
+
+  // Returning clients: auto-select primary/confirmed saved address and skip Where when ready.
+  useEffect(() => {
+    if (!me) {
+      autoAddressKey.current = "";
+      return undefined;
+    }
+    if (draft.forceWhere || draft.locationType === "clinic") return undefined;
+    const saved = preferredBookingAddress(me);
+    if (!saved) return undefined;
+    const key = `${me.id}:${saved.id || saved.line}`;
+    if (autoAddressKey.current === key) return undefined;
+    let cancelled = false;
+    const applyReady = (addr) => {
+      if (cancelled) return;
+      autoAddressKey.current = key;
+      const skipWhere = draft.step === 0;
+      patchDraft({
+        ...addressSelectionPatch(addr, { query: addr.line }),
+        forceWhere: false,
+        ...(skipWhere ? { step: 1 } : {}),
+      });
+    };
+    if (draft.address && addressReady(draft.address)) {
+      autoAddressKey.current = key;
+      if (draft.step === 0) patchDraft({ step: 1, forceWhere: false });
+      return undefined;
+    }
+    if (draft.address && draft.address.id && saved.id && draft.address.id !== saved.id) {
+      autoAddressKey.current = key;
+      return undefined;
+    }
+    if (addressReady(saved)) {
+      applyReady({ ...saved });
+      return undefined;
+    }
+    autoAddressKey.current = key;
+    confirmAddressForBooking(api, saved)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) applyReady(result.address);
+        else {
+          patchDraft({
+            ...addressSelectionPatch(result.address || saved, { query: (result.address || saved).line }),
+            forceWhere: false,
+            step: 0,
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        patchDraft({
+          ...addressSelectionPatch(saved, { query: saved.line }),
+          step: 0,
+        });
+      });
+    return () => { cancelled = true; };
+  }, [me, api, draft.forceWhere, draft.locationType, draft.address, draft.step, patchDraft]);
+
+  const goChangeAddress = () => {
+    autoAddressKey.current = "";
+    patchDraft({ forceWhere: true, step: 0 });
+  };
 
   // Apply ?service=<id|slug> from catalogue / auth return without forcing re-selection.
   useEffect(() => {
@@ -147,7 +220,10 @@ export default function Booking() {
     !!paymentChoice(draft, idx.settings),
     true,
   ];
-  const go = (n) => { patchDraft({ step: n }); requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" })); };
+  const go = (n) => {
+    patchDraft(n === 0 ? { step: n, forceWhere: true } : { step: n, forceWhere: false });
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  };
   const changeTreatment = () => {
     go(1);
     if (service) nav(bookingPathForService(service), { replace: true });
@@ -235,7 +311,7 @@ export default function Booking() {
                   {[[User, `${service.name} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", 1],
                     [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, draft.practitionerId ? idx.practitioners[draft.practitionerId].name : "Request only — a practitioner is not assigned yet", 2],
                     [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", 0]].map(([I, t, s, st]) => (
-                    <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button onClick={() => go(st)} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">Edit</button></div>))}
+                    <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button onClick={() => (st === 0 ? goChangeAddress() : go(st))} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">{st === 0 && draft.locationType !== "clinic" ? "Change address" : "Edit"}</button></div>))}
                   {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
                   {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
                   {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
@@ -258,6 +334,13 @@ export default function Booking() {
         <div className="sticky top-32 space-y-4">
           <div className="nb-card p-5" data-testid="booking-summary-aside">
             <p className="text-sm font-semibold">Your booking</p>
+            {draft.locationType !== "clinic" && draft.address?.line && (
+              <div className="mt-3 border-b border-sky-100 pb-3" data-testid="booking-summary-address">
+                <p className="text-xs text-nb-mute">Service address</p>
+                <p className="text-sm font-medium text-nb-ink">{draft.address.line}</p>
+                <button type="button" onClick={goChangeAddress} data-testid="booking-change-address" className="mt-1 text-xs font-semibold text-nb-blue underline-offset-2 hover:underline">Change address</button>
+              </div>
+            )}
             {service ? (
               <>
                 <div className="mt-3 flex items-start justify-between gap-3">
