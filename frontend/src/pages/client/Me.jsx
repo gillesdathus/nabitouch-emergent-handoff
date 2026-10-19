@@ -21,6 +21,19 @@ import { OPEN, DONE, money, fmtDate, fmtTime, promoEligibility } from "@/lib/dom
 
 const greet = () => { const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton", hour: "numeric", hourCycle: "h23" }).format(new Date())); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 
+/** Favourites that still exist in the live catalogue; otherwise the first published service. */
+export function rebookSlugs(me, services) {
+  const catalogue = services || {};
+  const saved = Array.isArray(me?.favorites) ? me.favorites.filter((slug) => catalogue[slug]) : [];
+  if (saved.length) return saved;
+  const first = Object.keys(catalogue)[0];
+  return first ? [first] : [];
+}
+
+export function serviceLabel(services, slug) {
+  return services?.[slug]?.name || "Treatment";
+}
+
 function SignedOut() {
   return (
     <div className="relative mx-auto max-w-xl overflow-hidden px-5 py-16 text-center" data-testid="me-signed-out">
@@ -64,7 +77,7 @@ function ReceiptDialog({ appt, onClose }) {
         <DialogTitle>Receipt · {appt.ref}</DialogTitle>
         <p className="text-xs text-amber-800">This summary is not a tax receipt.</p>
         <div className="space-y-1.5 text-sm">
-          <p className="text-nb-mute">{idx.services[appt.serviceSlug].name} · {appt.duration} min · {fmtDate(appt.date)}</p>
+          <p className="text-nb-mute">{serviceLabel(idx.services, appt.serviceSlug)} · {appt.duration} min · {fmtDate(appt.date)}</p>
           <p className="text-nb-mute">Practitioner: {idx.practitioners[appt.practitionerId]?.name}</p>
           <div className="border-t border-dashed pt-2" />
           {[["Treatment", p.base], ["Discount", -p.discount], ["Enhancements", p.addons], ["Travel", p.travel], ["GST", p.tax]].filter(([, v]) => v).map(([l, v]) => <div key={l} className="flex justify-between"><span>{l}</span><span>{v < 0 ? `−${money(-v)}` : money(v)}</span></div>)}
@@ -77,8 +90,8 @@ function ReceiptDialog({ appt, onClose }) {
 }
 
 function EarlierOpening() {
-  const { api } = useDemo();
-  const [serviceSlug, setService] = useState("swedish");
+  const { api, idx } = useDemo();
+  const [serviceSlug, setService] = useState(() => Object.keys(idx?.services || {})[0] || "");
   const [duration, setDuration] = useState(60);
   const [saved, setSaved] = useState("");
   const [editing, setEditing] = useState(false);
@@ -154,22 +167,24 @@ export default function Me() {
   const history = mine.filter((a) => DONE.includes(a.status) || ["cancelled", "no_show"].includes(a.status)).sort((a, b) => b.date.localeCompare(a.date));
   const next = upcoming[0];
   const lastDone = history.find((a) => DONE.includes(a.status));
+  const favourites = rebookSlugs(me, idx.services);
   const bday = state.promotions.find((p) => p.id === "promo-birthday");
-  const bdayOk = bday && promoEligibility(bday, me, "swedish");
+  const bdayOk = bday && favourites[0] && promoEligibility(bday, me, favourites[0]);
   const plans = state.plans.filter((p) => p.clientId === me.id && p.visibleToClient);
   const rebook = (a, slug) => {
-    const key = slug || a.serviceSlug;
+    const key = slug || a?.serviceSlug || favourites[0];
     const service = idx.services[key];
-    if (!service) return;
-    const duration = a?.duration || (service.prices?.["60"] ? 60 : Number(Object.keys(service.prices || {})[0]));
+    if (!service) { nav("/book"); return; }
+    const prices = Object.keys(service.prices || {});
+    const duration = a?.duration || Number(prices.includes("60") ? 60 : prices[0]);
     patchDraft({
       serviceId: service.id || null,
       serviceSlug: service.slug,
       duration,
-      practitionerId: a?.practitionerId || me.preferredPractitioners[0] || "",
+      practitionerId: a?.practitionerId || me.preferredPractitioners?.[0] || "",
       locationType: a?.locationType || "home",
-      address: me.addresses[0] || null,
-      addressQuery: me.addresses[0]?.line || "",
+      address: me.addresses?.[0] || null,
+      addressQuery: me.addresses?.[0]?.line || "",
       step: 2,
       date: null,
       time: null,
@@ -213,7 +228,7 @@ export default function Me() {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative mt-6 overflow-hidden rounded-3xl bg-gradient-to-r from-teal-50 to-sky-50 p-5" data-testid="birthday-offer-card">
           <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center"><span className="nb-gradient flex h-12 w-12 items-center justify-center rounded-2xl text-white"><Cake className="h-6 w-6" /></span>
             <div className="flex-1"><p className="font-semibold">Happy birthday month, {me.firstName}!</p><p className="text-sm text-nb-mute">Enjoy $15 off a treatment this month — applied automatically at checkout.</p><p className="text-[11px] text-slate-500">Shown because you opted in to offers. Manage in Profile.</p></div>
-            <button onClick={() => rebook(null, me.favorites[0] || "swedish")} data-testid="birthday-rebook-btn" className="nb-btn-primary h-10 px-4 text-sm">Treat yourself</button></div>
+            <button onClick={() => rebook(null, me.favorites?.[0] || favourites[0])} data-testid="birthday-rebook-btn" className="nb-btn-primary h-10 px-4 text-sm">Treat yourself</button></div>
         </motion.div>
       )}
 
@@ -285,15 +300,16 @@ export default function Me() {
           {lastDone && !lastDone.feedback && <Feedback appt={lastDone} />}
           <div>
             <SectionHead eyebrow="Favourites" title="Rebook in one tap" />
-            <div className="grid gap-3 sm:grid-cols-2">{(me.favorites.length ? me.favorites : ["swedish"]).map((slug) => { const s = idx.services[slug]; return (
-              <div key={slug} className="nb-card flex items-center gap-4 p-4"><CatalogueImage src={s?.img} alt="" size="thumb" className="h-14 w-14 rounded-2xl object-cover" /><div className="flex-1"><p className="flex items-center gap-1 text-sm font-semibold"><Heart className="h-3.5 w-3.5 fill-rose-400 text-rose-400" />{s.name}</p><p className="text-xs text-nb-mute">{me.preferredPractitioners[0] ? `with ${idx.practitioners[me.preferredPractitioners[0]].name}` : "Best available"}</p></div><button onClick={() => rebook(history.find((h) => h.serviceSlug === slug), slug)} data-testid={`rebook-${slug}`} className="nb-btn-dark h-10 px-4 text-sm"><RotateCcw className="h-4 w-4" />Rebook</button></div>); })}
+            <div className="grid gap-3 sm:grid-cols-2">{favourites.map((slug) => { const s = idx.services[slug]; return (
+              <div key={slug} className="nb-card flex items-center gap-4 p-4"><CatalogueImage src={s?.img} alt="" size="thumb" className="h-14 w-14 rounded-2xl object-cover" /><div className="flex-1"><p className="flex items-center gap-1 text-sm font-semibold"><Heart className="h-3.5 w-3.5 fill-rose-400 text-rose-400" />{serviceLabel(idx.services, slug)}</p><p className="text-xs text-nb-mute">{me.preferredPractitioners?.[0] ? `with ${idx.practitioners[me.preferredPractitioners[0]]?.name || "your practitioner"}` : "Best available"}</p></div><button onClick={() => rebook(history.find((h) => h.serviceSlug === slug), slug)} data-testid={`rebook-${slug}`} className="nb-btn-dark h-10 px-4 text-sm"><RotateCcw className="h-4 w-4" />Rebook</button></div>); })}
+              {favourites.length === 0 && <p className="text-sm text-nb-mute">No published treatments are available to rebook yet.</p>}
             </div>
           </div>
           {plans.map((p) => (
             <div key={p.id} className="nb-card p-5" data-testid={`client-plan-${p.id}`}>
-              <p className="nb-eyebrow">Your treatment plan</p><p className="mt-1 font-semibold">{p.title}</p><p className="text-xs text-nb-mute">{p.frequency} · with {idx.practitioners[p.practitionerId].name}</p>
+              <p className="nb-eyebrow">Your treatment plan</p><p className="mt-1 font-semibold">{p.title}</p><p className="text-xs text-nb-mute">{p.frequency} · with {idx.practitioners[p.practitionerId]?.name || "your practitioner"}</p>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-sky-100"><div className="nb-gradient h-full" style={{ width: `${(p.sessionsDone / p.sessionsTotal) * 100}%` }} /></div>
-              <p className="mt-1 text-xs text-nb-mute">{p.sessionsDone} of {p.sessionsTotal} sessions · home care: {p.homeCare.join(", ")}</p>
+              <p className="mt-1 text-xs text-nb-mute">{p.sessionsDone} of {p.sessionsTotal} sessions · home care: {(p.homeCare || []).join(", ") || "—"}</p>
             </div>))}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="nb-card p-5" data-testid="loyalty-card"><Award className="h-5 w-5 text-nb-teal" /><p className="mt-2 font-semibold">Nabitouch Rewards</p><p className="mt-1 text-xs text-nb-mute">Points, referrals, and badges are prepared and not active.</p><Link to="/me/rewards" className="mt-3 inline-flex text-sm font-medium text-nb-blue">View rewards</Link></div>
@@ -310,11 +326,11 @@ export default function Me() {
 
         <TabsContent value="wallet" className="mt-6 space-y-6">
           <div data-testid="wallet-balances"><SectionHead eyebrow="Payments" title="Balances & insurance" />
-            {history.filter((a) => DONE.includes(a.status)).map((a) => <div key={a.id} className="nb-card mb-3 p-5" data-testid={`wallet-visit-${a.id}`}><p className="mb-3 text-sm font-semibold">{a.ref} · {idx.services[a.serviceSlug].name} · {fmtDate(a.date)}</p><BillingFacts appointmentId={a.id} /><PaymentPanel appt={a} role="client" /></div>)}
+            {history.filter((a) => DONE.includes(a.status)).map((a) => <div key={a.id} className="nb-card mb-3 p-5" data-testid={`wallet-visit-${a.id}`}><p className="mb-3 text-sm font-semibold">{a.ref} · {serviceLabel(idx.services, a.serviceSlug)} · {fmtDate(a.date)}</p><BillingFacts appointmentId={a.id} /><PaymentPanel appt={a} role="client" /></div>)}
           </div>
           <div><SectionHead eyebrow="Insurance" title="Insurance profiles" action={<Link to="/me/insurance" data-testid="wallet-add-insurance-btn" className="nb-btn-ghost h-10 text-sm"><Plus className="h-4 w-4" />Add</Link>} />
-            <div className="space-y-3">{me.insurance.map((i) => <div key={i.id} className="nb-card flex items-center gap-4 p-4" data-testid={`wallet-insurance-${i.id}`}><ShieldCheck className="h-5 w-5 text-nb-teal" /><div className="flex-1"><p className="text-sm font-semibold">{i.insurer}</p><p className="text-xs text-nb-mute">Member {i.memberId || "—"} · {i.relationship}</p></div><PayPill status={i.status} /></div>)}
-              {me.insurance.length === 0 && <p className="text-sm text-nb-mute">No insurance saved. You can always pay yourself.</p>}</div></div>
+            <div className="space-y-3">{(me.insurance || []).map((i) => <div key={i.id} className="nb-card flex items-center gap-4 p-4" data-testid={`wallet-insurance-${i.id}`}><ShieldCheck className="h-5 w-5 text-nb-teal" /><div className="flex-1"><p className="text-sm font-semibold">{i.insurer}</p><p className="text-xs text-nb-mute">Member {i.memberId || "—"} · {i.relationship}</p></div><PayPill status={i.status} /></div>)}
+              {(me.insurance || []).length === 0 && <p className="text-sm text-nb-mute">No insurance saved. You can always pay yourself.</p>}</div></div>
           <div className="nb-card flex items-center gap-4 p-4"><CreditCard className="h-5 w-5 text-nb-blue" /><div className="flex-1"><p className="text-sm font-semibold">Payment preference</p><p className="text-xs text-nb-mute">Insurance billing is not connected. Card and cash follow the payment recorded on each visit.</p></div></div>
           <Link to="/me/plans" data-testid="wallet-plans-link" className="relative block overflow-hidden rounded-3xl p-5 tint-mint ring-1 ring-teal-100"><Layers className="h-5 w-5 text-nb-teal" /><p className="mt-3 font-semibold text-nb-navy">Wellness plans</p><p className="text-xs text-nb-mute">Prepaid packages, memberships and your treatment credits.</p></Link>
           <Link to="/me/gifts" data-testid="wallet-giftcards-link" className="relative block overflow-hidden rounded-3xl p-5 text-white nb-lagoon"><Gift className="h-5 w-5" /><p className="mt-3 font-semibold">Gift cards</p><p className="text-xs text-white/80">Balances, history and sending a gift.</p></Link>
@@ -326,7 +342,7 @@ export default function Me() {
             <div className="flex items-center justify-between"><p className="font-semibold">{me.firstName} {me.lastName}</p><Link to="/me/profile" data-testid="profile-edit-btn" className="nb-btn-ghost h-9 px-4 text-xs"><Pencil className="h-3.5 w-3.5" />Edit</Link></div>
             <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">{[["Email", me.email], ["Phone", me.phone], ["Birthday", me.dob ? fmtDate(me.dob, { month: "long", day: "numeric" }) : "—"], ["Language", me.language], ["Contact by", me.contactMethod], ["Visit texts", me.smsConsent ? "On" : "Off"], ["Offers & birthday wishes", me.marketingConsent ? "Opted in" : "Not subscribed"]].map(([k, v]) => <div key={k}><dt className="text-xs text-nb-mute">{k}</dt><dd>{v}</dd></div>)}</dl>
           </div>
-          <div className="nb-card p-5"><p className="mb-3 font-semibold">Saved addresses</p>{me.addresses.map((a) => <p key={a.id} className="flex items-center gap-2 text-sm"><MapPin className="h-4 w-4 text-nb-teal" /><b>{a.label}</b> {a.line}</p>)}</div>
+          <div className="nb-card p-5"><p className="mb-3 font-semibold">Saved addresses</p>{(me.addresses || []).map((a) => <p key={a.id} className="flex items-center gap-2 text-sm"><MapPin className="h-4 w-4 text-nb-teal" /><b>{a.label}</b> {a.line}</p>)}{(me.addresses || []).length === 0 && <p className="text-sm text-nb-mute">No saved addresses yet.</p>}</div>
         </TabsContent>
       </Tabs>
       <ReceiptDialog appt={receipt} onClose={() => setReceipt(null)} />
@@ -339,7 +355,7 @@ function VisitRow({ a, onReceipt, onRebook }) {
   return (
     <div className="nb-card flex flex-wrap items-center gap-4 p-4" data-testid={`visit-row-${a.id}`}>
       <CatalogueImage src={idx.services[a.serviceSlug]?.img} alt="" size="thumb" className="h-12 w-12 rounded-2xl object-cover" />
-      <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{idx.services[a.serviceSlug].name} · {a.duration} min</p><p className="text-xs text-nb-mute">{fmtDate(a.date)} · {idx.practitioners[a.practitionerId]?.name || "—"}</p></div>
+      <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{serviceLabel(idx.services, a.serviceSlug)} · {a.duration} min</p><p className="text-xs text-nb-mute">{fmtDate(a.date)} · {idx.practitioners[a.practitionerId]?.name || "—"}</p></div>
       <StatusPill status={a.status} client />
       {onReceipt && DONE.includes(a.status) && <button onClick={onReceipt} data-testid={`visit-receipt-${a.id}`} className="text-xs font-semibold text-nb-blue">Receipt</button>}
       {onRebook && <button onClick={onRebook} data-testid={`visit-rebook-${a.id}`} className="text-xs font-semibold text-nb-teal">Rebook</button>}
