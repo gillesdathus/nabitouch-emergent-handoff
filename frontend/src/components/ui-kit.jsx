@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { animate, motion } from "framer-motion";
 import { Check, FlaskConical, WifiOff } from "lucide-react";
-import { STATUS, PAYMENT_STATUS, fmtStamp, CLIENT_STAGES, zoneFor, managedMediaPath } from "@/lib/domain";
+import { STATUS, PAYMENT_STATUS, fmtStamp, clientVisitProgress, zoneFor, managedMediaPath } from "@/lib/domain";
 import { api } from "@/lib/api";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
@@ -90,20 +90,32 @@ export function OpsTimeline({ appt, compact }) {
   );
 }
 
-// Client-safe progress tracker: never shows SOAP / clinical states.
+// Client-safe visit status: operational appointment phases only (not intake/consent/prep).
 export function ClientTracker({ appt }) {
-  const label = STATUS[appt.status]?.client;
-  const idx = Math.max(0, CLIENT_STAGES.indexOf(label));
+  const progress = clientVisitProgress(appt);
   return (
     <div data-testid="client-tracker">
-      <div className="flex items-center gap-1.5">
-        {CLIENT_STAGES.map((s, i) => (
-          <div key={s} className="h-1.5 flex-1 overflow-hidden rounded-full bg-sky-100">
-            <motion.div className="nb-gradient h-full" initial={{ width: 0 }} animate={{ width: i <= idx ? "100%" : "0%" }} transition={{ duration: 0.6, delay: i * 0.05 }} />
-          </div>
-        ))}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-nb-mute">Visit status</p>
+          <p className="mt-1 text-sm font-semibold text-nb-navy" data-testid="client-tracker-label">{progress.headline}</p>
+        </div>
+        {progress.showBar && (
+          <p className="shrink-0 text-[11px] text-nb-mute" data-testid="client-tracker-phase">
+            {progress.stageIndex + 1}/{progress.stageCount} · practitioner updates
+          </p>
+        )}
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs"><span className="font-semibold text-nb-navy" data-testid="client-tracker-label">{label}</span><span className="text-nb-mute">Step {idx + 1} of {CLIENT_STAGES.length}</span></div>
+      {progress.showBar && (
+        <div className="mt-2.5 flex items-center gap-1" data-testid="client-tracker-bar" aria-hidden>
+          {Array.from({ length: progress.stageCount }, (_, i) => (
+            <div key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-sky-100">
+              <motion.div className="nb-gradient h-full" initial={{ width: 0 }} animate={{ width: i <= progress.stageIndex ? "100%" : "0%" }} transition={{ duration: 0.45, delay: i * 0.04 }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] leading-snug text-nb-mute" data-testid="client-tracker-detail">{progress.detail}</p>
     </div>
   );
 }

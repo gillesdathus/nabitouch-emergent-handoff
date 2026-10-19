@@ -421,8 +421,12 @@ def build_auth(db, coll, add_audit):
         if await users.find_one({"email": email}):
             raise HTTPException(409, "An account with this email already exists — please sign in")
         cid = f"c-{uuid.uuid4().hex[:8]}"
+        profile = dict(body.profile or {})
+        from config import document_uploads_enabled
+        if not document_uploads_enabled():
+            profile.pop("photo", None)
         client = {"addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [], "language": "English",
-                  "contactMethod": "Text", "preferredName": "", "emergencyContact": "", "photo": None, **(body.profile or {}),
+                  "contactMethod": "Text", "preferredName": "", "emergencyContact": "", "photo": None, **profile,
                   "id": cid, "firstName": body.firstName, "lastName": body.lastName, "email": email, "phone": body.phone, "dob": body.dob,
                   "marketingConsent": body.marketingConsent, "smsConsent": body.smsConsent, "hasProfile": True, "loyaltyPoints": 0, "onlineBookings": 0,
                   "createdAt": datetime.now(timezone.utc).isoformat()}

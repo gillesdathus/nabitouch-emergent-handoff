@@ -2284,9 +2284,11 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
                 raise HTTPException(400, "No permitted fields")
             if "insurance" in doc:
                 doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
-            if "photo" in doc and doc.get("photo") not in (None, "") and not document_uploads_enabled():
-                raise HTTPException(403, "Document uploads are turned off")
-            if "photo" in doc and isinstance(doc["photo"], str) and len(doc["photo"]) > 200000:
+            # Profile field saves must not require document uploads. When the flag is off,
+            # ignore photo payloads instead of failing the whole client update.
+            if "photo" in doc and not document_uploads_enabled():
+                doc.pop("photo", None)
+            elif "photo" in doc and isinstance(doc.get("photo"), str) and len(doc["photo"]) > 200000:
                 raise HTTPException(400, "Photo is too large")
         elif role == "desk" and perms.get("viewInsuranceStatus"):
             doc = only_fields(doc, {"insurance"})

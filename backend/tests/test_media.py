@@ -160,7 +160,10 @@ def test_photo_storage_does_not_use_document_uploads(monkeypatch):
     assert "os.remove" not in source
     assert "unlink" not in source
     assert "document_uploads_enabled()" in billing
-    assert "Document uploads are turned off" in server
+    assert "Document uploads are turned off" in billing
+    # Client profile photo is ignored when uploads are off; other fields still save.
+    assert "document_uploads_enabled()" in server
+    assert 'doc.pop("photo"' in server
     monkeypatch.setenv("DOCUMENT_UPLOADS_ENABLED", "false")
     assert document_uploads_enabled() is False
     monkeypatch.setenv("DOCUMENT_UPLOADS_ENABLED", "true")

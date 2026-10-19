@@ -44,7 +44,7 @@ export const STATUS = {
   confirmed: { label: 'Booking confirmed', tone: 'blue', client: 'Confirmed' },
   assigned: { label: 'Practitioner assigned', tone: 'blue', client: 'Confirmed' },
   preparing: { label: 'Preparing for visit', tone: 'cyan', client: 'Practitioner preparing' },
-  en_route: { label: 'En route', tone: 'cyan', client: 'En route' },
+  en_route: { label: 'En route', tone: 'cyan', client: 'Practitioner on the way' },
   arrived: { label: 'Arrived at location', tone: 'turq', client: 'Arrived' },
   in_session: { label: 'Session in progress', tone: 'green', client: 'Session in progress' },
   session_ended: { label: 'Session ended', tone: 'teal', client: 'Session completed' },
@@ -65,10 +65,71 @@ export const STATUS = {
 
 export const LIFECYCLE = ['requested', 'assigned', 'preparing', 'en_route', 'arrived', 'in_session', 'session_ended',
   'soap_pending', 'soap_completed', 'leaving', 'completed', 'processing', 'closed'];
-export const CLIENT_STAGES = ['Confirmed', 'Practitioner preparing', 'En route', 'Arrived', 'Session in progress', 'Session completed', 'Visit completed'];
+/** Operational phases shown to clients. Advanced only by real appointment status transitions — never by intake, consent, or space prep. */
+export const CLIENT_VISIT_PHASES = [
+  { id: 'confirmed', label: 'Confirmed', statuses: ['requested', 'confirmed', 'assigned', 'reassigned'] },
+  { id: 'preparing', label: 'Practitioner preparing', statuses: ['preparing'] },
+  { id: 'en_route', label: 'Practitioner on the way', statuses: ['en_route', 'delayed'] },
+  { id: 'arrived', label: 'Arrived', statuses: ['arrived'] },
+  { id: 'in_session', label: 'Session in progress', statuses: ['in_session'] },
+  { id: 'session_done', label: 'Session completed', statuses: ['session_ended', 'soap_pending', 'soap_completed'] },
+  { id: 'completed', label: 'Visit completed', statuses: ['leaving', 'completed', 'processing', 'closed'] },
+];
+/** @deprecated Prefer clientVisitProgress(); kept for older imports. */
+export const CLIENT_STAGES = CLIENT_VISIT_PHASES.map((phase) => phase.label);
 export const ACTIVE = ['preparing', 'en_route', 'arrived', 'in_session', 'session_ended', 'soap_pending', 'soap_completed', 'leaving', 'interrupted', 'safety_hold'];
 export const OPEN = ['requested', 'confirmed', 'assigned', ...ACTIVE];
 export const DONE = ['completed', 'processing', 'closed'];
+
+const CLIENT_VISIT_DETAIL = {
+  confirmed: 'This updates when your practitioner starts preparing or begins travel — not when health check, consent, or space prep are done.',
+  preparing: 'Your practitioner is getting ready. Travel status appears when they start the trip.',
+  en_route: 'Your practitioner is travelling to you. Arrival is confirmed only when they mark it in the app.',
+  arrived: 'Your practitioner is at your location and will start the session when you are both ready.',
+  in_session: 'Your massage is underway.',
+  session_done: 'Treatment has ended. Your practitioner is finishing notes and wrapping up.',
+  completed: 'This visit is complete.',
+  cancelled: 'This appointment was cancelled.',
+  no_show: 'This visit was marked as missed.',
+  interrupted: 'Treatment is paused. Your practitioner will resume or end the visit from their app.',
+  safety_hold: 'This visit is on hold for safety. Nabitouch or your practitioner will follow up.',
+  rescheduled: 'This visit was rescheduled.',
+};
+
+/**
+ * Client visit progress from appointment.status only.
+ * Intake, consent, and preparation checklist never advance the operational phase.
+ * Space readiness may soften the confirmed headline to "Ready for your visit" without changing phase.
+ */
+export function clientVisitProgress(appt) {
+  const status = appt?.status || 'requested';
+  if (['cancelled', 'no_show', 'interrupted', 'safety_hold', 'rescheduled'].includes(status)) {
+    return {
+      headline: STATUS[status]?.client || status,
+      detail: CLIENT_VISIT_DETAIL[status] || '',
+      phaseId: status,
+      stageIndex: -1,
+      stageCount: CLIENT_VISIT_PHASES.length,
+      showBar: false,
+      operational: true,
+    };
+  }
+  const stageIndex = CLIENT_VISIT_PHASES.findIndex((phase) => phase.statuses.includes(status));
+  const phase = CLIENT_VISIT_PHASES[Math.max(0, stageIndex)];
+  const spaceReady = Boolean(appt?.readiness?.allReady);
+  const headline = phase.id === 'confirmed' && spaceReady ? 'Ready for your visit' : phase.label;
+  return {
+    headline,
+    detail: phase.id === 'confirmed' && spaceReady
+      ? 'Your space checklist is saved. Visit progress still waits for your practitioner to prepare or start travel.'
+      : CLIENT_VISIT_DETAIL[phase.id],
+    phaseId: phase.id,
+    stageIndex: Math.max(0, stageIndex),
+    stageCount: CLIENT_VISIT_PHASES.length,
+    showBar: true,
+    operational: true,
+  };
+}
 
 // Practitioner big-button flow. `nav` = opens SOAP editor instead of transitioning.
 export const ACTIONS = [

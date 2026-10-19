@@ -25,19 +25,45 @@ export function PrepareCard({ appt }) {
   const [prep, setPrep] = useState(null);
   const [items, setItems] = useState({});
   const [open, setOpen] = useState("space");
+  const [expanded, setExpanded] = useState(true);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
-    api.preparation(appt.id).then((p) => { setPrep(p); setItems(p.readiness?.items || {}); }).catch(() => setPrep(null));
+    api.preparation(appt.id).then((p) => {
+      setPrep(p);
+      setItems(p.readiness?.items || {});
+      setExpanded(!p.readiness?.allReady);
+    }).catch(() => setPrep(null));
   }, [appt.id]);
   if (!prep) return null;
   const done = prep.checklist.filter((c) => items[c.key]).length;
   const all = done === prep.checklist.length;
   const save = async (next) => {
     setItems(next); setSaving(true);
-    try { const r = await api.saveReadiness(appt.id, next); setPrep({ ...prep, readiness: r }); if (r.allReady) toast.success("You're all set. Your therapist can see that your space is ready."); }
-    catch (e) { toast.error(apiError(e)); }
+    try {
+      const r = await api.saveReadiness(appt.id, next);
+      setPrep({ ...prep, readiness: r });
+      if (r.allReady) {
+        toast.success("You're all set. Your therapist can see that your space is ready.");
+        setExpanded(false);
+      }
+    } catch (e) { toast.error(apiError(e)); }
     setSaving(false);
   };
+  if (all && !expanded) {
+    return (
+      <section className="rounded-2xl bg-emerald-50/80 p-4 ring-1 ring-emerald-100" data-testid="prepare-card">
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-nb-teal"><ShieldCheck className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold" data-testid="prepare-complete-title">Space preparation saved</p>
+            <p className="mt-0.5 text-xs text-nb-mute" data-testid="prepare-progress">{done}/{prep.checklist.length} confirmed on your account. This is separate from visit status.</p>
+            {prep.readiness?.updatedAt && <p className="mt-1 text-[11px] text-nb-mute" data-testid="readiness-updated">Saved {new Date(prep.readiness.updatedAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}.</p>}
+          </div>
+          <button type="button" className="nb-btn-ghost h-9 shrink-0 px-3 text-xs" data-testid="prepare-expand" onClick={() => setExpanded(true)}>Review</button>
+        </div>
+      </section>
+    );
+  }
   return (
     <section className="overflow-hidden rounded-[32px] bg-white/70 ring-1 ring-sky-100 backdrop-blur-xl" data-testid="prepare-card">
       <div className="relative p-5 text-white nb-lagoon sm:p-6">
@@ -52,6 +78,7 @@ export function PrepareCard({ appt }) {
         <div className="space-y-2">{prep.sections.map((s) => <Section key={s.id} s={s} open={open === s.id} onToggle={() => setOpen(open === s.id ? "" : s.id)} />)}</div>
         <div>
           <p className="mb-3 flex items-center gap-2 text-sm font-semibold"><ClipboardCheck className="h-4 w-4 text-nb-teal" />Readiness checklist</p>
+          <p className="mb-2 text-[11px] text-nb-mute">Saved on this appointment. Checking items does not change visit status.</p>
           <div className="space-y-2" data-testid="readiness-checklist">
             {prep.checklist.map((c) => {
               const on = Boolean(items[c.key]);
@@ -65,6 +92,7 @@ export function PrepareCard({ appt }) {
           </div>
           {prep.readiness?.updatedAt && <p className="mt-3 text-[11px] text-nb-mute" data-testid="readiness-updated">Saved {new Date(prep.readiness.updatedAt).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" })}. You can change it until the visit starts.</p>}
           <p className="mt-2 flex items-start gap-1.5 text-[11px] text-nb-mute"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0" />{prep.disclaimer}</p>
+          {all && <button type="button" className="nb-btn-ghost mt-3 h-10 w-full text-sm" data-testid="prepare-collapse" onClick={() => setExpanded(false)}>Show compact summary</button>}
         </div>
       </div>
     </section>

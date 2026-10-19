@@ -5,6 +5,7 @@ import { Avatar } from "@/components/ui-kit";
 import { AddressPicker } from "@/components/AddressPicker";
 import { zoneFor } from "@/lib/domain";
 import { apiError } from "@/lib/api";
+import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 
 const resize = (file) => new Promise((res) => {
@@ -14,9 +15,10 @@ const resize = (file) => new Promise((res) => {
 });
 
 export default function ProfileForm() {
-  const { me, run, api, register, state } = useDemo();
+  const { me, run, api, register, state, idx } = useDemo();
   const nav = useNavigate();
   const file = useRef(null);
+  const uploadsEnabled = restrictedFlag(idx?.settings, "documentUploadsEnabled");
   const [f, setF] = useState(() => ({ firstName: "", lastName: "", preferredName: "", email: "", phone: "", dob: "", language: "English", contactMethod: "Text", emergencyContact: "", marketingConsent: false, smsConsent: false, photo: null, addresses: [], paymentPreference: "card", ...(me || {}) }));
   const [aq, setAq] = useState("");
   const [addr, setAddr] = useState(null);
@@ -27,14 +29,22 @@ export default function ProfileForm() {
   const [intake, setIntake] = useState({ allergies: "", medications: "", concerns: "", preferences: "", contraindications: "" });
   const [intakeOpen, setIntakeOpen] = useState(false);
   const valid = f.firstName && f.lastName && /\S+@\S+/.test(f.email) && f.phone && f.dob && (me || pw.length >= 8);
+  const hasMobileVisit = !!(me && (state?.appointments || []).some((a) => a.clientId === me.id && a.location !== "clinic" && a.locationType !== "clinic" && !["completed", "cancelled", "no_show"].includes(a.status)));
   const save = async () => {
+    setErr("");
     const { id, ...body } = f;
-    if (me) await run(() => api.patch("clients", me.id, body), "Profile updated");
-    else {
-      const { firstName, lastName, email, phone, dob, marketingConsent, smsConsent, ...profile } = body;
-      try { await register({ email, password: pw, firstName, lastName, phone, dob, marketingConsent, smsConsent, profile }); } catch (e) { setErr(apiError(e)); return; }
+    if (!uploadsEnabled) delete body.photo;
+    try {
+      if (me) await run(() => api.patch("clients", me.id, body), "Profile updated");
+      else {
+        const { firstName, lastName, email, phone, dob, marketingConsent, smsConsent, ...profile } = body;
+        if (!uploadsEnabled) delete profile.photo;
+        await register({ email, password: pw, firstName, lastName, phone, dob, marketingConsent, smsConsent, profile });
+      }
+      nav("/me");
+    } catch (e) {
+      setErr(apiError(e));
     }
-    nav("/me");
   };
   const In = ({ k, l, type = "text", opt, ...p }) => <label><span className="nb-label">{l}{opt && <span className="font-normal text-nb-mute"> (optional)</span>}</span><input type={type} className="nb-input" value={f[k] || ""} onChange={set(k)} data-testid={`profile-${k}-input`} {...p} /></label>;
 
@@ -45,8 +55,14 @@ export default function ProfileForm() {
       <p className="mt-1 text-sm text-nb-mute">It only takes a minute. These details are used for your visits and stay with your account.</p>
       <div className="mt-8 flex items-center gap-4">
         <Avatar person={f} photo={f.photo} size={72} />
-        <button onClick={() => file.current?.click()} data-testid="profile-photo-btn" className="nb-btn-ghost h-10 text-sm"><Camera className="h-4 w-4" />{f.photo ? "Change photo" : "Add a photo (optional)"}</button>
-        <input ref={file} type="file" accept="image/*" className="hidden" data-testid="profile-photo-input" onChange={async (e) => { const fl = e.target.files?.[0]; if (fl) { const d = await resize(fl); setF((x) => ({ ...x, photo: d })); } }} />
+        {uploadsEnabled ? (
+          <>
+            <button type="button" onClick={() => file.current?.click()} data-testid="profile-photo-btn" className="nb-btn-ghost h-10 text-sm"><Camera className="h-4 w-4" />{f.photo ? "Change photo" : "Add a photo (optional)"}</button>
+            <input ref={file} type="file" accept="image/*" className="hidden" data-testid="profile-photo-input" onChange={async (e) => { const fl = e.target.files?.[0]; if (fl) { const d = await resize(fl); setF((x) => ({ ...x, photo: d })); } }} />
+          </>
+        ) : (
+          <p className="text-xs text-nb-mute" data-testid="profile-photo-unavailable">Profile photo upload is not enabled yet.</p>
+        )}
       </div>
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
         {In({ k: "firstName", l: "First name" })}{In({ k: "lastName", l: "Last name" })}
@@ -100,14 +116,16 @@ export default function ProfileForm() {
       {me && (
         <div className="nb-card mt-6 space-y-3 p-5" data-testid="consent-card">
           <p className="font-semibold">Consent</p>
-          <p className="text-xs text-nb-mute">Booking an appointment does not record consent. Acknowledge the statement that applies.</p>
+          <p className="text-xs text-nb-mute">Booking an appointment does not record consent. Visit-specific treatment consent is signed in Before your visit. Use the statement below only when it applies.</p>
           <button type="button" className="nb-btn-ghost h-11" data-testid="consent-treatment" onClick={() => run(() => api.recordConsent({ kind: "treatment", version: "2026-1", acknowledged: true }), "Treatment consent recorded")}>I agree to treatment</button>
-          <button type="button" className="nb-btn-ghost h-11" data-testid="consent-mobile" onClick={() => run(() => api.recordConsent({ kind: "mobile", version: "2026-1", acknowledged: true }), "Mobile visit consent recorded")}>I agree to a mobile visit at my address</button>
+          {hasMobileVisit && (
+            <button type="button" className="nb-btn-ghost h-11" data-testid="consent-mobile" onClick={() => run(() => api.recordConsent({ kind: "mobile", version: "2026-1", acknowledged: true }), "Mobile visit consent recorded")}>I agree to a mobile visit at my address</button>
+          )}
         </div>
       )}
       {!me && <label className="mt-6 block"><span className="nb-label">Create a password (min. 8 characters)</span><input type="password" autoComplete="new-password" className="nb-input" value={pw} onChange={(e) => setPw(e.target.value)} data-testid="profile-password-input" /></label>}
       {err && <p className="mt-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700" data-testid="profile-error">{err}</p>}
-      <button disabled={!valid} onClick={save} data-testid="profile-save-btn" className="nb-btn-primary mt-8 w-full">{me ? "Save changes" : "Create my profile"}</button>
+      <button type="button" disabled={!valid} onClick={save} data-testid="profile-save-btn" className="nb-btn-primary mt-8 w-full">{me ? "Save changes" : "Create my profile"}</button>
     </div>
   );
 }
