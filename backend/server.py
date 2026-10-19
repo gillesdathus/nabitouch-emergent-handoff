@@ -41,7 +41,7 @@ from emailer import send_email
 from html import escape
 import asyncio
 from math import radians, sin, cos, asin, sqrt
-from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
+from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, profile_photos_enabled, stripe_card_checkout_enabled, validate_env
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
     assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, gps_origin, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
@@ -449,6 +449,7 @@ def shape_settings(docs, role):
         shaped.append(view)
     flags = {
         "documentUploadsEnabled": document_uploads_enabled(),
+        "profilePhotosEnabled": profile_photos_enabled(),
         "cardCheckoutEnabled": stripe_card_checkout_enabled(),
         "invoiceEmailEnabled": invoice_email_enabled(),
         "giftCardsEnabled": giftcards_enabled(),
@@ -2284,9 +2285,8 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
                 raise HTTPException(400, "No permitted fields")
             if "insurance" in doc:
                 doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
-            # Profile field saves must not require document uploads. When the flag is off,
-            # ignore photo payloads instead of failing the whole client update.
-            if "photo" in doc and not document_uploads_enabled():
+            # Profile avatars are separate from clinical document uploads.
+            if "photo" in doc and not profile_photos_enabled():
                 doc.pop("photo", None)
             elif "photo" in doc and isinstance(doc.get("photo"), str) and len(doc["photo"]) > 200000:
                 raise HTTPException(400, "Photo is too large")

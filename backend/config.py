@@ -63,6 +63,11 @@ def document_uploads_enabled():
     return _flag("DOCUMENT_UPLOADS_ENABLED", False)
 
 
+def profile_photos_enabled():
+    """Client profile avatar (small JPEG/PNG data URL on the client record). Independent of clinical document uploads. Unset stays on."""
+    return _flag("PROFILE_PHOTOS_ENABLED", True)
+
+
 def stripe_card_checkout_enabled():
     """Card checkout. Unset stays off. Production must set the variable explicitly. Cash and e-Transfer are separate."""
     return _flag("STRIPE_CARD_CHECKOUT_ENABLED", False)

@@ -422,8 +422,8 @@ def build_auth(db, coll, add_audit):
             raise HTTPException(409, "An account with this email already exists — please sign in")
         cid = f"c-{uuid.uuid4().hex[:8]}"
         profile = dict(body.profile or {})
-        from config import document_uploads_enabled
-        if not document_uploads_enabled():
+        from config import profile_photos_enabled
+        if not profile_photos_enabled():
             profile.pop("photo", None)
         client = {"addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [], "language": "English",
                   "contactMethod": "Text", "preferredName": "", "emergencyContact": "", "photo": None, **profile,

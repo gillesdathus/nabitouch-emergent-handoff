@@ -5,7 +5,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 import ProfileForm from "./ProfileForm";
 
 const h = vi.hoisted(() => ({
-  settings: { documentUploadsEnabled: false },
+  settings: { documentUploadsEnabled: false, profilePhotosEnabled: true },
   appointments: [],
   patch: vi.fn(async () => ({})),
 }));
@@ -55,6 +55,7 @@ function renderForm() {
 
 beforeEach(() => {
   h.settings.documentUploadsEnabled = false;
+  h.settings.profilePhotosEnabled = true;
   h.appointments = [];
   h.patch.mockReset();
   h.patch.mockResolvedValue({});
@@ -64,22 +65,35 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-test("hides profile photo controls when document uploads are off", () => {
-  const view = renderForm();
-  expect(view.host.querySelector("[data-testid='profile-photo-unavailable']")).toBeTruthy();
-  expect(view.host.querySelector("[data-testid='profile-photo-btn']")).toBeNull();
-  view.unmount();
-});
-
-test("shows profile photo controls when document uploads are on", () => {
-  h.settings.documentUploadsEnabled = true;
+test("shows profile photo controls when profile photos are enabled even if document uploads are off", () => {
   const view = renderForm();
   expect(view.host.querySelector("[data-testid='profile-photo-btn']")).toBeTruthy();
   expect(view.host.querySelector("[data-testid='profile-photo-unavailable']")).toBeNull();
   view.unmount();
 });
 
-test("save strips photo when document uploads are off", async () => {
+test("hides profile photo controls when profile photos are explicitly off", () => {
+  h.settings.profilePhotosEnabled = false;
+  const view = renderForm();
+  expect(view.host.querySelector("[data-testid='profile-photo-unavailable']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='profile-photo-btn']")).toBeNull();
+  view.unmount();
+});
+
+test("save includes photo when profile photos are enabled", async () => {
+  const view = renderForm();
+  await act(async () => {
+    view.host.querySelector("[data-testid='profile-save-btn']").click();
+  });
+  expect(h.patch).toHaveBeenCalled();
+  const body = h.patch.mock.calls[0][2];
+  expect(body.photo).toBe("data:image/jpeg;base64,EXISTING");
+  expect(body.firstName).toBe("Ada");
+  view.unmount();
+});
+
+test("save strips photo when profile photos are off", async () => {
+  h.settings.profilePhotosEnabled = false;
   const view = renderForm();
   await act(async () => {
     view.host.querySelector("[data-testid='profile-save-btn']").click();
@@ -87,7 +101,6 @@ test("save strips photo when document uploads are off", async () => {
   expect(h.patch).toHaveBeenCalled();
   const body = h.patch.mock.calls[0][2];
   expect(body.photo).toBeUndefined();
-  expect(body.firstName).toBe("Ada");
   view.unmount();
 });
 

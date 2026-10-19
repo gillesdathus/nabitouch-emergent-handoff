@@ -13,12 +13,14 @@ OPEN = ("requested", "confirmed", "assigned", "preparing", "en_route", "arrived"
 PHOTO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
 
-def test_source_contract_profile_photo_does_not_block_client_patch():
+def test_source_contract_profile_photos_are_separate_from_document_uploads():
     server = (ROOT / "server.py").read_text(encoding="utf-8")
+    config = (ROOT / "config.py").read_text(encoding="utf-8")
     session = (ROOT / "session_care.py").read_text(encoding="utf-8")
     clinical = (ROOT / "clinical.py").read_text(encoding="utf-8")
-    assert 'doc.pop("photo"' in server
-    assert "ignore photo payloads instead of failing the whole client update" in server
+    assert "def profile_photos_enabled" in config
+    assert "profile_photos_enabled()" in server
+    assert "profilePhotosEnabled" in server
     assert "document_uploads_enabled" not in session
     assert "document_uploads_enabled" not in clinical
 
@@ -61,7 +63,8 @@ def uploads_off():
     assert health.json().get("documentUploads") is False, "These tests require DOCUMENT_UPLOADS_ENABLED=false"
 
 
-def test_profile_patch_saves_when_photo_payload_present_and_uploads_off(uploads_off):
+def test_profile_patch_saves_photo_when_document_uploads_off(uploads_off):
+    """Client avatars are independent of DOCUMENT_UPLOADS_ENABLED."""
     sarah = _sarah()
     me = requests.get(f"{API}/auth/me", headers=sarah, timeout=20)
     assert me.status_code == 200, me.text
@@ -75,7 +78,7 @@ def test_profile_patch_saves_when_photo_payload_present_and_uploads_off(uploads_
     )
     assert patched.status_code == 200, patched.text
     assert patched.json()["preferredName"] == preferred
-    assert patched.json().get("photo") != PHOTO
+    assert patched.json().get("photo") == PHOTO
 
 
 def test_intake_baseline_when_uploads_off(uploads_off):

@@ -5,7 +5,6 @@ import { Avatar } from "@/components/ui-kit";
 import { AddressPicker } from "@/components/AddressPicker";
 import { zoneFor } from "@/lib/domain";
 import { apiError } from "@/lib/api";
-import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 
 const resize = (file) => new Promise((res) => {
@@ -18,7 +17,8 @@ export default function ProfileForm() {
   const { me, run, api, register, state, idx } = useDemo();
   const nav = useNavigate();
   const file = useRef(null);
-  const uploadsEnabled = restrictedFlag(idx?.settings, "documentUploadsEnabled");
+  // Profile avatars are independent of clinical document uploads (insurance cards, claim files).
+  const photosEnabled = idx?.settings?.profilePhotosEnabled !== false;
   const [f, setF] = useState(() => ({ firstName: "", lastName: "", preferredName: "", email: "", phone: "", dob: "", language: "English", contactMethod: "Text", emergencyContact: "", marketingConsent: false, smsConsent: false, photo: null, addresses: [], paymentPreference: "card", ...(me || {}) }));
   const [aq, setAq] = useState("");
   const [addr, setAddr] = useState(null);
@@ -33,12 +33,12 @@ export default function ProfileForm() {
   const save = async () => {
     setErr("");
     const { id, ...body } = f;
-    if (!uploadsEnabled) delete body.photo;
+    if (!photosEnabled) delete body.photo;
     try {
       if (me) await run(() => api.patch("clients", me.id, body), "Profile updated");
       else {
         const { firstName, lastName, email, phone, dob, marketingConsent, smsConsent, ...profile } = body;
-        if (!uploadsEnabled) delete profile.photo;
+        if (!photosEnabled) delete profile.photo;
         await register({ email, password: pw, firstName, lastName, phone, dob, marketingConsent, smsConsent, profile });
       }
       nav("/me");
@@ -55,7 +55,7 @@ export default function ProfileForm() {
       <p className="mt-1 text-sm text-nb-mute">It only takes a minute. These details are used for your visits and stay with your account.</p>
       <div className="mt-8 flex items-center gap-4">
         <Avatar person={f} photo={f.photo} size={72} />
-        {uploadsEnabled ? (
+        {photosEnabled ? (
           <>
             <button type="button" onClick={() => file.current?.click()} data-testid="profile-photo-btn" className="nb-btn-ghost h-10 text-sm"><Camera className="h-4 w-4" />{f.photo ? "Change photo" : "Add a photo (optional)"}</button>
             <input ref={file} type="file" accept="image/*" className="hidden" data-testid="profile-photo-input" onChange={async (e) => { const fl = e.target.files?.[0]; if (fl) { const d = await resize(fl); setF((x) => ({ ...x, photo: d })); } }} />
