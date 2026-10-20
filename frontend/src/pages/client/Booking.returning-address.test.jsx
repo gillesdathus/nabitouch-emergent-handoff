@@ -107,7 +107,7 @@ vi.mock("@/lib/domain", async (importOriginal) => {
     quote: () => ({ base: 120, total: 126, tax: 6, travel: 0, discount: 0, addons: 0, addonList: [], treatmentAfterDiscount: 120 }),
     paymentChoice: () => "card",
     clinicBookable: () => false,
-    welcomeOfferListed: () => false,
+    welcomeOfferVisible: () => false,
   };
 });
 

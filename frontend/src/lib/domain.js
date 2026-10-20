@@ -353,6 +353,13 @@ export function welcomeOfferListed(promo, placement) {
   return places.includes(placement);
 }
 
+/** Placement + owner controls, then server eligibility when the client is identified. */
+export function welcomeOfferVisible(promo, placement, eligibility) {
+  if (!welcomeOfferListed(promo, placement)) return false;
+  if (eligibility?.known === true && eligibility.welcome === false) return false;
+  return true;
+}
+
 export function promoBannerCopy(promo) {
   if (!promo) return { headline: "Your First Massage, 20% Off.", body: "", cta: "Book my first massage" };
   const value = Number(promo.value) || 0;
@@ -372,6 +379,14 @@ export function trialCampaignListed(campaign, placement) {
   if (campaign.soldOut) return false;
   if (placement === "home" && campaign.showHome === false) return false;
   if (placement === "offers" && campaign.showOffers === false) return false;
+  return true;
+}
+
+/** Placement + owner controls, then server eligibility when the client is identified. */
+export function trialCampaignVisible(campaign, placement, eligibility) {
+  if (!trialCampaignListed(campaign, placement)) return false;
+  if (campaign.clientEligible === false) return false;
+  if (eligibility?.known === true && eligibility.trial === false) return false;
   return true;
 }
 

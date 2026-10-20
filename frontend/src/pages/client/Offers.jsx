@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { CatalogueImage } from "@/components/ui-kit";
 import { EmptyState, PageHeader, Reveal } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
-import { promoBannerCopy, trialCampaignListed, welcomeOfferListed } from "@/lib/domain";
+import { promoBannerCopy, trialCampaignVisible, welcomeOfferVisible } from "@/lib/domain";
 
 function left(expiresAt, serverTime, fetchedAt) {
   if (!expiresAt || !serverTime) return 0;
@@ -56,10 +56,11 @@ export default function Offers() {
     }
   };
 
+  const eligibility = state?.offerEligibility;
   const welcome = (state.promotions || []).find((promo) => promo.id === "promo-welcome");
-  const welcomeVisible = welcomeOfferListed(welcome, "offers");
+  const welcomeVisible = welcomeOfferVisible(welcome, "offers", eligibility);
   const welcomeCopy = promoBannerCopy(welcome);
-  const trialOffers = campaigns.filter((row) => trialCampaignListed(row, "offers"));
+  const trialOffers = campaigns.filter((row) => trialCampaignVisible(row, "offers", eligibility));
   const flashOffers = campaigns.filter((row) => row.offerKind !== "trial" && row.showOffers !== false);
   const empty = trialOffers.length === 0 && flashOffers.length === 0 && !welcomeVisible && offers.length === 0;
 

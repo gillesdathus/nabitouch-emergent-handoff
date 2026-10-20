@@ -5,7 +5,7 @@ import { PromoBanner } from "@/components/client";
 import { CatalogueImage } from "@/components/ui-kit";
 import { EmptyState, TideAvatar } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
-import { money, publiclyBookable, quote, welcomeOfferListed, bookableCatalogueService, clinicBookable } from "@/lib/domain";
+import { money, publiclyBookable, quote, welcomeOfferVisible, bookableCatalogueService, clinicBookable } from "@/lib/domain";
 import { bookingPathForService, serviceSelectionPatch } from "@/lib/booking-selection";
 
 export default function ServiceDetail() {
@@ -21,7 +21,7 @@ export default function ServiceDetail() {
   }
   const priced = quote({ service, duration, client: me, promotions: state.promotions, settings: idx.settings });
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome, "services");
+  const eligible = welcomeOfferVisible(welcome, "services", state.offerEligibility);
   const practitioners = state.practitioners.filter((person) => publiclyBookable(person) && (person.specialties || []).includes(slug));
   const book = (practitionerId) => {
     patchDraft({ ...serviceSelectionPatch(service, draft), duration: Number(duration), practitionerId: practitionerId || "", step: 0 });
