@@ -56,6 +56,7 @@ grep -q "validate_campaign_blocks" backend/availability.py
 grep -q "campaign-blocks" backend/availability.py
 grep -q "CampaignSlotsEditor" frontend/src/pages/practitioner/Availability.jsx
 grep -q "WeeklyHoursEditor" frontend/src/pages/practitioner/Availability.jsx
+grep -q "schedule-sections" frontend/src/pages/practitioner/Availability.jsx
 grep -q "saveCampaignBlocks" frontend/src/lib/api.js
 grep -q "campaignId" frontend/src/pages/client/BookingSteps.jsx
 
@@ -158,7 +159,7 @@ corepack yarn install --frozen-lockfile
 corepack yarn build
 BUNDLE="$(grep -oE '/assets/index-[^\" ]+\.js' build/index.html | head -1)"
 test -n "$BUNDLE"
-if ! grep -Rql "weekly-hours-editor\|campaign-slots-editor\|Save Campaign Slots\|Save Schedule" build/assets/*.js; then
+if ! grep -Rql "weekly-hours-editor\|campaign-slots-editor\|schedule-sections\|Save Schedule\|Save Campaign Slots" build/assets/*.js; then
   echo "Refusing: schedule / campaign slots UI missing from build" >&2
   exit 2
 fi
