@@ -22,6 +22,11 @@ export function DutyRosterPicker({
 
   useEffect(() => {
     let live = true;
+    if (typeof api.teamDirectory !== "function") {
+      setPeople([]);
+      setError("Directory unavailable");
+      return () => { live = false; };
+    }
     api.teamDirectory()
       .then((body) => {
         if (!live) return;

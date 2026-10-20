@@ -11,6 +11,7 @@ vi.mock("@/lib/api", () => ({
     etransferSettings: async () => ({ recipientEmail: "", recipientName: "", instructions: "", referenceFormat: "" }),
     geoSuggest: async () => ({ suggestions: [] }),
     geoClinicConfirm: async () => ({ accepted: false, navigation: "unavailable" }),
+    teamDirectory: async () => ({ people: [] }),
   },
   apiError: () => "unavailable",
 }));
