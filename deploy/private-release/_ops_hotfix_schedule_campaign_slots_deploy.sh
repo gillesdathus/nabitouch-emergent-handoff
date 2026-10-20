@@ -9,7 +9,8 @@ if [ "${CONFIRM_HOTFIX_DEPLOY:-}" != "yes" ]; then
   exit 2
 fi
 
-HOTFIX_SHA="ebb879faadc786d626bba437cd3fd547b96cb38d"
+# Tip of feature/practitioner-schedule-campaign-slots must include this ancestor.
+REQUIRED_ANCESTOR="a656194"
 BRANCH="feature/practitioner-schedule-campaign-slots"
 REPO="https://github.com/gillesdathus/nabitouch-emergent-handoff.git"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -43,11 +44,14 @@ docker image inspect "$PREV_TAG" --format='prev={{.Id}}'
 
 echo "=== fetch hotfix source ==="
 rm -rf "$SRC"
-git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC"
+git clone --depth 40 --branch "$BRANCH" "$REPO" "$SRC"
 cd "$SRC"
 FULL_SHA="$(git rev-parse HEAD)"
 echo "FULL_SHA=$FULL_SHA"
-test "$FULL_SHA" = "$HOTFIX_SHA" || test "${FULL_SHA:0:7}" = "${HOTFIX_SHA:0:7}"
+git merge-base --is-ancestor "$REQUIRED_ANCESTOR" HEAD || {
+  echo "Refusing: tip $FULL_SHA does not contain schedule feature $REQUIRED_ANCESTOR"
+  exit 2
+}
 grep -q "validate_campaign_blocks" backend/availability.py
 grep -q "campaign-blocks" backend/availability.py
 grep -q "CampaignSlotsEditor" frontend/src/pages/practitioner/Availability.jsx
@@ -197,6 +201,7 @@ cat > "${BACKUP_DIR}/SCHEDULE_CAMPAIGN_SLOTS_${STAMP}.manifest" <<EOF
 timestamp_utc=${STAMP}
 change=practitioner-schedule-campaign-slots
 hotfix_sha=${FULL_SHA}
+required_ancestor=${REQUIRED_ANCESTOR}
 frontend_previous=$(basename "$STAGE_TAR")
 frontend_live_backup=$(basename "$FE_TAR")
 frontend_bundle=${BUNDLE}
