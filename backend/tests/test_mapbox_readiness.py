@@ -123,7 +123,7 @@ def test_eta_cache_is_invalidated_when_destination_changes(monkeypatch):
     import tracking
     monkeypatch.setenv("MAPBOX_TOKEN", "pk.synthetic-only")
     async def cached(_): return None
-    async def save(*args): pass
+    async def save(*args, **kwargs): pass
     monkeypatch.setattr(tracking, "cache_get", cached)
     monkeypatch.setattr(tracking, "cache_set", save)
     directions = MapboxDirections(); calls = []

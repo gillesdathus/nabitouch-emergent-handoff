@@ -284,6 +284,9 @@ def test_production_process_refuses_uploads_cards_and_import():
         assert state["clients"] == []
         assert state["appointments"] == []
         assert state["services"]
+        # Full launch seed must run before trial upsert; a lone trial row skips reset_data.
+        assert any(row.get("slug") == "swedish" for row in state["services"])
+        assert state["settings"], "launch seed must include settings (trial upsert must not precede reset_data)"
         assert state["settings"][0]["documentUploadsEnabled"] is False
         assert state["settings"][0]["cardCheckoutEnabled"] is False
         checkout = requests.post(API + "/invoices/none/checkout", json={}, timeout=10)

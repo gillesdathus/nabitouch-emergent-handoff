@@ -1,4 +1,5 @@
 """Security Shield Stage 2 — fleet vehicles, assignment, VIN fallback, flag gate."""
+import asyncio
 import os
 
 import pytest
@@ -65,8 +66,7 @@ def test_public_vehicle_never_includes_vin():
     assert public["photoIds"] == ["vph-1"]
 
 
-@pytest.mark.asyncio
-async def test_vin_decode_manual_fallback_when_lookup_fails(monkeypatch):
+def test_vin_decode_manual_fallback_when_lookup_fails(monkeypatch):
     class FailClient:
         def __init__(self, *a, **k):
             pass
@@ -81,7 +81,7 @@ async def test_vin_decode_manual_fallback_when_lookup_fails(monkeypatch):
             raise fleet_mod.httpx.ConnectError("down")
 
     monkeypatch.setattr(fleet_mod.httpx, "AsyncClient", FailClient)
-    result = await fleet_mod.decode_vin_nhtsa("1HGCM82633A004352")
+    result = asyncio.run(fleet_mod.decode_vin_nhtsa("1HGCM82633A004352"))
     assert result["ok"] is False
     assert "manually" in result["error"].lower() or "unavailable" in result["error"].lower()
 

@@ -251,9 +251,6 @@ async def lifespan(_app):
     await ensure_notifications(db)
     await ensure_messaging(db)
     await ensure_giftcards(db)
-    await ensure_trial_service(db)
-    await ensure_trial_campaign_locations(db)
-    await ensure_welcome_offer(db)
     await ensure_plans(db)
     await ensure_safety(db)
     await ensure_fleet(db)
@@ -265,8 +262,14 @@ async def lifespan(_app):
     await db.nt_cron_runs.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("at", expireAfterSeconds=120)
+    # Seed before trial/welcome upserts. ensure_trial_service inserts a catalogue
+    # row on empty DBs; running it first would make services.count > 0 and skip
+    # reset_data, leaving QA/launch boots without swedish, practitioners, or settings.
     if await coll("services").count_documents({}) == 0:
         await reset_data()
+    await ensure_trial_service(db)
+    await ensure_trial_campaign_locations(db)
+    await ensure_welcome_offer(db)
     if not is_production():
         await coll("promotions").update_many(
             {"approval": {"$exists": False}, "enabled": True},
