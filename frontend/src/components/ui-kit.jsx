@@ -74,16 +74,20 @@ export function PageSkeleton({ error }) {
   );
 }
 
-// Operational timeline (staff). Shows every recorded lifecycle event.
+// Operational timeline (staff). Lifecycle statuses and Security Shield event types.
 export function OpsTimeline({ appt, compact }) {
   const events = appt.events || [];
+  const labelOf = (e) => {
+    if (e.type && e.type !== e.status) return String(e.type).replace(/_/g, " ");
+    return STATUS[e.status]?.label || e.status || e.type || "event";
+  };
   return (
     <ol className="relative space-y-3 pl-5 before:absolute before:left-[7px] before:top-1 before:bottom-1 before:w-px before:bg-sky-200" data-testid="ops-timeline">
       {events.map((e, i) => (
-        <motion.li key={`${e.status}-${i}`} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: compact ? 0 : i * 0.04 }} className="relative">
+        <motion.li key={`${e.type || e.status}-${e.at}-${i}`} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: compact ? 0 : i * 0.04 }} className="relative">
           <span className={`absolute -left-5 top-1 h-3.5 w-3.5 rounded-full border-2 border-white ${i === events.length - 1 ? "nb-gradient" : "bg-sky-300"}`} />
-          <div className="flex items-baseline justify-between gap-3 text-sm"><span className="font-medium text-nb-ink">{STATUS[e.status]?.label || e.status}</span><span className="text-xs tabular-nums text-nb-mute">{fmtStamp(e.at)}</span></div>
-          {!compact && e.actor && <p className="text-[11px] text-slate-500">{e.actor}{e.note ? ` · ${e.note}` : ""}</p>}
+          <div className="flex items-baseline justify-between gap-3 text-sm"><span className="font-medium text-nb-ink">{labelOf(e)}</span><span className="text-xs tabular-nums text-nb-mute">{fmtStamp(e.at)}</span></div>
+          {!compact && (e.actor || e.note || e.label) && <p className="text-[11px] text-slate-500">{e.actor}{(e.note || e.label) ? ` · ${e.note || e.label}` : ""}</p>}
         </motion.li>
       ))}
     </ol>

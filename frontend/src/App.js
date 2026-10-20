@@ -47,6 +47,11 @@ const OwnerPlans = lazy(() => import("@/pages/owner/Plans"));
 const OwnerChannels = lazy(() => import("@/pages/owner/Channels"));
 const OwnerWinback = lazy(() => import("@/pages/owner/Winback"));
 const SafetyAlerts = lazy(() => import("@/pages/owner/Safety"));
+const OwnerFleet = lazy(() => import("@/pages/owner/Fleet"));
+const OwnerSecurityShield = lazy(() => import("@/pages/owner/SecurityShield"));
+const OwnerVisitTimeline = lazy(() => import("@/pages/owner/VisitTimeline"));
+const ProMyVehicle = lazy(() => import("@/pages/practitioner/MyVehicle"));
+const ProShieldDocs = lazy(() => import("@/pages/practitioner/ShieldDocs"));
 const GiftCardsAdmin = lazy(() => import("@/pages/owner/GiftCards"));
 const ClientWorkspace = lazy(() => import("@/pages/staff/ClientWorkspace"));
 const OwnerReports = lazy(() => import("@/pages/owner/Reports"));
@@ -149,6 +154,8 @@ export default function App() {
                     <Route path="/pro/messages" element={<ProMessages />} />
                     <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                     <Route path="/pro/recovery" element={<ProRecovery />} />
+                    <Route path="/pro/vehicle" element={<ProMyVehicle />} />
+                    <Route path="/pro/shield" element={<ProShieldDocs />} />
                   </Route>
                 </Route>
                 <Route element={<StaffShell role="owner" />}>
@@ -164,6 +171,9 @@ export default function App() {
                   <Route path="/owner/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
+                  <Route path="/owner/fleet" element={<OwnerFleet />} />
+                  <Route path="/owner/shield" element={<OwnerSecurityShield />} />
+                  <Route path="/owner/shield/timeline/:id" element={<OwnerVisitTimeline />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
                   <Route path="/owner/clients" element={<StaffClients role="owner" />} />

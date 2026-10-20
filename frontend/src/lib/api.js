@@ -304,6 +304,48 @@ export const api = {
   safetyManagers: () => http.get('/safety/managers').then(data),
   saveSafetyManagers: (managers) => http.put('/safety/managers', { managers }).then(data),
   safetyMe: () => http.get('/safety/me').then(data),
+  fleetStatus: () => http.get('/fleet/status').then(data),
+  fleetVehicles: (includeArchived = false) => http.get('/fleet/vehicles', { params: { include_archived: includeArchived } }).then(data),
+  fleetVehicle: (id) => http.get(`/fleet/vehicles/${id}`).then(data),
+  fleetCreateVehicle: (body) => http.post('/fleet/vehicles', body).then(data),
+  fleetUpdateVehicle: (id, body) => http.patch(`/fleet/vehicles/${id}`, body).then(data),
+  fleetArchiveVehicle: (id) => http.post(`/fleet/vehicles/${id}/archive`, {}).then(data),
+  fleetAssignVehicle: (id, body) => http.post(`/fleet/vehicles/${id}/assign`, body).then(data),
+  fleetAssignmentHistory: (id) => http.get(`/fleet/vehicles/${id}/assignments`).then(data),
+  fleetVinDecode: (vin) => http.post('/fleet/vin-decode', { vin }).then(data),
+  fleetMine: () => http.get('/fleet/mine').then(data),
+  fleetPractitionerVehicle: (practitionerId) => http.get(`/fleet/practitioners/${practitionerId}/vehicle`).then(data),
+  fleetAddPhoto: (id, file, caption = '') => {
+    const body = new FormData();
+    body.append('upload', file);
+    if (caption) body.append('caption', caption);
+    return http.post(`/fleet/vehicles/${id}/photos`, body).then(data);
+  },
+  fleetRemovePhoto: (vehicleId, photoId) => http.delete(`/fleet/vehicles/${vehicleId}/photos/${photoId}`).then(data),
+  fleetPhotoUrl: (photoId, appointmentId) => `${process.env.REACT_APP_BACKEND_URL}/api/fleet/photos/${photoId}${appointmentId ? `?appointmentId=${encodeURIComponent(appointmentId)}` : ''}`,
+  shieldStatus: () => http.get('/shield/status').then(data),
+  shieldDriverCredentials: () => http.get('/shield/driver-credentials').then(data),
+  shieldSubmitDriverCredential: (body) => http.post('/shield/driver-credentials', body).then(data),
+  shieldVerifyDriverCredential: (id, body) => http.post(`/shield/driver-credentials/${id}/verify`, body).then(data),
+  shieldVehicleDocuments: (vehicleId) => http.get(`/shield/vehicles/${vehicleId}/documents`).then(data),
+  shieldUpsertVehicleDocument: (vehicleId, body) => http.post(`/shield/vehicles/${vehicleId}/documents`, body).then(data),
+  shieldVerifyVehicleDocument: (id, body) => http.post(`/shield/vehicle-documents/${id}/verify`, body).then(data),
+  shieldUploadFile: (file, kind = 'shield', ownerId = '') => {
+    const body = new FormData();
+    body.append('upload', file);
+    body.append('kind', kind);
+    if (ownerId) body.append('ownerId', ownerId);
+    return http.post('/shield/files', body).then(data);
+  },
+  shieldRenewals: (params = {}) => http.get('/shield/renewals', { params }).then(data),
+  shieldRenewalScan: () => http.post('/shield/renewals/scan', {}).then(data),
+  shieldArrivalCode: (id) => http.get(`/shield/appointments/${id}/arrival-code`).then(data),
+  shieldArrivalStatus: (id) => http.get(`/shield/appointments/${id}/arrival-code/status`).then(data),
+  shieldVerifyArrivalCode: (id, code) => http.post(`/shield/appointments/${id}/arrival-code/verify`, { code }).then(data),
+  shieldArrivalFallback: (id) => http.post(`/shield/appointments/${id}/arrival-code/fallback`, {}).then(data),
+  shieldTimeline: (id) => http.get(`/shield/appointments/${id}/timeline`).then(data),
+  shieldActiveVisits: () => http.get('/shield/active-visits').then(data),
+  shieldSafetySampling: (id, enabled) => http.post(`/shield/appointments/${id}/safety-sampling`, { enabled }).then(data),
   registerDevice: (body) => http.post('/devices', body).then(data),
   removeDevice: (id) => http.delete(`/devices/${id}`).then(data),
   planNudge: () => http.get('/plans/nudge').then(data),

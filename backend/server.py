@@ -43,7 +43,10 @@ import asyncio
 from math import radians, sin, cos, asin, sqrt
 from config import (
     cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider,
-    is_production, practitioner_booking_email_enabled, profile_photos_enabled, stripe_card_checkout_enabled, validate_env,
+    is_production, practitioner_booking_email_enabled, profile_photos_enabled,
+    security_shield_arrival_code_enabled, security_shield_docs_enabled,
+    security_shield_expiry_enforcement_enabled, security_shield_fleet_enabled,
+    security_shield_safety_sampling_enabled, stripe_card_checkout_enabled, validate_env,
 )
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
@@ -75,6 +78,11 @@ from trial import (
 )
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
+from fleet import build_fleet_router, ensure_fleet
+from shield import (
+    assert_arrival_verified_for_treatment, assert_driving_docs_ok, build_shield_router,
+    ensure_arrival_code_on_booking, ensure_shield, run_renewal_scan,
+)
 from devices import build_devices_router, ensure_devices, notify as push_notify
 from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
 from followup_coupons import (
@@ -196,6 +204,10 @@ async def _notification_worker():
             if asyncio.get_running_loop().time() - last_reminders > 60:
                 await reconcile_pending_email_receipts(db)
                 await enqueue_due_email_reminders(db, coll)
+                try:
+                    await run_renewal_scan(db, coll)
+                except Exception:
+                    logging.getLogger(__name__).exception("Shield renewal scan failed")
                 last_reminders = asyncio.get_running_loop().time()
             worked = await process_available(db, _deliver_booking, worker_id, _audit_mail)
         except Exception:
@@ -244,6 +256,8 @@ async def lifespan(_app):
     await ensure_welcome_offer(db)
     await ensure_plans(db)
     await ensure_safety(db)
+    await ensure_fleet(db)
+    await ensure_shield(db)
     await ensure_devices(db)
     await ensure_winback(db)
     await ensure_followup(db)
@@ -315,6 +329,11 @@ async def health():
         "redis": await redis_state(),
         "documentUploads": document_uploads_enabled(),
         "cardCheckout": stripe_card_checkout_enabled(),
+        "securityShieldFleet": security_shield_fleet_enabled(),
+        "securityShieldDocs": security_shield_docs_enabled(),
+        "securityShieldArrivalCode": security_shield_arrival_code_enabled(),
+        "securityShieldExpiryEnforcement": security_shield_expiry_enforcement_enabled(),
+        "securityShieldSafetySampling": security_shield_safety_sampling_enabled(),
     }
 
 
@@ -431,6 +450,24 @@ def present_trip(appt):
     return {**appt, "trip": trip}
 
 
+def present_shield_fields(appt, role):
+    """Strip arrival-code secrets from state. Clients load plaintext via /shield/.../arrival-code."""
+    if not appt:
+        return appt
+    meta = appt.get("arrivalCode")
+    if not meta:
+        return appt
+    safe = {
+        "issued": bool(meta.get("codeHash")),
+        "digits": meta.get("digits") or 6,
+        "verifiedAt": meta.get("verifiedAt"),
+        "lockedUntil": meta.get("lockedUntil"),
+        "attempts": (meta.get("attempts") or 0) if role in ("owner", "practitioner", "manager") else 0,
+        "fallbackUsed": bool(meta.get("fallbackUsed")) if role in ("owner", "manager") else False,
+    }
+    return {**appt, "arrivalCode": safe}
+
+
 def hide_practitioner_home(appt):
     """Clients and the desk see the visit, not the practitioner's exact start. A missing GPS fix is left missing."""
     trip = appt.get("trip") or {}
@@ -470,6 +507,11 @@ def shape_settings(docs, role):
         "cardCheckoutEnabled": stripe_card_checkout_enabled(),
         "invoiceEmailEnabled": invoice_email_enabled(),
         "giftCardsEnabled": giftcards_enabled(),
+        "securityShieldFleetEnabled": security_shield_fleet_enabled(),
+        "securityShieldDocsEnabled": security_shield_docs_enabled(),
+        "securityShieldArrivalCodeEnabled": security_shield_arrival_code_enabled(),
+        "securityShieldExpiryEnforcementEnabled": security_shield_expiry_enforcement_enabled(),
+        "securityShieldSafetySamplingEnabled": security_shield_safety_sampling_enabled(),
     }
     return [{**doc, **flags} for doc in shaped]
 
@@ -607,7 +649,7 @@ async def get_state(request: Request):
             q = q.sort("at", -1).limit(80)
         out[name] = await q.to_list(1000)
     out["clients"] = [{**client, "insurance": open_insurance(client.get("insurance"))} if "insurance" in client else client for client in out["clients"]]
-    out["appointments"] = [present_trip(appt) for appt in out["appointments"]]
+    out["appointments"] = [present_shield_fields(present_trip(appt), role) for appt in out["appointments"]]
     out["soap"] = [open_tree(note) for note in out["soap"]]
     out["settings"] = shape_settings(out["settings"], role)
     out["practitioners"] = [present_practitioner(person, role) for person in out["practitioners"] if visible_profile(person, role, sub)]
@@ -744,6 +786,7 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
     if to not in TRANSITIONS.get(cur, []):
         raise HTTPException(409, f"Cannot move from {cur} to {to}")
     if to == "in_session":
+        await assert_arrival_verified_for_treatment(appt)
         await assert_session_ready(db, appt)
         await assert_no_active_session(coll, appt)
     ts = now_iso()
@@ -763,6 +806,12 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
     if to == "session_ended" or (to == "leaving" and cur == "interrupted" and session.get("startedAt") and not session.get("endedAt")):
         upd.update(await session_end_update(coll, {**appt, "timer": upd.get("timer", appt.get("timer"))}, ts))
     if to == "en_route":
+        await assert_driving_docs_ok(
+            db,
+            practitioner_id=appt.get("practitionerId"),
+            vehicle_id=appt.get("vehicleId"),
+            action="start On My Way",
+        )
         upd["trip"] = await start_trip(appt, ts, location)
         if upd["trip"].get("sharing"):
             await open_sharing_session(appt["id"], appt.get("practitionerId"))
@@ -824,6 +873,10 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
         await push_notify(db, "visit_arrived", saved["id"], saved)
     if to in ("confirmed", "assigned"):
         await queue_sms(db, coll, "booking_confirmed", appt, appt["id"])
+        try:
+            await ensure_arrival_code_on_booking(coll, saved)
+        except Exception:
+            logging.getLogger(__name__).exception("Arrival code not issued")
     if to == "assigned" and appt.get("practitionerId"):
         await push_notify(db, "visit_assigned", f"{appt['id']}:{appt['practitionerId']}", appt)
     if to in ("completed", "cancelled", "no_show", "closed"):
@@ -2702,6 +2755,19 @@ app.include_router(build_giftcard_router(db, coll, add_audit, user_from, recepti
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_fleet_router(db, coll, add_audit, user_from))
+
+
+async def _shield_step_up(user):
+    settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
+    if not settings.get("requireMfaForPrivileged") and not settings.get("mfaEnforcePrivileged"):
+        return
+    session = await db.nt_sessions.find_one({"sid": user.get("sid")}) if user.get("sid") else None
+    if not session or not session.get("mfaAt"):
+        raise HTTPException(403, "Confirm your authenticator before this action")
+
+
+app.include_router(build_shield_router(db, coll, add_audit, user_from, _shield_step_up))
 app.include_router(build_session_care_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_reviews_router(db, coll, add_audit, user_from))
 app.include_router(build_turnaround_router(db, coll, add_audit, user_from, reception_perms))

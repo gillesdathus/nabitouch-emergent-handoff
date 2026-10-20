@@ -72,6 +72,31 @@ def document_uploads_enabled():
     return _flag("DOCUMENT_UPLOADS_ENABLED", False)
 
 
+def security_shield_fleet_enabled():
+    """Security Shield fleet / vehicle registry. Unset stays off. Does not enable clinical document uploads."""
+    return _flag("SECURITY_SHIELD_FLEET_ENABLED", False)
+
+
+def security_shield_docs_enabled():
+    """Driver licence + vehicle insurance/registration (private sealed files). Unset stays off. Independent of DOCUMENT_UPLOADS_ENABLED."""
+    return _flag("SECURITY_SHIELD_DOCS_ENABLED", False)
+
+
+def security_shield_arrival_code_enabled():
+    """Six-digit appointment arrival verification. Unset stays off."""
+    return _flag("SECURITY_SHIELD_ARRIVAL_CODE_ENABLED", False)
+
+
+def security_shield_expiry_enforcement_enabled():
+    """When on: block new vehicle assignment / On My Way if driving docs are expired. Does not cancel visits."""
+    return _flag("SECURITY_SHIELD_EXPIRY_ENFORCEMENT", False)
+
+
+def security_shield_safety_sampling_enabled():
+    """Opt-in short breadcrumb ring during en_route for incident reconstruction. ETA cadence stays 300s."""
+    return _flag("SECURITY_SHIELD_SAFETY_SAMPLING_ENABLED", False)
+
+
 def profile_photos_enabled():
     """Client profile avatar (small JPEG/PNG data URL on the client record). Independent of clinical document uploads. Unset stays on."""
     return _flag("PROFILE_PHOTOS_ENABLED", True)

@@ -26,6 +26,8 @@ const OWNER_MORE = [
   ["/owner/clients", "Clients"],
   ["/owner/practitioners", "Practitioners"],
   ["/owner/dispatch", "Live Fleet"],
+  ["/owner/fleet", "Security Shield · Fleet"],
+  ["/owner/shield", "Security Shield"],
   ["/owner/turnaround", "Session turnaround"],
   ["/owner/feedback", "Client feedback"],
   ["/owner/messages", "Visit messages"],
@@ -59,6 +61,8 @@ const STAFF = {
       { to: "/pro/profile", label: "Me", icon: UserRound },
     ],
     more: [
+      { to: "/pro/vehicle", label: "My vehicle", icon: Truck },
+      { to: "/pro/shield", label: "Driver's licence", icon: ShieldCheck },
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
       { to: "/pro/earnings", label: "Earnings", icon: ReceiptText },
       { to: "/pro/ratings", label: "Client ratings", icon: Star },

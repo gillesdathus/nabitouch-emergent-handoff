@@ -15,6 +15,8 @@ import { api, apiError } from "@/lib/api";
 import { DONE, fmtDate, fmtTime, isClinicVisit, isMobileTrackable, money, trackVisitView, visitNavigationPoint } from "@/lib/domain";
 import { preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
 import { shouldShowPosition, useLiveSession } from "@/lib/tracking/live";
+import { ClientArrivalCode, TrackVisitVehicle } from "@/components/ArrivalCodePanel";
+import { restrictedFlag } from "@/lib/feature-flags";
 
 function serviceLabel(services, slug) {
   return services?.[slug]?.name || "Treatment";
@@ -134,6 +136,8 @@ export default function TrackVisit() {
   const { me, user, state, idx, patchDraft } = useDemo();
   const [receipt, setReceipt] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const shieldFleet = restrictedFlag(idx?.settings, "securityShieldFleetEnabled");
+  const shieldArrival = restrictedFlag(idx?.settings, "securityShieldArrivalCodeEnabled");
 
   const appt = useMemo(() => {
     if (!me || !id) return null;
@@ -266,6 +270,14 @@ export default function TrackVisit() {
             <LiveEtaPanel sess={sess} onRefresh={refreshEta} refreshing={refreshing} />
           </div>
         </div>
+      )}
+
+      {shieldFleet && mobile && !clinic && ["confirmed", "preparing", "en_route", "arrived", "in_session"].includes(view) && (
+        <TrackVisitVehicle appt={appt} practitioner={practitioner} />
+      )}
+
+      {shieldArrival && mobile && !clinic && ["confirmed", "preparing", "en_route", "arrived"].includes(view) && (
+        <ClientArrivalCode apptId={appt.id} />
       )}
 
       <div className="nb-card space-y-4 p-5">

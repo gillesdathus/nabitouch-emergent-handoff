@@ -19,12 +19,12 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from config import cookie_samesite, cookie_secure, is_production
+from config import cookie_samesite, cookie_secure, is_production, security_shield_safety_sampling_enabled
 from tracking_store import (
-    TrackingUnavailable, accept_fix, allow_rate, cache_drop, cache_get, cache_set,
+    TrackingUnavailable, accept_fix, allow_rate, append_safety_sample, cache_drop, cache_get, cache_set,
     clear_all, drop_session, force_set, issue_capability, lookup_browser, lookup_capability,
-    open_guest_browser, poll_events, publish_event, read_fix, redact_location_events, revoke_capabilities,
-    subscribe, touch,
+    open_guest_browser, poll_events, publish_event, read_fix, read_safety_samples, redact_location_events,
+    revoke_capabilities, subscribe, touch,
 )
 
 EVENT_VERSION = 1
@@ -378,7 +378,8 @@ def build_tracking_router(coll, add_audit, user_from):
         out = {"appointmentId": appt["id"], "status": appt["status"], "sharing": sharing, "phase": phase,
                "lastFixAt": fresh["serverTime"] if fresh else None, "ageSec": round(age, 1) if age is not None else None,
                "stale": phase == "stale", "approximate": fresh.get("approximate") if fresh else None,
-               "source": fresh.get("source") if fresh else None, "confirmedArrival": False}
+               "source": fresh.get("source") if fresh else None,
+               "confirmedArrival": bool((appt.get("arrivalCode") or {}).get("verifiedAt") or appt.get("clientVerifiedAt"))}
         show_pos = include_pos and fresh and phase in ("live", "stale") and not paused
         dest = (appt.get("trip") or {}).get("to") or {}
         if not dest.get("lat") or not dest.get("lng"):
@@ -564,6 +565,21 @@ def build_tracking_router(coll, add_audit, user_from):
             raise HTTPException(503, "Tracking is temporarily unavailable") from exc
         if rejected is not None:
             return {"accepted": False, "reason": "out_of_order", "lastSeq": rejected}
+        # Opt-in safety breadcrumbs only (approved). ETA recalculation cadence stays ETA_REFRESH_SEC.
+        sampling = security_shield_safety_sampling_enabled() and (
+            (appt.get("trip") or {}).get("safetySampling") or (appt.get("safety") or {}).get("sampling")
+        )
+        if sampling and fix.source == "gps":
+            try:
+                await append_safety_sample(aid, {
+                    "lat": round(float(fix.lat), 5),
+                    "lng": round(float(fix.lng), 5),
+                    "at": now_iso(),
+                    "accuracy": fix.accuracy,
+                    "seq": fix.seq,
+                })
+            except TrackingUnavailable:
+                pass
         await emit("location.updated", appt, {"accuracy": fix.accuracy, "seq": fix.seq})
         await emit("eta.updated", appt, {"etaMin": eta.get("etaMin"), "remainingKm": eta.get("remainingKm"), "provider": eta.get("provider"), "confirmed": False})
         return {"accepted": True, "eta": eta}
@@ -763,7 +779,8 @@ async def on_transition(appt: dict, to: str, extra: Optional[dict] = None):
     """Called by the single lifecycle (server.apply_transition) — no second state model."""
     t = TRANSITION_EVENTS.get(to)
     try:
-        if to == "en_route" or to not in ("en_route", "delayed"):
+        # Do not drop the Redis session when entering en_route — open_sharing_session just created it.
+        if to not in ("en_route", "delayed"):
             await drop_session(appt["id"])
             await DIRECTIONS.drop(appt["id"])
             await redact_location_events(appt["id"])

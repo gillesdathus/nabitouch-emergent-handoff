@@ -134,8 +134,16 @@ def build_safety_router(db, coll, add_audit, user_from, apply_transition):
     async def assist(aid: str, request: Request):
         user, appt = await own_visit(aid, request)
         note = str((await body_of(request)).get("note") or "").strip()[:300]
-        row = await record(appt, user, "assist", note=note, label=ASSIST_LABEL)
-        return {"event": public(row), "label": ASSIST_LABEL, "dispatch": False}
+        last_known = None
+        try:
+            from tracking_store import TrackingUnavailable, read_fix
+            fix = await read_fix(aid)
+            if fix and "lat" in fix:
+                last_known = {"lat": fix["lat"], "lng": fix["lng"], "at": fix.get("serverTime"), "accuracy": fix.get("accuracy")}
+        except Exception:
+            last_known = None
+        row = await record(appt, user, "assist", note=note, label=ASSIST_LABEL, lastKnown=last_known, dispatch=False)
+        return {"event": public(row), "label": ASSIST_LABEL, "dispatch": False, "lastKnown": last_known}
 
     @r.post("/appointments/{aid}/emergency-call")
     async def emergency_call(aid: str, request: Request):

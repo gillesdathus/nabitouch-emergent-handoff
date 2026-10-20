@@ -48,6 +48,7 @@ NOTICE_COPY = {
     "arrived": "Your Nabitouch therapist has arrived. Location sharing has stopped.",
     "completed": "The visit was marked complete.",
     "delayed": "A delay was saved on the visit.",
+    "vehicle_changed": "Your therapist’s assigned vehicle was updated. Open Track Visit to confirm the make, colour, and plate before they arrive.",
 }
 
 
@@ -164,7 +165,12 @@ async def record_trip_notice(db, appt, event, delay_min=None, reason=""):
         return None
     stamp = _now()
     delay = int(delay_min) if delay_min else None
-    dedupe = f"{appt['id']}:{event}:{delay or ''}:{stamp[:16]}" if event == "delayed" else f"{appt['id']}:{event}"
+    if event == "delayed":
+        dedupe = f"{appt['id']}:{event}:{delay or ''}:{stamp[:16]}"
+    elif event == "vehicle_changed":
+        dedupe = f"{appt['id']}:{event}:{stamp[:16]}"
+    else:
+        dedupe = f"{appt['id']}:{event}"
     body = NOTICE_COPY[event]
     if event == "delayed" and delay:
         body = f"Running {delay} minutes late was saved on the visit. This status is in the app only."

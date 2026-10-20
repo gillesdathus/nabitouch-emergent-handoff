@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, Navigation, MapPin, Pause, Play, Radio, Clock, AlertTriangle, Timer, MessageCircle } from "lucide-react";
 import { Confirm, OpsTimeline, StatusPill, useNow, SuccessMark, Pill } from "@/components/ui-kit";
+import { PractitionerArrivalVerify } from "@/components/ArrivalCodePanel";
+import { restrictedFlag } from "@/lib/feature-flags";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { LiveMap } from "@/components/LiveMap";
 import { useDemo } from "@/store/DemoStore";
@@ -195,6 +197,24 @@ export default function Visit() {
             : <button type="button" onClick={() => run(() => api.trackingStop(appt.id), "Location sharing stopped")} data-testid="tracking-stop-btn" className="nb-btn-ghost h-11 text-sm">Stop location sharing</button>}
         </div>
         <p className="text-[11px] text-nb-mute" data-testid="tracking-permission-note">On My Way shares your location only for this visit. The browser asks before using GPS, and a locked phone may pause updates. Background tracking is not guaranteed.</p>
+        {restrictedFlag(idx?.settings, "securityShieldSafetySamplingEnabled") && (
+          <button
+            type="button"
+            data-testid="safety-sampling-toggle"
+            className="nb-btn-ghost h-10 w-full text-xs"
+            onClick={() => run(
+              () => api.shieldSafetySampling(appt.id, !appt.trip?.safetySampling),
+              appt.trip?.safetySampling ? "Safety sampling stopped" : "Safety sampling on for this trip",
+            )}
+          >
+            {appt.trip?.safetySampling ? "Turn off opt-in safety location sampling" : "Enable opt-in safety location sampling"}
+          </button>
+        )}
+        {appt.trip?.safetySampling && (
+          <p className="text-[11px] text-amber-800" data-testid="safety-sampling-note">
+            A short temporary breadcrumb trail is stored for authorized safety review. ETA still refreshes at most every five minutes. This is not continuous tracking or emergency dispatch.
+          </p>
+        )}
       </div>}
       {appt.status === "en_route" && <SharingIndicator appt={appt} me={me} trial={trial} />}
       {appt.status === "en_route" && <p className={`rounded-2xl p-2.5 text-xs ${pub.status === "sharing" ? "bg-teal-50 text-teal-800" : "bg-amber-50 text-amber-800"}`} data-testid="tracking-publisher-status">Tracking service: <b>{pub.status}</b>{pub.lastAck ? ` · last fix accepted ${pub.lastAck.toLocaleTimeString()}` : ""}{pub.error ? ` · ${pub.error}` : ""} <span className="opacity-70" data-testid="tracking-source">(phone GPS while this page is open)</span></p>}
@@ -221,6 +241,7 @@ export default function Visit() {
         </div>
       </div>
 
+      {["arrived", "en_route"].includes(appt.status) && <PractitionerArrivalVerify appt={appt} onVerified={refresh} />}
       {appt.status === "safety_hold" && <Notice tone="warn" icon={AlertTriangle} className="!bg-rose-50 !text-rose-900" testid="visit-safety-hold">This visit is on safety hold. The owner or a safety manager decides how it continues. No penalty is applied automatically.</Notice>}
       {SAFETY_STATUSES.includes(appt.status) && <SafetyCenter appt={appt} />}
       <div className="nb-card rounded-[28px] p-5"><Stepper steps={["Prepare", "En route", "Arrived", "Session", "Done"]} current={appt.status === "safety_hold" ? ["preparing", "en_route", "arrived", "in_session"].indexOf(appt.events?.filter((e) => e.status !== "safety_hold").slice(-1)[0]?.status) : ["preparing", "en_route", "arrived", "in_session", "completed"].indexOf(appt.status)} testid="visit-stepper" /><p className="nb-label mt-4 flex items-center gap-2"><Timer className="h-4 w-4" />Visit timeline</p><OpsTimeline appt={appt} /></div>
