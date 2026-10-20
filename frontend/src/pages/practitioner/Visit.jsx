@@ -147,9 +147,19 @@ export default function Visit() {
         if (a.to === "en_route") {
           const fix = await readTripOrigin();
           if (fix.status === "ready") location = fix.location;
-          else toast.message("Current location is unavailable.");
+          else toast.message("Location sharing will start without a GPS fix. ETA stays unavailable until GPS is available.");
         }
-        await run(() => api.transition(appt.id, a.to, actor, undefined, undefined, location)); setFlash(true); setTimeout(() => setFlash(false), 1100);
+        await run(() => api.transition(appt.id, a.to, actor, undefined, undefined, location));
+        if (a.to === "en_route" && appt.locationType !== "clinic") {
+          try {
+            await api.trackingStart(appt.id);
+          } catch {
+            /* Server On My Way already opens sharing; this call is a Redis recovery path. */
+          }
+          await refresh();
+          toast.success("On My Way — location sharing is active for this visit");
+        }
+        setFlash(true); setTimeout(() => setFlash(false), 1100);
       }
     } catch (err) {
       if (a.to === "in_session") reloadReadiness();
@@ -177,17 +187,17 @@ export default function Visit() {
       {appt.status === "en_route" && <div className="nb-card space-y-3 p-4" data-testid="tracking-controls">
         <p className="text-sm"><b>Destination.</b> {appt.address?.line}</p>
         {sampleTripNotice(appt.trip) && <p className="text-sm text-amber-800" data-testid="visit-sample-trip">{sampleTripNotice(appt.trip)}</p>}
-        <p className="text-sm">Estimated travel {appt.trip?.from && appt.trip?.driveMin ? `${appt.trip.driveMin} min` : "is calculated once sharing starts"}. <span className="text-xs text-nb-mute">This is not a confirmed arrival.</span></p>
+        <p className="text-sm">Live ETA refreshes about every five minutes while GPS is available. <span className="text-xs text-nb-mute">This is not a confirmed arrival.</span></p>
         {tripOriginMessage(appt.trip) && <p className="text-sm text-amber-800" data-testid="visit-location-unavailable">{tripOriginMessage(appt.trip)} Nabitouch has not recorded a trip origin.</p>}
         <div className="flex flex-wrap gap-2">
           {!appt.trip?.sharing
-            ? <button type="button" onClick={() => run(() => api.trackingStart(appt.id))} data-testid="tracking-start-btn" className="nb-btn-primary h-11 px-4 text-sm">Start location sharing</button>
-            : <button type="button" onClick={() => run(() => api.trackingStop(appt.id))} data-testid="tracking-stop-btn" className="nb-btn-ghost h-11 text-sm">Stop location sharing</button>}
+            ? <button type="button" onClick={() => run(() => api.trackingStart(appt.id), "Location sharing started")} data-testid="tracking-start-btn" className="nb-btn-primary h-11 px-4 text-sm">Resume location sharing</button>
+            : <button type="button" onClick={() => run(() => api.trackingStop(appt.id), "Location sharing stopped")} data-testid="tracking-stop-btn" className="nb-btn-ghost h-11 text-sm">Stop location sharing</button>}
         </div>
-        <p className="text-[11px] text-nb-mute" data-testid="tracking-permission-note">Start sharing only for this visit. The browser asks before using GPS, and a locked phone may pause updates. Background tracking is not guaranteed.</p>
+        <p className="text-[11px] text-nb-mute" data-testid="tracking-permission-note">On My Way shares your location only for this visit. The browser asks before using GPS, and a locked phone may pause updates. Background tracking is not guaranteed.</p>
       </div>}
       {appt.status === "en_route" && <SharingIndicator appt={appt} me={me} trial={trial} />}
-      {appt.status === "en_route" && <p className={`rounded-2xl p-2.5 text-xs ${pub.status === "sharing" ? "bg-teal-50 text-teal-800" : "bg-amber-50 text-amber-800"}`} data-testid="tracking-publisher-status">Tracking service: <b>{pub.status}</b>{pub.lastAck ? ` · last fix accepted ${pub.lastAck.toLocaleTimeString()}` : ""}{pub.error ? ` · ${pub.error}` : ""} <span className="opacity-70" data-testid="tracking-source">{trial ? "(phone GPS while this page is open)" : "(the tracking service is not using phone GPS for this visit)"}</span></p>}
+      {appt.status === "en_route" && <p className={`rounded-2xl p-2.5 text-xs ${pub.status === "sharing" ? "bg-teal-50 text-teal-800" : "bg-amber-50 text-amber-800"}`} data-testid="tracking-publisher-status">Tracking service: <b>{pub.status}</b>{pub.lastAck ? ` · last fix accepted ${pub.lastAck.toLocaleTimeString()}` : ""}{pub.error ? ` · ${pub.error}` : ""} <span className="opacity-70" data-testid="tracking-source">(phone GPS while this page is open)</span></p>}
       {!training && READINESS_STATUSES.includes(appt.status) && <SessionReadiness readiness={readiness} canWithdraw={["arrived", "in_session"].includes(appt.status)} onWithdrawn={() => { reloadReadiness(); refresh(); reloadClock(); }} />}
       {training && ["in_session", "session_ended", "soap_pending", "interrupted"].includes(appt.status) && appt.timestamps?.in_session && <SessionTimer appt={appt} />}
       {!training && ["completed", "processing", "closed"].includes(appt.status) && <ClientRatingCard appt={appt} />}

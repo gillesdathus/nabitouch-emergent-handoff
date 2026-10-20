@@ -35,6 +35,7 @@ const ProfileForm = lazy(() => import("@/pages/client/ProfileForm"));
 const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
 const SessionPrep = lazy(() => import("@/pages/client/SessionPrep"));
+const TrackVisit = lazy(() => import("@/pages/client/TrackVisit"));
 const OwnerTurnaround = lazy(() => import("@/pages/owner/Turnaround"));
 const ClientReviews = lazy(() => import("@/pages/client/Reviews"));
 const OwnerFeedback = lazy(() => import("@/pages/owner/Feedback"));
@@ -122,6 +123,7 @@ export default function App() {
                   <Route path="/me/profile" element={<ProfileForm />} />
                   <Route path="/me/intake" element={<Intake />} />
                   <Route path="/me/visit/:id/prepare" element={<SessionPrep />} />
+                  <Route path="/me/visit/:id/track" element={<TrackVisit />} />
                   <Route path="/me/reviews" element={<ClientReviews />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />

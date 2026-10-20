@@ -27,12 +27,12 @@ export function useTrackingPublisher(appt, practitionerId, live = false) {
     window.addEventListener('nabitouch:resume', onResume);
     const beat = setInterval(() => api.trackingHeartbeat(apptRef.current.id).catch(() => {}), 20000);
     const msg = { denied: 'location permission denied — allow location for this site in your browser settings', timeout: 'GPS timed out', unavailable: 'GPS unavailable' };
-    const stop = locationProviderFor(() => apptRef.current, live).start(send, (code) => {
+    const stop = locationProviderFor().start(send, (code) => {
       if (code === 'not_live') { setState({ status: 'not using phone GPS', lastAck: null, error: null }); return; }
       setState((s) => ({ ...s, status: 'error', error: msg[code] || code }));
     });
     return () => { stop(); clearInterval(beat); window.removeEventListener('online', onOnline); window.removeEventListener('nabitouch:resume', onResume); };
-  }, [active, practitionerId, live]); // eslint-disable-line
+  }, [active, practitionerId]); // eslint-disable-line
 
   return state;
 }

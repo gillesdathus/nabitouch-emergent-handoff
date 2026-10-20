@@ -139,9 +139,9 @@ export function clientVisitProgress(appt) {
 // Practitioner big-button flow. `nav` = opens SOAP editor instead of transitioning.
 export const ACTIONS = [
   { to: 'preparing', label: 'Prepare for Visit', from: ['assigned', 'confirmed'], secondary: true },
-  { to: 'en_route', label: 'Start Travel', from: ['assigned', 'confirmed', 'preparing'] },
-  { to: 'arrived', label: "I've Arrived", from: ['en_route'] },
-  { to: 'in_session', label: 'Start Session', from: ['arrived'] },
+  { to: 'en_route', label: 'On My Way', from: ['assigned', 'confirmed', 'preparing'] },
+  { to: 'arrived', label: 'Mark Arrived', from: ['en_route'] },
+  { to: 'in_session', label: 'Start Treatment', from: ['arrived'] },
   { to: 'in_session', label: 'Resume Session', from: ['interrupted'] },
   { to: 'leaving', label: 'End Visit & Leave', from: ['interrupted'], confirm: 'End this visit without further treatment? Treatment time so far is recorded and cleanup starts.' },
   { to: 'session_ended', label: 'End Treatment', from: ['in_session'], confirm: 'End treatment now? The treatment time is recorded and the cleanup countdown starts.' },
@@ -282,6 +282,32 @@ function finitePoint(lat, lng) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
   return { lat: latitude, lng: longitude };
+}
+
+export function isClinicVisit(appt) {
+  return appt?.locationType === "clinic" || appt?.location === "clinic";
+}
+
+/** Mobile visits are eligible for Track Visit live travel; clinic visits are summary-only. */
+export function isMobileTrackable(appt) {
+  return !!appt && !isClinicVisit(appt);
+}
+
+/**
+ * Client Track Visit view states (A–E) plus terminal overlays.
+ * Live map/ETA belong only to en_route when trip.sharing is on — enforced by the Track Visit page.
+ */
+export function trackVisitView(appt) {
+  const status = appt?.status || "requested";
+  if (["cancelled", "no_show"].includes(status)) return "cancelled";
+  if (status === "rescheduled") return "rescheduled";
+  if (["interrupted", "safety_hold"].includes(status)) return status;
+  if (["requested", "confirmed", "assigned", "preparing", "reassigned"].includes(status)) return "confirmed";
+  if (status === "en_route" || status === "delayed") return "en_route";
+  if (status === "arrived") return "arrived";
+  if (status === "in_session") return "in_session";
+  if (["session_ended", "soap_pending", "soap_completed", "leaving", "completed", "processing", "closed"].includes(status)) return "completed";
+  return "confirmed";
 }
 
 export function visitNavigationPoint(appt) {

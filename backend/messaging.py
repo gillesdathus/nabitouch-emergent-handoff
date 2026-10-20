@@ -44,10 +44,10 @@ CLIENT_PRESETS = [
 PRESETS = {(item["role"], item["id"]): item for item in PRACTITIONER_PRESETS + CLIENT_PRESETS}
 
 NOTICE_COPY = {
-    "en_route": "The practitioner started the trip. This status is in the app only.",
-    "arrived": "The practitioner arrived. Location sharing follows the visit status. This status is in the app only.",
-    "completed": "The visit was marked complete. This status is in the app only.",
-    "delayed": "A delay was saved on the visit. This status is in the app only.",
+    "en_route": "Your Nabitouch therapist is on the way. Open Track Visit for an estimated arrival time.",
+    "arrived": "Your Nabitouch therapist has arrived. Location sharing has stopped.",
+    "completed": "The visit was marked complete.",
+    "delayed": "A delay was saved on the visit.",
 }
 
 

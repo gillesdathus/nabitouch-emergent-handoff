@@ -268,6 +268,9 @@ export default function Me() {
               <StatusPill status={next.status} client testid="upcoming-status-pill" />
             </div>
             <p className="relative mt-3 flex items-center gap-1 text-xs text-white/80"><MapPin className="h-3.5 w-3.5" />{next.address?.line || "Address on the visit"}</p>
+            <Link to={`/me/visit/${next.id}/track`} data-testid="upcoming-track-visit" className="relative mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white/15 px-5 text-sm font-semibold text-white ring-1 ring-white/25 backdrop-blur hover:bg-white/25">
+              <Navigation className="h-4 w-4" />Track visit
+            </Link>
           </div>
           <div className="nb-card p-5">
             <ClientTracker appt={next} />
@@ -362,6 +365,7 @@ function VisitRow({ a, onReceipt, onRebook }) {
       <CatalogueImage src={idx.services[a.serviceSlug]?.img} alt="" size="thumb" className="h-12 w-12 rounded-2xl object-cover" />
       <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{serviceLabel(idx.services, a.serviceSlug)} · {a.duration} min</p><p className="text-xs text-nb-mute">{fmtDate(a.date)} · {idx.practitioners[a.practitionerId]?.name || "—"}</p></div>
       <StatusPill status={a.status} client />
+      <Link to={`/me/visit/${a.id}/track`} data-testid={`visit-track-${a.id}`} className="text-xs font-semibold text-nb-blue">Track</Link>
       {onReceipt && DONE.includes(a.status) && <button onClick={onReceipt} data-testid={`visit-receipt-${a.id}`} className="text-xs font-semibold text-nb-blue">Receipt</button>}
       {onRebook && <button onClick={onRebook} data-testid={`visit-rebook-${a.id}`} className="text-xs font-semibold text-nb-teal">Rebook</button>}
     </div>

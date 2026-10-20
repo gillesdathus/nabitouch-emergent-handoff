@@ -169,7 +169,9 @@ class TestLifecycle:
         assert r.status_code == 200
         appt = get_appt(aid)
         trip = appt.get("trip") or {}
-        assert trip.get("sharing") is False
+        # On My Way starts appointment-scoped sharing for mobile visits immediately.
+        assert trip.get("sharing") is True
+        assert trip.get("sharingSource") == "practitioner"
         assert trip.get("simulated") is False
         assert trip.get("location") == "unavailable"
         assert "from" not in trip

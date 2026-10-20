@@ -190,6 +190,7 @@ export const api = {
   trackingIngest: (id, fix) => http.post(`/tracking/sessions/${id}/locations`, fix).then(data),
   trackingStart: (id) => http.post(`/tracking/sessions/${id}/start`).then(data),
   trackingStop: (id) => http.post(`/tracking/sessions/${id}/stop`).then(data),
+  trackingEtaRefresh: (id) => http.post(`/tracking/sessions/${id}/eta/refresh`).then(data),
   trackingPause: (id) => http.post(`/tracking/sessions/${id}/pause`).then(data),
   trackingResume: (id) => http.post(`/tracking/sessions/${id}/resume`).then(data),
   trackingHeartbeat: (id) => http.post(`/tracking/sessions/${id}/heartbeat`).then(data),

@@ -36,7 +36,7 @@ from billing import build_billing_router, clear_billing, ensure_billing
 from clinical import build_clinical_router, clear_clinical, ensure_clinical
 from history_import import build_import_router, clear_imports, ensure_imports
 from legacy import build_legacy_router, clear_legacy, ensure_legacy
-from tracking import build_tracking_router, clear_runtime, end_tracking, issue_guest_capability, on_transition
+from tracking import build_tracking_router, clear_runtime, end_tracking, issue_guest_capability, on_transition, open_sharing_session
 from emailer import send_email
 from html import escape
 import asyncio
@@ -764,6 +764,8 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
         upd.update(await session_end_update(coll, {**appt, "timer": upd.get("timer", appt.get("timer"))}, ts))
     if to == "en_route":
         upd["trip"] = await start_trip(appt, ts, location)
+        if upd["trip"].get("sharing"):
+            await open_sharing_session(appt["id"], appt.get("practitionerId"))
     elif appt.get("trip", {}).get("sharing"):
         upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": ts}  # stop client-visible tracking
     guard = {"id": appt["id"], "status": cur}
@@ -815,7 +817,11 @@ async def apply_transition(appt, to, actor, note=None, op_id=None, location=None
     if to == "cancelled":
         await push_notify(db, "visit_cancelled", appt["id"], appt)
     if to == "en_route":
-        await queue_sms(db, coll, "on_the_way", appt, appt["id"])
+        await queue_sms(db, coll, "on_the_way", saved, saved["id"])
+        await push_notify(db, "visit_on_the_way", saved["id"], saved)
+    if to == "arrived":
+        await queue_sms(db, coll, "arrived", saved, saved["id"])
+        await push_notify(db, "visit_arrived", saved["id"], saved)
     if to in ("confirmed", "assigned"):
         await queue_sms(db, coll, "booking_confirmed", appt, appt["id"])
     if to == "assigned" and appt.get("practitionerId"):
@@ -1036,12 +1042,23 @@ def km_between(a, b):
 
 
 async def start_trip(appt, ts, location=None):
-    """Record a trip from the practitioner's current GPS. A missing fix is not replaced with a base, clinic, or city center."""
+    """Record a trip from the practitioner's current GPS. On My Way starts sharing for mobile visits.
+
+    A missing GPS fix is not replaced with a base, clinic, or city center. Clinic visits never share location.
+    """
     dest = visit_navigation_point((appt or {}).get("address"), (appt or {}).get("locationType"))
     if not dest:
         raise HTTPException(409, "This visit has no map coordinates yet.")
     origin = gps_origin(location)
-    trip = {"to": dest, "startedAt": ts, "sharing": False, "simulated": False, "location": "gps" if origin else "unavailable"}
+    clinic = (appt or {}).get("locationType") == "clinic"
+    trip = {
+        "to": dest,
+        "startedAt": ts,
+        "sharing": not clinic,
+        "sharingSource": "practitioner" if not clinic else None,
+        "simulated": False,
+        "location": "gps" if origin else "unavailable",
+    }
     if not origin:
         return trip
     km = round(km_between(origin, dest) * 1.3 + 0.8, 1)
