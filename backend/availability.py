@@ -399,12 +399,13 @@ def lock_marks(practitioner_id, day, start, duration, gap):
 def can_manage(user, practitioner_id, perms):
     if not user:
         return False
-    role = user.get("role")
-    if role == "owner":
+    from rbac import has_role, has_strict_role
+    # Owner-equivalent managers share schedule/route access with owners.
+    if has_role(user, "owner"):
         return True
-    if role == "practitioner":
+    if has_strict_role(user, "practitioner"):
         return user.get("subject") == practitioner_id
-    if role == "desk":
+    if has_strict_role(user, "desk"):
         return bool((perms or {}).get("manageAvailability"))
     return False
 
@@ -860,29 +861,70 @@ def day_segments(schedule, day, appointments, practitioner_id):
     return segments
 
 
-async def mapbox_drive(origin, dest):
-    """Coordinates only. A failed route becomes a conservative non-zero estimate."""
-    fallback = conservative_drive(origin, dest)
-    if not origin or not dest or fallback[1] == "same-stop":
-        return fallback
+def route_location_type(row):
+    """Return the booking's stored locationType when present. Never invent a type."""
+    if not isinstance(row, dict):
+        return None
+    value = row.get("locationType")
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def navigation_location_type(row):
+    """Coordinate resolution mode. Missing types resolve as mobile (not clinic)."""
+    location = route_location_type(row)
+    if location == "clinic":
+        return "clinic"
+    return location or "home"
+
+
+def is_clinic_location(location_type):
+    return location_type == "clinic"
+
+
+async def mapbox_leg(origin, dest):
+    """Road leg estimate. Failed directions fall back to a conservative non-zero estimate."""
+    minutes_est, provider = conservative_drive(origin, dest)
+    km = None
+    if origin and dest and provider != "same-stop":
+        try:
+            km = round(haversine_km(origin, dest) * 1.3, 1)
+        except Exception:
+            km = None
+    leg = {"minutes": minutes_est, "provider": provider, "km": km}
+    if not origin or not dest or provider == "same-stop":
+        if provider == "same-stop":
+            leg["km"] = 0
+        return leg
     try:
         from tracking import DIRECTIONS
         import os
         token = os.environ.get("MAPBOX_TOKEN")
         if not token:
-            return fallback
+            return leg
         for profile, label in (("driving-traffic", "mapbox-traffic"), ("driving", "mapbox")):
             try:
                 route = await DIRECTIONS._fetch(profile, origin, dest, token)
-                km = route["distance"] / 1000
-                if km <= 0.05:
-                    return 0, "same-stop"
-                return max(1, math.ceil(route["duration"] / 60)), label
+                road_km = route["distance"] / 1000
+                if road_km <= 0.05:
+                    return {"minutes": 0, "provider": "same-stop", "km": 0}
+                return {
+                    "minutes": max(1, math.ceil(route["duration"] / 60)),
+                    "provider": label,
+                    "km": round(road_km, 1),
+                }
             except Exception:
                 continue
     except Exception:
-        return fallback
-    return fallback
+        return leg
+    return leg
+
+
+async def mapbox_drive(origin, dest):
+    """Coordinates only. A failed route becomes a conservative non-zero estimate."""
+    leg = await mapbox_leg(origin, dest)
+    return leg["minutes"], leg["provider"]
 
 
 def _live(production):
@@ -1178,6 +1220,26 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         await _guard(user, practitioner_id)
         return await build_route(db, coll, practitioner_id, date, user)
 
+    @router.post("/schedules/{practitioner_id}/route/preview")
+    async def route_preview(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Optional one-shot GPS → appointment preview. Never starts On My Way or stores origin."""
+        from fastapi.responses import JSONResponse
+        from geo import allow
+
+        user = await require(request)
+        await _guard(user, practitioner_id)
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "Invalid preview request")
+        subject = user.get("id") or user.get("subject") or "anon"
+        if not allow(_PREVIEW_BUCKET, f"route-preview:{subject}", PREVIEW_LIMIT, window=60):
+            raise HTTPException(429, "Route preview is busy. Wait a moment and try again.")
+        body = await preview_route_from_origin(
+            db, coll, practitioner_id, user,
+            payload.get("origin"),
+            payload.get("appointmentId"),
+        )
+        return JSONResponse(body, headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"})
+
     @router.get("/schedule-overview")
     async def overview(request: Request, date: str):
         user = await require(request, "owner")
@@ -1430,6 +1492,21 @@ async def assert_public_slot(db, coll, *, settings, production, practitioner_id,
         raise HTTPException(409, "No practitioner is available at that time")
 
 
+def _route_show_address(user, perms, include_address):
+    from rbac import has_role
+    if not include_address:
+        return False
+    if has_role(user, "owner", "practitioner"):
+        return True
+    return bool((perms or {}).get("viewAddresses"))
+
+
+def leave_by_minutes(appointment_start_min, drive_min, rules):
+    """Recommended departure for a one-shot origin → appointment leg (no prior cleanup)."""
+    allowance = int(rules["setupMin"]) + int(rules["travelBufferMin"])
+    return int(appointment_start_min) - int(drive_min) - allowance
+
+
 async def build_route(db, coll, practitioner_id, day, user, include_address=True):
     person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0}) or {}
     schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
@@ -1439,28 +1516,51 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
     settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
     rules = scheduling_rules(settings)
     perms = (settings.get("receptionPerms") or {})
-    show_address = include_address and (user.get("role") in ("owner", "practitioner") or perms.get("viewAddresses"))
+    show_address = _route_show_address(user, perms, include_address)
     stops = []
     travel_total = 0
     warnings = []
+    computed_at = datetime.now(timezone.utc).isoformat()
     for index, row in enumerate(appointments):
         leg = None
+        location = route_location_type(row)
+        nav_type = navigation_location_type(row)
         if index:
             previous = appointments[index - 1]
-            drive, provider = await mapbox_drive(
-                visit_navigation_point(previous.get("address"), previous.get("locationType") or "home"),
-                visit_navigation_point(row.get("address"), row.get("locationType") or "home"),
+            detail = await mapbox_leg(
+                visit_navigation_point(previous.get("address"), navigation_location_type(previous)),
+                visit_navigation_point(row.get("address"), nav_type),
             )
+            drive = int(detail["minutes"])
             travel_total += drive
             prev_end = minutes(appointments[index - 1]["time"]) + int(appointments[index - 1]["duration"])
             depart = prev_end + int(rules["cleanupMin"])
             arrive = depart + drive
             if arrive + int(rules["setupMin"]) + int(rules["travelBufferMin"]) > minutes(row["time"]):
                 warnings.append({"appointmentId": row["id"], "ref": row.get("ref"), "message": "Travel time is tight before this visit"})
-            leg = {"minutes": drive, "provider": provider, "depart": hhmm(depart), "arrive": hhmm(arrive)}
+            leg = {
+                "minutes": drive,
+                "provider": detail["provider"],
+                "km": detail.get("km"),
+                "depart": hhmm(depart),
+                "arrive": hhmm(arrive),
+                "computedAt": computed_at,
+            }
         address = row.get("address") or {}
-        stop = {"id": row["id"], "ref": row.get("ref"), "time": row["time"], "duration": int(row["duration"]), "area": address.get("zoneName") or ""}
-        point = visit_navigation_point(address, row.get("locationType") or "home") if show_address else None
+        stop = {
+            "id": row["id"],
+            "ref": row.get("ref"),
+            "time": row["time"],
+            "duration": int(row["duration"]),
+            "status": row.get("status"),
+            "serviceSlug": row.get("serviceSlug") or "",
+            "area": address.get("zoneName") or "",
+        }
+        if location is not None:
+            stop["locationType"] = location
+        point = visit_navigation_point(address, nav_type) if show_address else None
+        if show_address and address.get("line"):
+            stop["addressLine"] = address.get("line")
         if point:
             stop["position"] = point
             stop["maps"] = f"https://www.google.com/maps/dir/?api=1&destination={point['lat']},{point['lng']}"
@@ -1478,6 +1578,7 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
         "warnings": warnings,
         "proposal": proposal,
         "rules": rules,
+        "computedAt": computed_at,
         "summary": {
             "bookedMin": booked,
             "travelMin": travel_total,
@@ -1485,6 +1586,79 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
             "warnings": len(warnings),
             "acceptingBookings": bool(schedule and schedule.get("acceptingBookings")),
         },
+    }
+
+
+_PREVIEW_BUCKET = {}
+PREVIEW_LIMIT = 12
+
+
+def _finite_origin(raw):
+    if not isinstance(raw, dict):
+        return None
+    try:
+        lat = float(raw.get("lat"))
+        lng = float(raw.get("lng"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(lat) or not math.isfinite(lng):
+        return None
+    if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+        return None
+    return {"lat": lat, "lng": lng}
+
+
+async def preview_route_from_origin(db, coll, practitioner_id, user, origin, appointment_id):
+    """One-shot road preview. Does not start a trip, mutate status, or persist the origin."""
+    settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
+    perms = (settings.get("receptionPerms") or {})
+    if not _route_show_address(user, perms, True):
+        raise HTTPException(403, "Not permitted to preview destinations")
+    point = _finite_origin(origin)
+    if not point:
+        raise HTTPException(400, "A valid origin latitude and longitude are required")
+    appt = await coll("appointments").find_one({"id": appointment_id}, {"_id": 0})
+    if not appt or appt.get("practitionerId") != practitioner_id:
+        raise HTTPException(404, "Appointment not found")
+    if appt.get("status") not in BLOCKING_STATUSES:
+        raise HTTPException(409, "That appointment is not an active route stop")
+    if is_clinic_location(route_location_type(appt)):
+        raise HTTPException(409, "Clinic visits are not driving destinations")
+    dest = visit_navigation_point(appt.get("address"), navigation_location_type(appt))
+    if not dest:
+        raise HTTPException(409, "This visit does not have a navigable destination yet")
+    rules = scheduling_rules(settings)
+    detail = await mapbox_leg(point, dest)
+    drive = int(detail["minutes"])
+    start = minutes(appt["time"])
+    leave = leave_by_minutes(start, drive, rules)
+    arrive = leave + drive
+    computed_at = datetime.now(timezone.utc).isoformat()
+    traffic = detail["provider"] == "mapbox-traffic"
+    return {
+        "appointmentId": appt["id"],
+        "ref": appt.get("ref"),
+        "date": appt.get("date"),
+        "time": appt.get("time"),
+        "destination": dest,
+        "minutes": drive,
+        "km": detail.get("km"),
+        "provider": detail["provider"],
+        "trafficAware": traffic,
+        "trafficNote": (
+            "Uses current traffic conditions — not a forecast for a future departure."
+            if traffic else
+            "Road estimate without live traffic — not a confirmed arrival."
+        ),
+        "depart": hhmm(max(0, leave)),
+        "arrive": hhmm(max(0, arrive)),
+        "setupMin": int(rules["setupMin"]),
+        "travelBufferMin": int(rules["travelBufferMin"]),
+        "computedAt": computed_at,
+        "persisted": False,
+        "tripStarted": False,
+        "sharing": False,
+        "statusUnchanged": True,
     }
 
 

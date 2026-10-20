@@ -1,12 +1,15 @@
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { AlertTriangle, Bell, ChevronRight, ClipboardEdit, Headphones, LifeBuoy, MapPin, MessageSquare, Navigation, Package } from "lucide-react";
+import { AlertTriangle, Bell, ChevronRight, ClipboardEdit, Headphones, LifeBuoy, MapPin, MessageSquare, Package, Route as RouteIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, StatusPill, SectionHead, PageSkeleton } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { todayISO, fmtTime, fmtDate, endTime, OPEN, ACTIVE, addDays } from "@/lib/domain";
 import { PractitionerSetupRequired, PractitionerUnauthorized, usePractitionerProfile } from "@/components/PractitionerRouteGuard";
 import { ProfileReminder } from "@/components/practitioner/ProfileReminder";
+import { formatKm, freshnessLabel, isMobileRouteStop, providerLabel } from "@/lib/my-route";
+import { etaCopy } from "@/lib/tracking/providers";
 
 const ready = (a) => a.readiness?.allReady === true && OPEN.includes(a.status) && a.status !== "in_session";
 const CANCELLED = new Set(["cancelled", "no_show", "refunded"]);
@@ -32,18 +35,77 @@ function VisitRow({ a, idx, testid }) {
   );
 }
 
+function travelSummaryForNext(next, route) {
+  if (!next || !route) return { state: "loading" };
+  const warning = (route.warnings || []).find((row) => row.appointmentId === next.id);
+  const entry = (route.stops || []).find((row) => row.stop?.id === next.id);
+  if (!entry) {
+    if (next.date !== todayISO()) return { state: "future" };
+    return { state: "missing" };
+  }
+  if (!isMobileRouteStop(entry)) {
+    return { state: "clinic" };
+  }
+  if (!next.address?.line && !entry.stop?.addressLine && !entry.stop?.position) {
+    return { state: "no_address", warning };
+  }
+  if (entry.leg) {
+    return {
+      state: "leg",
+      minutes: entry.leg.minutes,
+      km: entry.leg.km,
+      depart: entry.leg.depart,
+      arrive: entry.leg.arrive,
+      provider: entry.leg.provider,
+      computedAt: entry.leg.computedAt || route.computedAt,
+      warning,
+      qualified: !["mapbox", "mapbox-traffic"].includes(entry.leg.provider),
+    };
+  }
+  // First stop of the day — no prior leg; leave-by needs optional location preview on My Route.
+  return {
+    state: "first_stop",
+    warning,
+    setupMin: route.rules?.setupMin,
+    travelBufferMin: route.rules?.travelBufferMin,
+  };
+}
+
 export default function Today() {
   const { run, api } = useDemo();
   const { loading, capable, me, practitionerId, idx, state, error } = usePractitionerProfile();
+  const [route, setRoute] = useState(null);
+  const [routeError, setRouteError] = useState("");
+  const today = todayISO();
+
+  useEffect(() => {
+    if (!practitionerId || !capable) return undefined;
+    let live = true;
+    setRouteError("");
+    api.dailyRoute(practitionerId, today)
+      .then((body) => { if (live) setRoute(body); })
+      .catch((err) => {
+        if (!live) return;
+        setRoute(null);
+        setRouteError(err?.response?.data?.detail || "Travel estimates unavailable");
+      });
+    return () => { live = false; };
+    // api identity can change every render from the store — key on practitioner + day only.
+  }, [practitionerId, capable, today]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mine = useMemo(
+    () => (state.appointments || []).filter((a) => a.practitionerId === practitionerId && !CANCELLED.has(a.status)),
+    [state.appointments, practitionerId],
+  );
+  const list = useMemo(() => sortVisits(mine.filter((a) => a.date === today)), [mine, today]);
+  const upcoming = useMemo(() => sortVisits(mine.filter((a) => a.date > today)), [mine, today]);
+  const next = list.find((a) => ACTIVE.includes(a.status)) || list.find((a) => OPEN.includes(a.status)) || upcoming.find((a) => OPEN.includes(a.status));
+  const travel = travelSummaryForNext(next, route);
+
   if (loading) return <PageSkeleton error={error} />;
   if (!capable) return <PractitionerUnauthorized />;
   if (!me) return <PractitionerSetupRequired reason={practitionerId ? "missing_profile" : "missing_subject"} />;
 
-  const today = todayISO();
-  const mine = (state.appointments || []).filter((a) => a.practitionerId === practitionerId && !CANCELLED.has(a.status));
-  const list = sortVisits(mine.filter((a) => a.date === today));
-  const upcoming = sortVisits(mine.filter((a) => a.date > today));
-  const next = list.find((a) => ACTIVE.includes(a.status)) || list.find((a) => OPEN.includes(a.status)) || upcoming.find((a) => OPEN.includes(a.status));
   const soapDue = mine.filter((a) => a.status === "soap_pending" || (a.soapStatus === "draft"));
   const soon = (d) => d <= addDays(today, 60);
   const reminders = [me.licenseExpiry && soon(me.licenseExpiry) && `Licence renewal due ${me.licenseExpiry}`, me.insuranceExpiry && soon(me.insuranceExpiry) && `Liability insurance expires ${me.insuranceExpiry}`].filter(Boolean);
@@ -51,6 +113,7 @@ export default function Today() {
   const firstName = (me.name || "there").split(" ")[0];
   const openToday = list.filter((a) => OPEN.includes(a.status)).length;
   const openAhead = openToday + upcoming.filter((a) => OPEN.includes(a.status)).length;
+  const inProgress = next && ACTIVE.includes(next.status);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6" data-testid="pro-today">
@@ -65,21 +128,65 @@ export default function Today() {
         </h1>
         {list.length === 0 && upcoming.length > 0 && <p className="mt-2 text-sm text-white/70" data-testid="pro-today-none-today-note">Nothing on the calendar today — upcoming visits are listed below.</p>}
       </div>
-      <label className="nb-card flex items-center justify-between p-4"><span className="text-sm"><b>{me.available ? "Available for bookings" : "Unavailable"}</b><span className="block text-xs text-nb-mute">Off-duty status hides you from new bookings and location views.</span></span><Switch checked={!!me.available} onCheckedChange={(v) => run(() => api.patch("practitioners", me.id, { available: v }))} data-testid="pro-availability-switch" /></label>
+      <label className="nb-card flex items-center justify-between gap-3 p-4"><span className="min-w-0 text-sm"><b>{me.available ? "Available for bookings" : "Unavailable"}</b><span className="block text-xs text-nb-mute">Off-duty status hides you from new bookings and location views.</span></span><Switch checked={!!me.available} onCheckedChange={(v) => run(() => api.patch("practitioners", me.id, { available: v }))} data-testid="pro-availability-switch" /></label>
 
       {next ? (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative overflow-hidden rounded-[30px] text-white nb-lagoon" data-testid="pro-next-card">
           <div className="p-6">
-            <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-widest text-cyan-300">{next.date === today ? "Next visit" : "Upcoming visit"}</p><StatusPill status={next.status} /></div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-cyan-300">
+                {inProgress ? "In progress" : next.date === today ? "Next visit" : "Upcoming visit"}
+              </p>
+              <StatusPill status={next.status} />
+            </div>
             <p className="mt-3 text-3xl font-semibold">{fmtTime(next.time)} <span className="text-base font-normal text-white/60">– {fmtTime(endTime(next.time, next.duration))}</span></p>
             {next.date !== today && <p className="mt-1 text-sm text-white/70">{fmtDate(next.date)}</p>}
             <p className="mt-1 text-lg">{idx.clients[next.clientId]?.firstName} {(idx.clients[next.clientId]?.lastName || "").slice(0, 1)}. · {idx.services[next.serviceSlug]?.name || "Visit"} {next.duration}m</p>
-            <p className="mt-2 flex items-center gap-1 text-sm text-white/70"><MapPin className="h-4 w-4" />{next.locationType === "clinic" ? "Clinic" : next.address?.line}</p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs">{ready(next) && <span className="flex items-center gap-1.5 rounded-full bg-teal-400/15 px-3 py-1 font-semibold text-teal-200" data-testid="pro-next-ready"><span className="nb-ready-dot" />Client space ready</span>}<span className="flex items-center gap-1 rounded-full bg-white/10 px-3 py-1"><Navigation className="h-3 w-3" />Straight-line estimate only — road time needs Mapbox</span>{next.address?.notes && <span className="rounded-full bg-white/10 px-3 py-1">{next.address.notes}</span>}</div>
+            <p className="mt-2 flex items-start gap-1 text-sm text-white/70"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /><span>{next.locationType === "clinic" ? "Clinic" : (next.address?.line || "Address pending")}</span></p>
+
+            <div className="mt-4 space-y-2" data-testid="pro-next-travel">
+              {travel.state === "leg" && (
+                <>
+                  <p className="text-sm font-semibold" data-testid="pro-next-drive">
+                    Road travel about {travel.minutes} min{formatKm(travel.km) ? ` · ${formatKm(travel.km)}` : ""}
+                  </p>
+                  <p className="text-sm text-white/80" data-testid="pro-next-depart">Leave by {travel.depart} · arrive about {travel.arrive}</p>
+                  <p className="text-xs text-white/65">{providerLabel(travel.provider)}{travel.qualified ? " (qualified)" : ""} · {etaCopy(travel.provider)}{freshnessLabel(travel.computedAt) ? ` · as of ${freshnessLabel(travel.computedAt)}` : ""}</p>
+                </>
+              )}
+              {travel.state === "first_stop" && (
+                <p className="text-sm text-white/80" data-testid="pro-next-first-stop">
+                  First stop today — open My Route to preview drive time from your location
+                  {travel.setupMin != null ? ` (includes ${travel.setupMin}+${travel.travelBufferMin} min setup/buffer)` : ""}.
+                </p>
+              )}
+              {travel.state === "no_address" && <p className="text-sm text-amber-100" data-testid="pro-next-missing-address">Destination address is not ready yet.</p>}
+              {travel.state === "clinic" && <p className="text-sm text-white/70" data-testid="pro-next-clinic">In-clinic visit — not shown as a driving stop on My Route.</p>}
+              {travel.state === "future" && <p className="text-sm text-white/70" data-testid="pro-next-future-day">Open My Route and pick that date for address-to-address travel.</p>}
+              {travel.state === "missing" && !routeError && <p className="text-sm text-white/70">Travel details load on My Route.</p>}
+              {routeError && <p className="text-sm text-amber-100" data-testid="pro-next-route-error">{routeError}</p>}
+              {travel.warning && <p className="rounded-2xl bg-amber-400/20 px-3 py-2 text-xs font-semibold text-amber-50" data-testid="pro-next-tight-buffer">{travel.warning.message}</p>}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              {ready(next) && <span className="flex items-center gap-1.5 rounded-full bg-teal-400/15 px-3 py-1 font-semibold text-teal-200" data-testid="pro-next-ready"><span className="nb-ready-dot" />Client space ready</span>}
+              {next.address?.notes && <span className="rounded-full bg-white/10 px-3 py-1">{next.address.notes}</span>}
+            </div>
           </div>
-          <Link to={`/pro/visit/${next.id}`} data-testid="pro-open-next-visit" className="flex items-center justify-between bg-white/10 px-6 py-4 text-sm font-semibold hover:bg-white/15">Open visit <ChevronRight className="h-5 w-5" /></Link>
+          <div className="grid grid-cols-1 divide-y divide-white/10 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+            <Link to={`/pro/visit/${next.id}`} data-testid="pro-open-next-visit" className="flex items-center justify-between bg-white/10 px-6 py-4 text-sm font-semibold hover:bg-white/15">Open visit <ChevronRight className="h-5 w-5" /></Link>
+            <Link to="/pro/route" data-testid="pro-open-my-route" className="flex items-center justify-between bg-white/10 px-6 py-4 text-sm font-semibold hover:bg-white/15"><span className="inline-flex items-center gap-2"><RouteIcon className="h-4 w-4" />Open My Route</span><ChevronRight className="h-5 w-5" /></Link>
+          </div>
         </motion.div>
       ) : <div className="nb-soft p-6 text-sm" data-testid="pro-today-empty-all">No upcoming appointments. When clients book you, they appear here.</div>}
+
+      {!next && (
+        <Link to="/pro/route" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-open-my-route-empty">
+          <RouteIcon className="h-5 w-5 shrink-0 text-nb-teal" />
+          <span className="flex-1"><span className="font-semibold">Open My Route</span><span className="block text-xs text-nb-mute">Inspect itinerary and travel estimates</span></span>
+          <ChevronRight className="h-4 w-4 text-sky-300" />
+        </Link>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2" data-testid="pro-team-shortcuts">
         <Link to="/pro/team/help" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-today-quick-help">

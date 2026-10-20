@@ -87,7 +87,7 @@ const STAFF = {
     title: "Practitioner",
     nav: [
       { to: "/pro", label: "Today", icon: Sun, end: true },
-      { to: "/pro/route", label: "Route", icon: RouteIcon },
+      { to: "/pro/route", label: "My Route", icon: RouteIcon },
       { to: "/pro/messages", label: "Messages", icon: MessageSquare },
       { to: "/pro/availability", label: "Schedule", icon: Clock },
       { to: "/pro/profile", label: "Me", icon: UserRound },
