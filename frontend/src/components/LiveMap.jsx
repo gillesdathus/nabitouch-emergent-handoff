@@ -6,6 +6,7 @@ const MapboxLiveMap = lazy(() => import("@/components/MapboxLiveMap"));
 
 // Switch: real Mapbox street map when a public token is configured, otherwise the stylised simulated map.
 export function LiveMap(props) {
+  // fitKey is Mapbox-only (camera refit); SimulatedMap ignores unknown props safely.
   if (props.localOnly || !TRACKING_CONFIG.mapboxPublicToken) return <SimulatedMap {...props} />;
   return <Suspense fallback={<div className="nb-skeleton rounded-3xl" style={{ height: props.height || 320 }} />}><MapboxLiveMap {...props} /></Suspense>;
 }

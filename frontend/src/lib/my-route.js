@@ -52,8 +52,44 @@ export function providerLabel(provider) {
   if (provider === "mapbox-traffic") return "Live traffic estimate";
   if (provider === "mapbox") return "Road estimate";
   if (provider === "same-stop") return "Same stop";
+  if (provider === "unavailable") return "Driving ETA unavailable";
   if (provider === "conservative" || provider === "estimated") return "Qualified estimate";
   return "Travel estimate";
+}
+
+/** True only when Mapbox (or same-stop) returned a usable driving estimate. */
+export function isRoadLeg(leg) {
+  if (!leg) return false;
+  if (leg.available === false) return false;
+  if (leg.provider === "unavailable" || leg.provider === "conservative" || leg.provider === "estimated") return false;
+  return ["mapbox", "mapbox-traffic", "same-stop"].includes(leg.provider) && Number.isFinite(Number(leg.minutes));
+}
+
+/** Decode GeoJSON LineString or lat/lng route points into LiveMap route arrays. */
+export function routePolyline(leg) {
+  if (!leg || !isRoadLeg(leg)) return null;
+  if (Array.isArray(leg.route) && leg.route.length >= 2) {
+    const pts = leg.route
+      .map((p) => ({ lat: Number(p.lat), lng: Number(p.lng) }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    return pts.length >= 2 ? pts : null;
+  }
+  const coords = leg.geometry?.type === "LineString" ? leg.geometry.coordinates : null;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const pts = [];
+  for (const pair of coords) {
+    if (!Array.isArray(pair) || pair.length < 2) return null;
+    const lng = Number(pair[0]);
+    const lat = Number(pair[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    pts.push({ lat, lng });
+  }
+  return pts.length >= 2 ? pts : null;
+}
+
+/** Collect road polylines for the day map (skips unavailable / geometry-less legs). */
+export function roadRoutesFromStops(stops = []) {
+  return (stops || []).map((row) => routePolyline(row?.leg)).filter(Boolean);
 }
 
 export function formatKm(km) {

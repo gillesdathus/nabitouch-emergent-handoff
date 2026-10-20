@@ -8,7 +8,7 @@ import { useDemo } from "@/store/DemoStore";
 import { todayISO, fmtTime, fmtDate, endTime, OPEN, ACTIVE, addDays } from "@/lib/domain";
 import { PractitionerSetupRequired, PractitionerUnauthorized, usePractitionerProfile } from "@/components/PractitionerRouteGuard";
 import { ProfileReminder } from "@/components/practitioner/ProfileReminder";
-import { formatKm, freshnessLabel, isMobileRouteStop, providerLabel } from "@/lib/my-route";
+import { formatKm, freshnessLabel, isMobileRouteStop, isRoadLeg, providerLabel } from "@/lib/my-route";
 import { quickHelpHref } from "@/lib/team-connect";
 import { etaCopy } from "@/lib/tracking/providers";
 
@@ -50,7 +50,7 @@ function travelSummaryForNext(next, route) {
   if (!next.address?.line && !entry.stop?.addressLine && !entry.stop?.position) {
     return { state: "no_address", warning };
   }
-  if (entry.leg) {
+  if (entry.leg && isRoadLeg(entry.leg)) {
     return {
       state: "leg",
       minutes: entry.leg.minutes,
@@ -60,8 +60,11 @@ function travelSummaryForNext(next, route) {
       provider: entry.leg.provider,
       computedAt: entry.leg.computedAt || route.computedAt,
       warning,
-      qualified: !["mapbox", "mapbox-traffic"].includes(entry.leg.provider),
+      qualified: false,
     };
+  }
+  if (entry.leg && !isRoadLeg(entry.leg)) {
+    return { state: "eta_unavailable", warning };
   }
   // First stop of the day — no prior leg; leave-by needs optional location preview on My Route.
   return {
@@ -161,6 +164,7 @@ export default function Today() {
                   {travel.setupMin != null ? ` (includes ${travel.setupMin}+${travel.travelBufferMin} min setup/buffer)` : ""}.
                 </p>
               )}
+              {travel.state === "eta_unavailable" && <p className="text-sm text-amber-100" data-testid="pro-next-eta-unavailable">Driving ETA unavailable — open My Route to retry.</p>}
               {travel.state === "no_address" && <p className="text-sm text-amber-100" data-testid="pro-next-missing-address">Destination address is not ready yet.</p>}
               {travel.state === "clinic" && <p className="text-sm text-white/70" data-testid="pro-next-clinic">In-clinic visit — not shown as a driving stop on My Route.</p>}
               {travel.state === "future" && <p className="text-sm text-white/70" data-testid="pro-next-future-day">Open My Route and pick that date for address-to-address travel.</p>}
