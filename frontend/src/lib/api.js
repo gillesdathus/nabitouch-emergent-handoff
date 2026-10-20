@@ -225,6 +225,7 @@ export const api = {
   pauseBookings: (id, acceptingBookings) => http.post(`/schedules/${id}/pause`, { acceptingBookings }).then(data),
   approveSchedule: (id) => http.post(`/schedules/${id}/approve`).then(data),
   dailyRoute: (id, date) => http.get(`/schedules/${id}/route`, { params: { date } }).then(data),
+  routePreview: (id, body) => http.post(`/schedules/${id}/route/preview`, body).then(data),
   scheduleOverview: (date) => http.get('/schedule-overview', { params: { date } }).then(data),
   watchOpening: (body) => http.post('/openings/watch', body).then(data),
   acceptOpening: (id) => http.post(`/openings/${id}/accept`).then(data),
