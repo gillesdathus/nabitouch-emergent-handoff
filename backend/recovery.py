@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from pymongo import ReturnDocument
 
 from pricing import money
+from trial import has_regular_treatment_history  # re-export for ops/tests
 
 EXCLUSIVE_MINUTES = 20
 HOLD_MINUTES = 3
@@ -235,20 +236,6 @@ def campaign_fits(campaign, day, start, duration, service_slug=None, location_ty
         if int(duration) != minutes:
             return False
     return True
-
-
-def has_regular_treatment_history(appointments):
-    """True when the person already had a non-trial visit that counts as a regular treatment client."""
-    from trial import is_trial_appointment
-
-    for appt in appointments or []:
-        if is_trial_appointment(appt):
-            continue
-        status = str((appt or {}).get("status") or "")
-        if not status or status in {"cancelled", "refunded"}:
-            continue
-        return True
-    return False
 
 
 def audience_ok(campaign, client):
@@ -888,10 +875,20 @@ def build_recovery_router(db, coll, add_audit, require, user_from, ensure_slot, 
 
     @router.get("/campaigns/public")
     async def public_campaigns(request: Request):
-        await user_from(request)
+        user = await user_from(request)
         rows = await db.nt_campaigns.find({"public": True, "status": "live"}, {"_id": 0}).to_list(20)
         stamp = now()
-        return {"campaigns": [item for item in (public_campaign(row, stamp) for row in rows) if item], "serverTime": iso(stamp)}
+        campaigns = [item for item in (public_campaign(row, stamp) for row in rows) if item]
+        # Identified clients: hide trial they already used / are ineligible for.
+        # Anonymous visitors keep provisional public listings (rechecked at quote/book).
+        eligibility = {"known": False, "welcome": None, "trial": None}
+        if user and user.get("role") == "client" and user.get("subject"):
+            from offers_visibility import resolve_offer_eligibility
+            client = await coll("clients").find_one({"id": user["subject"]}, {"_id": 0, "id": 1, "email": 1, "phone": 1})
+            eligibility = await resolve_offer_eligibility(db, client or {"id": user["subject"]})
+            if eligibility.get("known") and eligibility.get("trial") is False:
+                campaigns = [row for row in campaigns if row.get("offerKind") != "trial"]
+        return {"campaigns": campaigns, "serverTime": iso(stamp), "offerEligibility": eligibility}
 
     @router.post("/consent")
     async def consent(request: Request, payload: dict = Body(...)):
@@ -953,6 +950,27 @@ def _offer_payload(campaign):
     }
 
 
+def campaign_client_ids(client):
+    """Linked client ids for per-person campaign limits (guest booking → later account)."""
+    client = client or {}
+    ids = [cid for cid in (client.get("_matchedClientIds") or []) if cid]
+    cid = client.get("id")
+    if cid and cid not in ids:
+        ids.append(cid)
+    return ids
+
+
+async def campaign_redemption_count(db, campaign_id, client):
+    ids = campaign_client_ids(client)
+    if not ids:
+        return 0
+    return await db.nt_campaign_redemptions.count_documents({
+        "campaignId": campaign_id,
+        "clientId": {"$in": ids},
+        "status": {"$in": ["reserved", "awarded"]},
+    })
+
+
 async def campaign_quote(db, campaign_id, client, day, start, duration, service_slug, location_type=None):
     """Read-only price preview. It does not reserve or increment a redemption."""
     if not campaign_id:
@@ -964,7 +982,7 @@ async def campaign_quote(db, campaign_id, client, day, start, duration, service_
         return None
     if not audience_ok(campaign, client):
         return None
-    already = await db.nt_campaign_redemptions.count_documents({"campaignId": campaign_id, "clientId": (client or {}).get("id"), "status": {"$in": ["reserved", "awarded"]}})
+    already = await campaign_redemption_count(db, campaign_id, client)
     if reserve_decision(campaign, client, now(), already) != "reserved":
         return None
     return _offer_payload(campaign)
@@ -983,7 +1001,7 @@ async def reserve_campaign(db, campaign_id, client, idempotency, day, start, dur
         raise HTTPException(409, "That promotion does not apply to this service")
     if not audience_ok(campaign, client):
         raise HTTPException(409, "That promotion is not available for this client")
-    already = await db.nt_campaign_redemptions.count_documents({"campaignId": campaign_id, "clientId": (client or {}).get("id"), "status": {"$in": ["reserved", "awarded"]}})
+    already = await campaign_redemption_count(db, campaign_id, client)
     if reserve_decision(campaign, client, now(), already) != "reserved":
         raise HTTPException(409, "That promotion is no longer available")
     saved = await db.nt_campaigns.find_one_and_update(

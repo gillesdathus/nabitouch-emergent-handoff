@@ -11,7 +11,7 @@ import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepWhen, StepYou, StepPay } from "./BookingSteps";
 import { Stepper } from "@/components/tide";
-import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferListed, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
+import { quote, zoneFor, money, fmtDate, fmtTime, LOCATION_TYPES, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import {
   addressReady,
@@ -210,11 +210,22 @@ export default function Booking() {
     setServerQuote(null);
     setSettlement(null);
     setQuoteNote("");
-    api.quoteBooking(JSON.parse(quoteKey))
-      .then((res) => { if (!stop) { setServerQuote(res.pricing); setSettlement(res.settlement || null); } })
+    const body = JSON.parse(quoteKey);
+    api.quoteBooking(body)
+      .then((res) => {
+        if (stop) return;
+        setServerQuote(res.pricing);
+        setSettlement(res.settlement || null);
+        const elig = state?.offerEligibility;
+        if (elig?.known && elig.welcome === false && !res.pricing?.welcomeOffer && !body.campaignId) {
+          setQuoteNote("The first-booking welcome offer is not available on your account. Eligibility comes from your booking history, not a new login.");
+        } else {
+          setQuoteNote("");
+        }
+      })
       .catch((error) => { if (!stop) setQuoteNote(apiError(error)); });
     return () => { stop = true; };
-  }, [quoteKey, api]);
+  }, [quoteKey, api, state?.offerEligibility]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
   const clinic = idx.settings?.clinic || {};
   const whereOk = draft.locationType === "clinic"
@@ -400,7 +411,7 @@ export default function Booking() {
             ) : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>
           {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <p className="mb-2 text-xs text-nb-mute" data-testid="welcome-offer-rule">Welcome offer: first treatment booked in the app, signed in with a complete profile (contact details, service address and an insurance answer). Your final price is confirmed by the server.</p>}
-          {!useCredit && !winbackCode && !(me?.onlineBookings > 0) && <PromoBanner compact eligible={welcomeOfferListed(state.promotions.find((p) => p.id === "promo-welcome"), "booking")} promo={state.promotions.find((p) => p.id === "promo-welcome")} testid="booking-promo-banner" />}
+          {!useCredit && !winbackCode && <PromoBanner compact eligible={welcomeOfferVisible(state.promotions.find((p) => p.id === "promo-welcome"), "booking", state.offerEligibility)} promo={state.promotions.find((p) => p.id === "promo-welcome")} testid="booking-promo-banner" />}
         </div>
       </aside>
     </div>

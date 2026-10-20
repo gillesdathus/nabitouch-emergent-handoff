@@ -55,11 +55,15 @@ from availability import (
 )
 from payment_policy import due_for_booking, resolve_payment_policy
 from recovery import (
-    apply_campaign_price, award_campaign, build_recovery_router, campaign_quote, consume_recovery_hold,
-    release_campaign, release_campaign_for_appointment, reserve_campaign, validate_fee,
+    apply_campaign_price, audience_ok, award_campaign, build_recovery_router, campaign_quote,
+    campaign_redemption_count, consume_recovery_hold, release_campaign, release_campaign_for_appointment,
+    reserve_campaign, reserve_decision, validate_fee,
 )
 from pricing import (
     BLOCKING_STATUSES, client_matches_person, ensure_welcome_offer, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
+)
+from offers_visibility import (
+    HISTORY_PROJECTION, matched_client_ids, provisional_offer_eligibility, resolve_offer_eligibility,
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
@@ -71,6 +75,10 @@ from notifications import (
     enqueue_email_test, freeze_delivery, enqueue_due_email_reminders, reconcile_pending_email_receipts,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
+from team_messaging import build_team_messaging_router, ensure_team_messaging
+from assist_requests import build_assist_router, ensure_assist_requests, resolve_team_connect
+from client_comms import build_client_comms_router, ensure_client_comms
+from supplies import build_supplies_router, ensure_supplies
 from giftcards import build_giftcard_router, ensure_giftcards
 from trial import (
     TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG, ensure_trial_campaign_locations, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
@@ -250,6 +258,10 @@ async def lifespan(_app):
     await ensure_legacy(db)
     await ensure_notifications(db)
     await ensure_messaging(db)
+    await ensure_team_messaging(db)
+    await ensure_assist_requests(db)
+    await ensure_client_comms(db)
+    await ensure_supplies(db)
     await ensure_giftcards(db)
     await ensure_plans(db)
     await ensure_safety(db)
@@ -695,6 +707,8 @@ async def get_state(request: Request):
             out["audit"] = []
             name = full_name(me)
             out["giftcards"] = [g for g in out["giftcards"] if me and (g.get("clientId") == sub or (name and name in (g.get("recipient"), g.get("purchaser"))))]
+            # Personalized flags only — never another client's history.
+            out["offerEligibility"] = await resolve_offer_eligibility(db, me or {"id": sub})
         else:
             out["clients"] = []
             out["soap"] = []
@@ -703,6 +717,9 @@ async def get_state(request: Request):
             out["giftcards"] = []
         if role not in ("owner", "desk"):
             out["templates"] = []
+    if "offerEligibility" not in out:
+        # Anonymous and staff snapshots stay provisional for public promo listing.
+        out["offerEligibility"] = provisional_offer_eligibility()
     out["serverTime"] = now_iso()
     return out
 
@@ -1210,6 +1227,8 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
         )
         await ensure_slot(extra["practitionerId"], appt["date"], appt["time"], appt["duration"], appt_id)
         upd["practitionerId"] = extra["practitionerId"]
+        # Keep denormalized message ownership in sync so unread badges do not orphan to the prior practitioner.
+        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": extra["practitionerId"]}})
         if appt.get("trip"):
             upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": now_iso()}
         await end_tracking(appt_id)
@@ -1479,18 +1498,17 @@ async def update_service_address(appt_id: str, request: Request, body: dict = Bo
 
 
 async def load_welcome_history(person):
-    """Appointments for this client id, email, or phone. A new profile does not hide an earlier visit."""
-    matched = []
-    async for row in coll("clients").find({}, {"_id": 0, "id": 1, "email": 1, "phone": 1}):
-        if client_matches_person(row, person):
-            matched.append(row["id"])
-    if person.get("id") and person["id"] not in matched:
-        matched.append(person["id"])
+    """Appointments for this client id, email, or phone. A new profile does not hide an earlier visit.
+
+    Projection includes trial markers so a completed free trial does not consume
+    first-regular-booking welcome eligibility.
+    """
+    matched = await matched_client_ids(db, person)
     if not matched:
         return []
     return await coll("appointments").find(
         {"clientId": {"$in": matched}},
-        {"_id": 0, "status": 1, "paymentStatus": 1, "pricing.promoId": 1, "pricing.promoCode": 1, "pricing.welcomeOffer": 1},
+        HISTORY_PROJECTION,
     ).to_list(500)
 
 
@@ -1543,7 +1561,9 @@ async def price_welcome(*, service, duration, addons, zone, client, incoming, pr
     if source != "online":
         offers = [promo for promo in offers if promo.get("eligibility") != "first_online"]
         person["_welcomeHistory"] = []
+        person["_matchedClientIds"] = [person["id"]] if person.get("id") else []
     else:
+        person["_matchedClientIds"] = await matched_client_ids(db, person)
         person["_welcomeHistory"] = await load_welcome_history(person)
     quoted = quote(
         service=service, duration=duration, addons=addons, zone=zone, client=person,
@@ -1725,9 +1745,15 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     """Provisional server price. It does not reserve the welcome benefit or create a visit."""
     ctx = await resolve_booking(payload, await user_from(request))
     pricing = dict(ctx["quoted"])
+    person = ctx["person"] or ctx["client"] or {}
+    audience_client = {
+        **(ctx["client"] or {}),
+        "_welcomeHistory": person.get("_welcomeHistory"),
+        "_matchedClientIds": person.get("_matchedClientIds") or [],
+    }
     if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not ctx.get("followupCode") and not pricing.get("welcomeOffer"):
         offer = await campaign_quote(
-            db, payload["campaignId"], ctx["person"] or ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
+            db, payload["campaignId"], audience_client, ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
         )
         if offer:
             pricing["campaignTitle"] = offer["title"]
@@ -1735,6 +1761,17 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
             if offer.get("complimentaryMinutes"):
                 pricing["complimentaryMinutes"] = offer["complimentaryMinutes"]
             pricing = apply_campaign_price(pricing, offer, ctx["settings"].get("gst", 0.05), offer.get("stackable"))
+        elif ctx.get("trialVisit"):
+            # Revalidate personal eligibility before confirming a free trial price.
+            campaign = await db.nt_campaigns.find_one({"id": payload["campaignId"]}, NO_ID)
+            if campaign and is_trial_offer(campaign):
+                already = await campaign_redemption_count(db, payload["campaignId"], audience_client)
+                if (not audience_ok(campaign, audience_client)) or reserve_decision(campaign, audience_client, datetime.now(timezone.utc), already) != "reserved":
+                    raise HTTPException(
+                        409,
+                        "This free trial is not available for you. You may have already claimed it, "
+                        "or it is limited to clients without a prior regular booking.",
+                    )
     if ctx.get("trialVisit"):
         pricing = {
             **pricing,
@@ -1838,7 +1875,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
                 await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
             raise HTTPException(409, "Campaigns do not combine with package credits, welcome-back, or follow-up codes")
         try:
-            audience_client = {**(client or {}), "_welcomeHistory": (person or {}).get("_welcomeHistory")}
+            audience_client = {
+                **(client or {}),
+                "_welcomeHistory": (person or {}).get("_welcomeHistory"),
+                "_matchedClientIds": (person or {}).get("_matchedClientIds") or [],
+            }
             campaign_reservation = await reserve_campaign(
                 db, payload["campaignId"], audience_client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"], location,
             )
@@ -2238,7 +2279,7 @@ PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility"
                 "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval",
                 "placements", "bannerHeadline", "bannerBody"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
-SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp"}
+SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp", "teamConnect", "bookingProtection", "flashProtection"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
 
 
@@ -2634,6 +2675,38 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
                 doc["rewards"] = validate_rewards(doc["rewards"])
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
+        if "teamConnect" in doc:
+            try:
+                doc["teamConnect"] = resolve_team_connect({"teamConnect": doc["teamConnect"]})
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        if "bookingProtection" in doc:
+            raw = doc["bookingProtection"] if isinstance(doc["bookingProtection"], dict) else {}
+            mode = raw.get("insurancePrepayMode") or "travel_only"
+            if mode not in ("travel_only", "higher_of", "travel_plus_deposit", "none"):
+                raise HTTPException(400, "Choose a valid insurance prepay mode")
+            # Keep collection off until separately authorized.
+            doc["bookingProtection"] = {
+                "selfPayDepositPercent": max(0, min(100, int(raw.get("selfPayDepositPercent") or 25))),
+                "insurancePrepayMode": mode,
+                "insurancePrepayEnabled": False,
+            }
+        if "flashProtection" in doc:
+            raw = doc["flashProtection"] if isinstance(doc["flashProtection"], dict) else {}
+            def _mins(key, default):
+                try:
+                    value = int(raw.get(key) if raw.get(key) is not None else default)
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "Grace minutes must be whole numbers") from exc
+                if value < 0 or value > 120:
+                    raise HTTPException(400, "Grace minutes are out of range")
+                return value
+            doc["flashProtection"] = {
+                "enabled": False,
+                "graceOver3hMinutes": _mins("graceOver3hMinutes", 15),
+                "grace1to3hMinutes": _mins("grace1to3hMinutes", 10),
+                "graceUnder1hMinutes": _mins("graceUnder1hMinutes", 5),
+            }
     elif name == "practitioners":
         if role not in ("owner", "practitioner") or (role == "practitioner" and doc_id != sub):
             raise HTTPException(403, "Not permitted")
@@ -2753,6 +2826,10 @@ from training import build_training_router
 app.include_router(build_training_router(client, require))
 app.include_router(build_rewards_router(db, coll, add_audit, require, user_from))
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
+app.include_router(build_team_messaging_router(db, user_from, add_audit))
+app.include_router(build_assist_router(db, coll, user_from, add_audit))
+app.include_router(build_client_comms_router(db, coll, user_from, add_audit))
+app.include_router(build_supplies_router(db, coll, user_from, add_audit))
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Layers, Plus, Repeat } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
-import { Field, Notice, PageHeader, Segmented } from "@/components/tide";
+import { EmptyState, Field, Notice, PageHeader, SaveFeedback, Segmented } from "@/components/tide";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const BLANK = { kind: "package", name: "", description: "", serviceSlug: "", duration: "", credits: 5, price: "", validityDays: "" };
@@ -15,15 +15,35 @@ const key = () => `refund-${Date.now().toString(36)}${Math.random().toString(36)
 function ProductForm({ onSaved }) {
   const { state } = useDemo();
   const [f, setF] = useState(BLANK);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
   const services = (state.services || []).filter((s) => s.archived !== true);
   const service = services.find((s) => s.slug === f.serviceSlug);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const save = () => api.planCreateProduct({ kind: f.kind, name: f.name, description: f.description, serviceSlug: f.serviceSlug, duration: Number(f.duration), credits: Number(f.credits),
-    priceCents: Math.round(Number(f.price) * 100), validityDays: f.validityDays ? Number(f.validityDays) : undefined })
-    .then(() => { toast.success("Plan saved as a draft"); setF(BLANK); onSaved(); }).catch((e) => toast.error(apiError(e)));
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setFeedback({ state: "saving", message: "Saving plan…" });
+    try {
+      await api.planCreateProduct({
+        kind: f.kind, name: f.name, description: f.description, serviceSlug: f.serviceSlug, duration: Number(f.duration), credits: Number(f.credits),
+        priceCents: Math.round(Number(f.price) * 100), validityDays: f.validityDays ? Number(f.validityDays) : undefined,
+      });
+      toast.success("Plan saved as a draft");
+      setFeedback({ state: "success", message: "Plan saved as a draft." });
+      setF(BLANK);
+      onSaved();
+    } catch (e) {
+      setFeedback({ state: "error", message: apiError(e) });
+      toast.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section className="nb-card space-y-4 p-5" data-testid="plan-form">
       <p className="flex items-center gap-2 font-semibold"><Plus className="h-4 w-4" />New plan</p>
+      <SaveFeedback state={feedback.state} message={feedback.message} testid="plan-form-feedback" />
       <Segmented options={[{ value: "package", label: "Prepaid package" }, { value: "membership", label: "Monthly membership" }]} value={f.kind} onChange={(kind) => setF({ ...f, kind })} testid="plan-form-kind" />
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name"><input className="nb-input h-11 w-full" value={f.name} onChange={set("name")} data-testid="plan-form-name" placeholder="Relaxation 5-pack" /></Field>
@@ -35,7 +55,7 @@ function ProductForm({ onSaved }) {
       </div>
       <Field label="Description"><input className="nb-input h-11 w-full" value={f.description} onChange={set("description")} data-testid="plan-form-description" /></Field>
       {service && f.duration && f.credits && f.price && <p className="text-xs text-nb-mute" data-testid="plan-form-preview">${(Number(f.price) / Number(f.credits)).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per visit · regular ${(service.prices[f.duration] * f.credits).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · practitioners are paid on the per-visit price.</p>}
-      <button type="button" onClick={save} data-testid="plan-form-save" className="nb-btn-primary h-11 px-6 text-sm">Save draft</button>
+      <button type="button" disabled={busy} onClick={save} data-testid="plan-form-save" className="nb-btn-primary h-11 px-6 text-sm">{busy ? "Saving…" : "Save draft"}</button>
     </section>
   );
 }
@@ -52,7 +72,7 @@ function Products({ rows, reload }) {
           {NEXT[p.status].map((s) => <button key={s} type="button" onClick={() => move(p, s)} data-testid={`plan-product-${s}-${p.id}`} className="nb-btn-ghost h-9 px-4 text-xs">{LABEL[s]}</button>)}
         </div>
       ))}
-      {rows.length === 0 && <p className="text-sm text-nb-mute">No plans yet.</p>}
+      {rows.length === 0 && <EmptyState title="No plans yet" body="Save a draft package or membership above to list it here." testid="plan-products-empty" />}
     </section>
   );
 }

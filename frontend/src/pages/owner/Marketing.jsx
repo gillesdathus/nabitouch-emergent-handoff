@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Gift, Tag, Zap } from "lucide-react";
 import { toast } from "sonner";
-import { SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { money, welcomeOfferListed } from "@/lib/domain";
+import { PageHeader } from "@/components/tide";
 
 const TABS = [
   { id: "welcome", label: "Welcome offer" },
@@ -42,8 +42,12 @@ export default function Marketing() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6" data-testid="owner-marketing">
-      <SectionHead eyebrow="Growth" title="Marketing" />
-      <p className="text-sm text-nb-mute">Welcome offer, flash and acquisition campaigns, and follow-up coupons. Nothing goes live until you activate it.</p>
+      <PageHeader
+        eyebrow="Growth"
+        title="Marketing"
+        sub="Welcome offer, flash and acquisition campaigns, and follow-up coupons. Nothing goes live until you activate it."
+        right={<Link to="/owner/campaigns" className="nb-btn-primary h-10 px-4 text-sm" data-testid="marketing-open-campaigns"><Zap className="mr-1 inline h-4 w-4" />Flash campaigns</Link>}
+      />
       <div className="flex flex-wrap gap-2" role="tablist">
         {TABS.map((item) => (
           <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={`rounded-full px-3 py-2 text-xs font-semibold ${tab === item.id ? "bg-nb-ink text-white" : "bg-white text-nb-mute ring-1 ring-sky-100"}`} onClick={() => setTab(item.id)} data-testid={`marketing-tab-${item.id}`}>{item.label}</button>

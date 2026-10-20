@@ -45,7 +45,7 @@ export default function Dispatch({ role }) {
 
   return (
     <div className="space-y-6" data-testid={`${role}-dispatch`}>
-      <SectionHead eyebrow={role === "owner" ? "Operations" : "Coordination"} title="Live Fleet" action={
+      <SectionHead eyebrow={role === "owner" ? "Operations" : "Coordination"} title="Dispatch" action={
         <div className="flex rounded-full bg-white p-1 ring-1 ring-sky-100">{[["map", MapIcon], ["list", List]].map(([v, I]) => <button key={v} onClick={() => setView(v)} data-testid={`dispatch-view-${v}`} aria-pressed={view === v} className={`flex h-9 items-center gap-1 rounded-full px-4 text-sm font-medium ${view === v ? "bg-nb-ink text-white" : "text-nb-mute"}`}><I className="h-4 w-4" />{v === "map" ? "Map" : "Board"}</button>)}</div>} />
       <TurnaroundBoard people={idx.practitioners} compact={role !== "owner"} />
       <div className="no-scrollbar flex gap-2 overflow-x-auto">

@@ -48,7 +48,12 @@ const OwnerChannels = lazy(() => import("@/pages/owner/Channels"));
 const OwnerWinback = lazy(() => import("@/pages/owner/Winback"));
 const SafetyAlerts = lazy(() => import("@/pages/owner/Safety"));
 const OwnerFleet = lazy(() => import("@/pages/owner/Fleet"));
+const OwnerFleetNew = lazy(() => import("@/pages/owner/Fleet").then((m) => ({ default: m.FleetNew })));
+const OwnerFleetDetail = lazy(() => import("@/pages/owner/Fleet").then((m) => ({ default: m.FleetDetail })));
 const OwnerSecurityShield = lazy(() => import("@/pages/owner/SecurityShield"));
+const OwnerShieldVisits = lazy(() => import("@/pages/owner/SecurityShield").then((m) => ({ default: m.ShieldVisitsPage })));
+const OwnerShieldRenewals = lazy(() => import("@/pages/owner/SecurityShield").then((m) => ({ default: m.ShieldRenewalsPage })));
+const OwnerDriverCredentials = lazy(() => import("@/pages/owner/DriverCredentials"));
 const OwnerVisitTimeline = lazy(() => import("@/pages/owner/VisitTimeline"));
 const ProMyVehicle = lazy(() => import("@/pages/practitioner/MyVehicle"));
 const ProShieldDocs = lazy(() => import("@/pages/practitioner/ShieldDocs"));
@@ -88,6 +93,14 @@ const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
 const Messages = lazy(() => import("@/pages/reception/Messages"));
 const Thread = lazy(() => import("@/pages/messages/Thread"));
+const TeamHome = lazy(() => import("@/pages/team/TeamHome"));
+const TeamMessages = lazy(() => import("@/pages/team/TeamMessages"));
+const TeamThread = lazy(() => import("@/pages/team/TeamThread"));
+const TeamHelp = lazy(() => import("@/pages/team/TeamHelp"));
+const TeamRequests = lazy(() => import("@/pages/team/TeamRequests"));
+const TeamRequestDetail = lazy(() => import("@/pages/team/TeamRequestDetail"));
+const TeamSupplies = lazy(() => import("@/pages/team/TeamSupplies"));
+const TeamClientComms = lazy(() => import("@/pages/team/TeamClientComms"));
 
 function Gate({ children }) {
   const { state, error, user } = useDemo();
@@ -152,6 +165,13 @@ export default function App() {
                     <Route path="/pro/schedule" element={<Navigate to="/pro/availability" replace />} />
                     <Route path="/pro/hours" element={<Navigate to="/pro/availability" replace />} />
                     <Route path="/pro/messages" element={<ProMessages />} />
+                    <Route path="/pro/team" element={<TeamHome role="pro" />} />
+                    <Route path="/pro/team/messages" element={<TeamMessages role="pro" />} />
+                    <Route path="/pro/team/messages/:threadId" element={<TeamThread role="pro" />} />
+                    <Route path="/pro/team/help" element={<TeamHelp role="pro" />} />
+                    <Route path="/pro/team/requests" element={<TeamRequests role="pro" />} />
+                    <Route path="/pro/team/requests/:requestId" element={<TeamRequestDetail role="pro" />} />
+                    <Route path="/pro/team/supplies" element={<TeamSupplies role="pro" />} />
                     <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                     <Route path="/pro/recovery" element={<ProRecovery />} />
                     <Route path="/pro/vehicle" element={<ProMyVehicle />} />
@@ -172,7 +192,12 @@ export default function App() {
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
                   <Route path="/owner/fleet" element={<OwnerFleet />} />
+                  <Route path="/owner/fleet/new" element={<OwnerFleetNew />} />
+                  <Route path="/owner/fleet/:id" element={<OwnerFleetDetail />} />
                   <Route path="/owner/shield" element={<OwnerSecurityShield />} />
+                  <Route path="/owner/shield/drivers" element={<OwnerDriverCredentials />} />
+                  <Route path="/owner/shield/renewals" element={<OwnerShieldRenewals />} />
+                  <Route path="/owner/shield/visits" element={<OwnerShieldVisits />} />
                   <Route path="/owner/shield/timeline/:id" element={<OwnerVisitTimeline />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
@@ -193,6 +218,14 @@ export default function App() {
                   <Route path="/owner/availability" element={<ProAvailability mode="owner" />} />
                   <Route path="/owner/routes" element={<ProRoute mode="owner" />} />
                   <Route path="/owner/recovery" element={<ProRecovery />} />
+                  <Route path="/owner/team" element={<TeamHome role="owner" />} />
+                  <Route path="/owner/team/messages" element={<TeamMessages role="owner" />} />
+                  <Route path="/owner/team/messages/:threadId" element={<TeamThread role="owner" />} />
+                  <Route path="/owner/team/help" element={<TeamHelp role="owner" />} />
+                  <Route path="/owner/team/requests" element={<TeamRequests role="owner" />} />
+                  <Route path="/owner/team/requests/:requestId" element={<TeamRequestDetail role="owner" />} />
+                  <Route path="/owner/team/supplies" element={<TeamSupplies role="owner" />} />
+                  <Route path="/owner/team/client-comms" element={<TeamClientComms role="owner" />} />
                 </Route>
                 <Route element={<StaffShell role="desk" />}>
                   <Route path="/desk" element={<Desk />} />
@@ -203,6 +236,14 @@ export default function App() {
                   <Route path="/desk/verify" element={<Verify />} />
                   <Route path="/desk/messages" element={<Messages />} />
                   <Route path="/desk/safety" element={<SafetyAlerts />} />
+                  <Route path="/desk/team" element={<TeamHome role="desk" />} />
+                  <Route path="/desk/team/messages" element={<TeamMessages role="desk" />} />
+                  <Route path="/desk/team/messages/:threadId" element={<TeamThread role="desk" />} />
+                  <Route path="/desk/team/help" element={<TeamHelp role="desk" />} />
+                  <Route path="/desk/team/requests" element={<TeamRequests role="desk" />} />
+                  <Route path="/desk/team/requests/:requestId" element={<TeamRequestDetail role="desk" />} />
+                  <Route path="/desk/team/supplies" element={<TeamSupplies role="desk" />} />
+                  <Route path="/desk/team/client-comms" element={<TeamClientComms role="desk" />} />
                 </Route>
                 <Route path="/train" element={<TrainingWorkspace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

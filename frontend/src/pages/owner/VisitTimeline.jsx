@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { api, apiError } from "@/lib/api";
-import { Notice, PageHeader } from "@/components/tide";
+import { Notice } from "@/components/tide";
+import { ShieldChrome } from "@/components/shield/ShieldChrome";
 
 export default function VisitTimeline() {
   const { id } = useParams();
@@ -12,9 +13,12 @@ export default function VisitTimeline() {
     api.shieldTimeline(id).then(setData).catch((e) => setError(apiError(e)));
   }, [id]);
   return (
-    <div className="mx-auto max-w-3xl space-y-6" data-testid="shield-timeline-page">
-      <Link to="/owner/shield" className="inline-flex items-center gap-1 text-sm text-nb-mute"><ArrowLeft className="h-4 w-4" />Security Shield</Link>
-      <PageHeader eyebrow="Security Shield" title={data?.ref ? `Timeline · ${data.ref}` : "Visit timeline"} sub="Operational events only. Clinical notes are excluded." />
+    <ShieldChrome
+      title={data?.ref ? `Timeline · ${data.ref}` : "Visit timeline"}
+      sub="Operational events only. Clinical notes are excluded."
+      right={<Link to="/owner/shield/visits" className="nb-btn-ghost inline-flex h-10 items-center gap-1 px-3 text-sm" data-testid="shield-timeline-back"><ArrowLeft className="h-4 w-4" />Visits</Link>}
+      testid="shield-timeline-page"
+    >
       {error && <Notice>{error}</Notice>}
       {data?.note && <Notice testid="shield-timeline-note">{data.note}</Notice>}
       {data?.vehiclePublic && <p className="text-sm" data-testid="shield-timeline-vehicle">Vehicle: {data.vehiclePublic.label}</p>}
@@ -29,6 +33,6 @@ export default function VisitTimeline() {
           </li>
         ))}
       </ol>
-    </div>
+    </ShieldChrome>
   );
 }

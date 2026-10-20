@@ -1,4 +1,4 @@
-import { promoBannerCopy, promoEligibility, quote, trialCampaignListed, welcomeOfferListed } from "./domain";
+import { promoBannerCopy, promoEligibility, quote, trialCampaignListed, trialCampaignVisible, welcomeOfferListed, welcomeOfferVisible } from "./domain";
 
 const swedish = { slug: "swedish", prices: { 60: 120 } };
 const offer = {
@@ -36,6 +36,16 @@ test("trial campaign placement toggles are independent of sold-out and kind", ()
   expect(trialCampaignListed({ ...trial, showOffers: false }, "offers")).toBe(false);
   expect(trialCampaignListed({ ...trial, soldOut: true }, "home")).toBe(false);
   expect(trialCampaignListed({ ...trial, offerKind: "percent" }, "home")).toBe(false);
+});
+
+test("server eligibility hides redeemed offers without blocking anonymous provisional display", () => {
+  expect(welcomeOfferVisible(offer, "home", { known: false })).toBe(true);
+  expect(welcomeOfferVisible(offer, "home", { known: true, welcome: true })).toBe(true);
+  expect(welcomeOfferVisible(offer, "home", { known: true, welcome: false })).toBe(false);
+  const trial = { id: "cmp-1", offerKind: "trial", showHome: true, showOffers: true, soldOut: false };
+  expect(trialCampaignVisible(trial, "home", { known: false })).toBe(true);
+  expect(trialCampaignVisible(trial, "home", { known: true, trial: true })).toBe(true);
+  expect(trialCampaignVisible(trial, "home", { known: true, trial: false })).toBe(false);
 });
 
 test("a listed welcome offer does not stack in the local estimate", () => {

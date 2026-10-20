@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Percent, Timer } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { api, apiError } from "@/lib/api";
+import { SaveFeedback } from "@/components/tide";
 
 function RuleEditor({ rule, onChange, testid }) {
   const hourly = rule?.type === "hourly";
@@ -23,9 +24,25 @@ function RuleEditor({ rule, onChange, testid }) {
 
 export function PayRules({ practitioners }) {
   const [rules, setRules] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
   useEffect(() => { api.payRules().then(setRules).catch((e) => toast.error(apiError(e))); }, []);
   if (!rules) return <div className="h-48 rounded-3xl nb-skeleton" />;
-  const save = async () => { try { setRules(await api.savePayRules(rules)); toast.success("Pay rules saved"); } catch (e) { toast.error(apiError(e)); } };
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setFeedback({ state: "saving", message: "Saving pay rules…" });
+    try {
+      setRules(await api.savePayRules(rules));
+      toast.success("Pay rules saved");
+      setFeedback({ state: "success", message: "Pay rules saved." });
+    } catch (e) {
+      setFeedback({ state: "error", message: apiError(e) });
+      toast.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setOverride = (pid, rule) => setRules({ ...rules, overrides: { ...rules.overrides, [pid]: rule } });
   const clearOverride = (pid) => { const next = { ...rules.overrides }; delete next[pid]; setRules({ ...rules, overrides: next }); };
   return (
@@ -44,7 +61,8 @@ export function PayRules({ practitioners }) {
           </div>
         ))}
       </div>
-      <button type="button" onClick={save} className="nb-btn-primary h-11 text-sm" data-testid="pay-rules-save">Save pay rules</button>
+      <SaveFeedback state={feedback.state} message={feedback.message} testid="pay-rules-feedback" />
+      <button type="button" disabled={busy} onClick={save} className="nb-btn-primary h-11 text-sm" data-testid="pay-rules-save">{busy ? "Saving…" : "Save pay rules"}</button>
     </section>
   );
 }

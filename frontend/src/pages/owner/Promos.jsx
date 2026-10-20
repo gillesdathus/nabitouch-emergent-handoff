@@ -2,9 +2,9 @@ import { Link } from "react-router-dom";
 import { useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Gift } from "lucide-react";
-import { SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { money, staffActor } from "@/lib/domain";
+import { EmptyState, PageHeader, SaveFeedback } from "@/components/tide";
 
 const PLACEMENTS = [
   { id: "home", label: "Home" },
@@ -17,13 +17,26 @@ const PLACEMENTS = [
 function PromoCard({ p }) {
   const { run, api, state, user } = useDemo();
   const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
   const [f, setF] = useState(p);
   const set = (k, num) => (e) => setF({ ...f, [k]: num ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value });
-  const open = () => { setF({ ...p, placements: Array.isArray(p.placements) && p.placements.length ? p.placements : ["home", "account"] }); setEditing(true); };
-  const save = () => {
+  const open = () => { setF({ ...p, placements: Array.isArray(p.placements) && p.placements.length ? p.placements : ["home", "account"] }); setEditing(true); setFeedback({ state: "idle", message: "" }); };
+  const save = async () => {
+    if (busy) return;
     const { id, ...rest } = f;
     if (p.eligibility === "first_online") rest.stackable = false;
-    run(() => api.patch("promotions", p.id, { ...rest, _audit: `Promotion ${p.code} updated`, _actor: staffActor(user) }), "Promotion saved").then(() => setEditing(false));
+    setBusy(true);
+    setFeedback({ state: "saving", message: "Saving promotion…" });
+    try {
+      await run(() => api.patch("promotions", p.id, { ...rest, _audit: `Promotion ${p.code} updated`, _actor: staffActor(user) }), "Promotion saved");
+      setFeedback({ state: "success", message: "Promotion saved." });
+      setEditing(false);
+    } catch {
+      setFeedback({ state: "error", message: "Promotion was not saved." });
+    } finally {
+      setBusy(false);
+    }
   };
   const F = ({ l, k, type = "number", num = true }) => <label className="text-xs"><span className="mb-1 block text-nb-mute">{l}</span><input type={type} value={f[k] ?? ""} onChange={set(k, num)} className="nb-input h-10" data-testid={`promo-${p.id}-${k}`} /></label>;
   const togglePlacement = (id) => {
@@ -57,7 +70,8 @@ function PromoCard({ p }) {
         </div>
       )}
       {editing && p.eligibility !== "first_online" && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.stackable} onChange={(e) => setF({ ...f, stackable: e.target.checked })} className="h-4 w-4 accent-[#1565F0]" data-testid={`promo-${p.id}-stackable`} />Can be combined with other offers</label>}
-      {editing && <div className="flex items-center justify-between"><span className="text-xs text-nb-mute">Applies to treatment price only · never travel or tax</span><span className="flex gap-2"><button type="button" onClick={() => setEditing(false)} className="nb-btn-ghost h-10 px-4 text-sm">Cancel</button><button onClick={save} data-testid={`promo-${p.id}-save`} className="nb-btn-primary h-10 text-sm">Save</button></span></div>}
+      {editing && <SaveFeedback state={feedback.state} message={feedback.message} testid={`promo-${p.id}-feedback`} />}
+      {editing && <div className="flex items-center justify-between"><span className="text-xs text-nb-mute">Applies to treatment price only · never travel or tax</span><span className="flex gap-2"><button type="button" disabled={busy} onClick={() => setEditing(false)} className="nb-btn-ghost h-10 px-4 text-sm">Cancel</button><button type="button" disabled={busy} onClick={save} data-testid={`promo-${p.id}-save`} className="nb-btn-primary h-10 text-sm">{busy ? "Saving…" : "Save"}</button></span></div>}
     </div>
   );
 }
@@ -66,12 +80,26 @@ export default function Promos() {
   const { state, run, api } = useDemo();
   const [created, setCreated] = useState({ name: "", code: "", type: "percent", value: "10", start: "", end: "" });
   const [creating, setCreating] = useState(new URLSearchParams(window.location.search).get("create") === "1");
-  const createPromo = () => run(() => api.create("promotions", { ...created, value: Number(created.value), eligibility: "referral", services: "all", placements: ["home", "account"] }), "Promotion saved as a draft").then(() => { setCreated({ name: "", code: "", type: "percent", value: "10", start: "", end: "" }); setCreating(false); });
+  const [busy, setBusy] = useState(false);
+  const createPromo = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await run(() => api.create("promotions", { ...created, value: Number(created.value), eligibility: "referral", services: "all", placements: ["home", "account"] }), "Promotion saved as a draft");
+      setCreated({ name: "", code: "", type: "percent", value: "10", start: "", end: "" });
+      setCreating(false);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="space-y-8" data-testid="owner-promos">
-      <SectionHead eyebrow="Growth" title="Promotions" />
-      <p className="text-sm text-nb-mute">Welcome offer and catalogue codes. Prefer the <Link to="/owner/marketing" className="text-nb-blue font-semibold">Marketing hub</Link> for campaigns and follow-up coupons.</p>
-      <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setCreating((value) => !value)} data-testid="promo-create-open">{creating ? "Close" : "Create promotion"}</button>
+      <PageHeader
+        eyebrow="Growth"
+        title="Promotions"
+        sub={<>Welcome offer and catalogue codes. Prefer the <Link to="/owner/marketing" className="font-semibold text-nb-blue">Marketing hub</Link> for campaigns and follow-up coupons.</>}
+        right={<button type="button" className="nb-btn-primary h-10 shrink-0 px-4 text-sm" onClick={() => setCreating((value) => !value)} data-testid="promo-create-open">{creating ? "Close" : "Create promotion"}</button>}
+      />
       {creating && <form className="nb-card grid gap-3 p-4 sm:grid-cols-3" data-testid="promo-create" onSubmit={(event) => { event.preventDefault(); createPromo(); }}>
         <input className="nb-input h-10" placeholder="Name" value={created.name} onChange={(e) => setCreated({ ...created, name: e.target.value })} data-testid="promo-create-name" />
         <input className="nb-input h-10" placeholder="Code" value={created.code} onChange={(e) => setCreated({ ...created, code: e.target.value })} data-testid="promo-create-code" />
@@ -79,11 +107,14 @@ export default function Promos() {
         <input className="nb-input h-10" type="number" value={created.value} onChange={(e) => setCreated({ ...created, value: e.target.value })} data-testid="promo-create-value" />
         <input className="nb-input h-10" type="date" value={created.start} onChange={(e) => setCreated({ ...created, start: e.target.value })} data-testid="promo-create-start" />
         <input className="nb-input h-10" type="date" value={created.end} onChange={(e) => setCreated({ ...created, end: e.target.value })} data-testid="promo-create-end" />
-        <button className="nb-btn-primary h-10 text-sm" data-testid="promo-create-save">Create draft promotion</button>
+        <button className="nb-btn-primary h-10 text-sm" disabled={busy} data-testid="promo-create-save">{busy ? "Saving…" : "Create draft promotion"}</button>
       </form>}
+      {!state.promotions?.length && !creating && (
+        <EmptyState title="No promotions yet" body="Create a catalogue code or manage the welcome offer from Marketing." action={<button type="button" className="nb-btn-primary h-11 px-5" onClick={() => setCreating(true)} data-testid="promo-empty-create">Create promotion</button>} testid="promo-empty" />
+      )}
       <div className="grid gap-4 xl:grid-cols-2">{state.promotions.map((p) => <PromoCard key={p.id} p={p} />)}</div>
       <div>
-        <SectionHead eyebrow="Gifting" title="Gift cards" />
+        <PageHeader eyebrow="Gifting" title="Gift cards" />
         <Link to="/owner/giftcards" data-testid="giftcard-console-link" className="nb-card flex items-center gap-3 p-4 text-sm"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1">Gift cards now live in their own ledger-backed console: products, issuance, activation, redemption and voids.</span><span className="font-semibold text-nb-blue">Open</span></Link>
       </div>
     </div>
