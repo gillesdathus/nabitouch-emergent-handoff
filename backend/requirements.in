@@ -10,7 +10,8 @@ httpx==0.28.1
 motor==3.7.1
 openpyxl==3.1.5
 pandas==3.0.6
-pillow==12.3.0
+certifi==2026.10.19
+pillow==13.0.0
 PyJWT==2.15.1
 pymongo==4.18.3
 python-dotenv==1.2.4
