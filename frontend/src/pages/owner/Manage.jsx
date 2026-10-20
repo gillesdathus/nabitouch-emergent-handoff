@@ -320,7 +320,7 @@ export default function Manage() {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <HubSection title="Operations" testid="manage-section-operations">
           <HubLink to="/owner/dispatch" icon={Radio} tint="tint-lagoon" title="Live Fleet" detail="Dispatch, arrivals, and visits on the road." meta={onDuty ? String(onDuty) : undefined} testid="manage-link-live" />
-          <HubLink to="/owner/availability" icon={CalendarClock} tint="tint-ice" title="Availability" detail="Weekly hours, breaks, and travel buffers." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-link-availability" />
+          <HubLink to="/owner/availability" icon={CalendarClock} tint="tint-ice" title="Availability" detail="Weekly hours, campaign slots, breaks, and travel buffers." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-link-availability" />
           <HubLink to="/owner/routes" icon={Route} tint="tint-mint" title="Routes" detail="The day’s stops in Edmonton order." meta={visitsToday.length ? String(visitsToday.length) : undefined} testid="manage-link-routes" />
           <HubLink to="/owner/zones" icon={MapPinned} tint="tint-meadow" title="Travel zones" detail="Radius, travel fee, and which rings are on." meta={zonesOn ? String(zonesOn) : undefined} testid="manage-link-travel" />
           <HubLink to="/owner/campaigns" icon={Zap} tint="tint-ice" title="Flash bookings" detail="Limited windows. Nothing is sent until you publish one." testid="manage-link-flash" />

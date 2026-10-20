@@ -26,6 +26,9 @@ UNKNOWN_TRAVEL_MIN = 45
 BLOCKING_KINDS = {"break", "vacation", "sick", "emergency", "closed"}
 OPEN_KIND = "open"
 WEEKDAYS = range(7)
+CAMPAIGN_MODES = {"recurring", "one_time", "range"}
+TRIAL_CAMPAIGN_ID = "cmp-ten-minutes-on-us"
+TRIAL_STEP_MIN = 10
 CANCELLATION_DRAFT = (
     "We understand that plans can change. If you need to cancel or reschedule your massage appointment, "
     "please contact Nabitouch as soon as possible. We currently do not charge an automatic cancellation fee."
@@ -175,6 +178,192 @@ def validate_weekly(weekly):
     return cleaned
 
 
+def validate_campaign_blocks(blocks, *, practitioner_id=None, known_campaign_ids=None):
+    """Normalize practitioner campaign availability. Closing never cancels visits."""
+    known = set(known_campaign_ids or [TRIAL_CAMPAIGN_ID])
+    cleaned = []
+    for row in blocks or []:
+        campaign_id = str(row.get("campaignId") or "").strip()
+        if not campaign_id or campaign_id not in known:
+            raise ValueError("Choose a known campaign for this schedule block")
+        mode = str(row.get("mode") or "recurring").strip()
+        if mode not in CAMPAIGN_MODES:
+            raise ValueError("Campaign block mode must be recurring, one_time, or range")
+        full_day = bool(row.get("fullDay"))
+        start, end = str(row.get("start") or ""), str(row.get("end") or "")
+        if not full_day:
+            if not start or not end or minutes(end) <= minutes(start):
+                raise ValueError("A campaign block must end after it starts")
+        weekdays = row.get("weekdays")
+        if weekdays is None:
+            weekdays = []
+        if not isinstance(weekdays, list):
+            raise ValueError("Weekdays must be a list")
+        days = []
+        for day in weekdays:
+            day = int(day)
+            if day not in WEEKDAYS:
+                raise ValueError("Weekday must be 0 (Monday) through 6 (Sunday)")
+            if day not in days:
+                days.append(day)
+        start_date = str(row.get("startDate") or "") or None
+        end_date = str(row.get("endDate") or start_date or "") or None
+        if mode == "one_time":
+            if not start_date or len(start_date) != 10:
+                raise ValueError("A one-time campaign block needs a date")
+            end_date = start_date
+            if not days:
+                days = [weekday_of(start_date)]
+        elif mode == "range":
+            if not start_date or not end_date or len(start_date) != 10 or len(end_date) != 10 or end_date < start_date:
+                raise ValueError("A campaign date range needs a valid start and end date")
+        else:
+            if not days:
+                raise ValueError("Select at least one weekday for a recurring campaign block")
+            start_date = None
+            end_date = None
+        block_id = str(row.get("id") or "").strip() or ("cb-" + uuid.uuid4().hex[:12])
+        entry = {
+            "id": block_id,
+            "campaignId": campaign_id,
+            "practitionerId": practitioner_id or row.get("practitionerId") or "",
+            "timezone": str(row.get("timezone") or "America/Edmonton"),
+            "open": bool(row.get("open", True)),
+            "mode": mode,
+            "weekdays": days,
+            "startDate": start_date,
+            "endDate": end_date,
+            "start": "" if full_day else start,
+            "end": "" if full_day else end,
+            "fullDay": full_day,
+        }
+        cleaned.append(entry)
+    _reject_overlapping_open_campaign_blocks(cleaned)
+    return cleaned
+
+
+def _campaign_block_span_minutes(block):
+    """Comparable (start, end) minutes for overlap checks. Full-day uses the whole clock."""
+    if block.get("fullDay"):
+        return 0, 24 * 60
+    return minutes(block["start"]), minutes(block["end"])
+
+
+def _reject_overlapping_open_campaign_blocks(blocks):
+    """Open blocks for the same campaign must not overlap on the same weekday (or dated day)."""
+    open_rows = [row for row in blocks if row.get("open", True)]
+    for index, left in enumerate(open_rows):
+        for right in open_rows[index + 1 :]:
+            if left.get("campaignId") != right.get("campaignId"):
+                continue
+            if not _campaign_blocks_share_day(left, right):
+                continue
+            ls, le = _campaign_block_span_minutes(left)
+            rs, re = _campaign_block_span_minutes(right)
+            if ls < re and rs < le:
+                raise ValueError("Open campaign blocks for the same campaign cannot overlap")
+
+
+def _campaign_blocks_share_day(left, right):
+    left_mode, right_mode = left.get("mode") or "recurring", right.get("mode") or "recurring"
+    if left_mode == "one_time" or right_mode == "one_time":
+        left_date = left.get("startDate") or ""
+        right_date = right.get("startDate") or ""
+        if left_mode == "one_time" and right_mode == "one_time":
+            return left_date == right_date
+        dated = left if left_mode == "one_time" else right
+        other = right if left_mode == "one_time" else left
+        day = dated.get("startDate") or ""
+        if not day:
+            return False
+        if (other.get("mode") or "recurring") == "range":
+            start_date = other.get("startDate") or ""
+            end_date = other.get("endDate") or start_date
+            if day < start_date or day > end_date:
+                return False
+            days = other.get("weekdays") or []
+            return not days or weekday_of(day) in [int(item) for item in days]
+        return weekday_of(day) in [int(item) for item in (other.get("weekdays") or [])]
+    if left_mode == "range" or right_mode == "range":
+        # Conservative: if date ranges overlap and weekday sets can meet, treat as shared.
+        left_start = left.get("startDate") or "0000-01-01"
+        left_end = left.get("endDate") or left_start
+        right_start = right.get("startDate") or "0000-01-01"
+        right_end = right.get("endDate") or right_start
+        if left_mode != "range":
+            left_start, left_end = "0000-01-01", "9999-12-31"
+        if right_mode != "range":
+            right_start, right_end = "0000-01-01", "9999-12-31"
+        if left_end < right_start or right_end < left_start:
+            return False
+    left_days = set(int(item) for item in (left.get("weekdays") or []))
+    right_days = set(int(item) for item in (right.get("weekdays") or []))
+    if not left_days or not right_days:
+        return True
+    return bool(left_days & right_days)
+
+
+def _campaign_block_applies(block, day):
+    mode = block.get("mode") or "recurring"
+    if mode == "one_time":
+        return str(block.get("startDate") or "") == day
+    if mode == "range":
+        start_date = str(block.get("startDate") or "")
+        end_date = str(block.get("endDate") or start_date)
+        if not start_date or day < start_date or day > end_date:
+            return False
+        days = block.get("weekdays") or []
+        if days:
+            return weekday_of(day) in [int(item) for item in days]
+        return True
+    days = block.get("weekdays") or []
+    return weekday_of(day) in [int(item) for item in days]
+
+
+def _campaign_block_spans(schedule, block, day):
+    """Wall-clock spans for a campaign block on a day. Full-day uses weekly hours."""
+    if block.get("fullDay"):
+        weekday = weekday_of(day)
+        spans = []
+        for row in (schedule or {}).get("weekly") or []:
+            if int(row.get("weekday")) != weekday:
+                continue
+            spans.append((minutes(row["start"]), minutes(row["end"])))
+        return spans
+    start, end = str(block.get("start") or ""), str(block.get("end") or "")
+    if not start or not end:
+        return []
+    return [(minutes(start), minutes(end))]
+
+
+def open_campaign_covers(schedule, day, start, end, campaign_id=None):
+    """True when an open campaign block fully contains [start, end) on day."""
+    for block in (schedule or {}).get("campaignBlocks") or []:
+        if not block.get("open", True):
+            continue
+        if campaign_id and block.get("campaignId") != campaign_id:
+            continue
+        if not _campaign_block_applies(block, day):
+            continue
+        for span_start, span_end in _campaign_block_spans(schedule, block, day):
+            if start >= span_start and end <= span_end:
+                return True
+    return False
+
+
+def reserved_by_campaign(schedule, day, start, end):
+    """Open campaign inventory is reserved from regular paid bookings (any overlap)."""
+    for block in (schedule or {}).get("campaignBlocks") or []:
+        if not block.get("open", True):
+            continue
+        if not _campaign_block_applies(block, day):
+            continue
+        for span_start, span_end in _campaign_block_spans(schedule, block, day):
+            if start < span_end and span_start < end:
+                return True
+    return False
+
+
 def _span_on(day, start, end):
     if not start or not end:
         return 0, 24 * 60
@@ -217,10 +406,18 @@ def weekly_cover(schedule, day, start, end, service_slug=None):
     return False
 
 
-def interval_open(schedule, day, start, duration, service_slug=None):
-    """The whole treatment must sit in open time. Leave beats a manual reopen."""
+def interval_open(schedule, day, start, duration, service_slug=None, *, campaign=False, campaign_id=None):
+    """The whole treatment must sit in open time. Leave beats a manual reopen.
+
+    Regular bookings cannot consume open campaign blocks. Campaign bookings require
+    an open matching campaign block (which may intentionally authorize outside weekly hours).
+    """
     end = int(start) + int(duration)
     if blocking_cover(schedule, day, start, end):
+        return False
+    if campaign:
+        return open_campaign_covers(schedule, day, start, end, campaign_id or TRIAL_CAMPAIGN_ID)
+    if reserved_by_campaign(schedule, day, start, end):
         return False
     if open_cover(schedule, day, start, end) or weekly_cover(schedule, day, start, end, service_slug):
         return True
@@ -381,13 +578,22 @@ def conflicts_for_close(appointments, start_date, end_date, start, end):
 
 def appointment_outside_hours(schedule, appointments):
     """Appointments that would no longer sit in open time after a weekly edit."""
+    from trial import is_trial_appointment
+
     outside = []
     for row in appointments or []:
         if row.get("status") not in BLOCKING_STATUSES:
             continue
         start = minutes(row["time"])
-        if not interval_open(schedule, row["date"], start, int(row["duration"])):
-            outside.append({"id": row["id"], "ref": row.get("ref"), "date": row["date"], "time": row["time"], "duration": int(row["duration"])})
+        duration = int(row["duration"])
+        day = row["date"]
+        if interval_open(schedule, day, start, duration):
+            continue
+        if is_trial_appointment(row):
+            campaign_id = (row.get("pricing") or {}).get("campaignId") or row.get("campaignId") or TRIAL_CAMPAIGN_ID
+            if interval_open(schedule, day, start, duration, campaign=True, campaign_id=campaign_id):
+                continue
+        outside.append({"id": row["id"], "ref": row.get("ref"), "date": day, "time": row["time"], "duration": duration})
     return outside
 
 
@@ -434,8 +640,10 @@ def zone_name(zone):
     return (zone or {}).get("name") or "the mobile service area"
 
 
-def feasible_slot(*, schedule, person, service, day, start, duration, point, zone, appointments, rules, drives, location_type, now, production, exclude_id=None, check_service=True):
+def feasible_slot(*, schedule, person, service, day, start, duration, point, zone, appointments, rules, drives, location_type, now, production, exclude_id=None, check_service=True, campaign=False, campaign_id=None):
     """Return a feasibility record. drives(origin, dest) -> (minutes, provider)."""
+    from trial import is_trial_service
+
     if location_type == "clinic":
         return {"ok": False, "reason": "In-clinic booking is not available"}
     if not service or service.get("enabled") is False or service.get("archived") is True or not service.get("mobile", True):
@@ -450,8 +658,12 @@ def feasible_slot(*, schedule, person, service, day, start, duration, point, zon
         return {"ok": False, "reason": "That practitioner is not available"}
     if check_service and not qualified(person, service):
         return {"ok": False, "reason": "That practitioner is not offered for this service"}
-    service_slug = (service or {}).get("slug") if check_service else None
-    if schedule is not None and not interval_open(schedule, day, start, duration, service_slug):
+    trial_visit = campaign or is_trial_service(service)
+    campaign_id = campaign_id or (TRIAL_CAMPAIGN_ID if trial_visit else None)
+    service_slug = None if trial_visit else ((service or {}).get("slug") if check_service else None)
+    if schedule is not None and not interval_open(
+        schedule, day, start, duration, service_slug, campaign=trial_visit, campaign_id=campaign_id,
+    ):
         return {"ok": False, "reason": "That time is not open"}
     if schedule is None and production:
         return {"ok": False, "reason": "That time is not open"}
@@ -633,6 +845,7 @@ def draft_schedule(practitioner_id):
         "acceptingBookings": False,
         "weekly": [],
         "exceptions": [],
+        "campaignBlocks": [],
     }
 
 
@@ -824,22 +1037,26 @@ def validate_policy(policy):
     return policy
 
 
-def candidate_starts(schedule, day, duration, service_slug=None):
+def candidate_starts(schedule, day, duration, service_slug=None, *, campaign=False, campaign_id=None, step=None):
+    step = int(step if step is not None else (TRIAL_STEP_MIN if campaign else STEP_MIN))
     if schedule is None:
-        return list(range(9 * 60, 20 * 60 - int(duration) + 1, STEP_MIN))
+        return list(range(9 * 60, 20 * 60 - int(duration) + 1, step))
     starts = []
-    for mark in range(0, 24 * 60 - int(duration) + 1, STEP_MIN):
-        if interval_open(schedule, day, mark, duration, service_slug):
+    for mark in range(0, 24 * 60 - int(duration) + 1, step):
+        if interval_open(schedule, day, mark, duration, service_slug, campaign=campaign, campaign_id=campaign_id):
             starts.append(mark)
     return starts
 
 
 def day_segments(schedule, day, appointments, practitioner_id):
     states = ["unavailable"] * (24 * 60)
+    base = schedule or {"weekly": [], "exceptions": [], "campaignBlocks": []}
     for mark in range(24 * 60):
-        if interval_open(schedule or {"weekly": [], "exceptions": []}, day, mark, 1):
+        if interval_open(base, day, mark, 1):
             states[mark] = "available"
-        if blocking_cover(schedule or {}, day, mark, mark + 1):
+        if reserved_by_campaign(base, day, mark, mark + 1):
+            states[mark] = "campaign"
+        if blocking_cover(base, day, mark, mark + 1):
             states[mark] = "blocked"
     for row in appointments or []:
         if row.get("practitionerId") != practitioner_id or row.get("date") != day or row.get("status") not in BLOCKING_STATUSES:
@@ -942,12 +1159,51 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         outside = appointment_outside_hours(proposed, appointments)
         if outside and payload.get("resolution") != "keep_appointments":
             raise HTTPException(409, {"detail": "This change covers existing appointments", "conflicts": outside, "resolutionRequired": "keep_appointments"})
-        if user.get("role") != "owner":
+        # Already-approved schedules stay bookable after practitioner/reception edits (no routine re-approval).
+        # Draft/pending onboarding schedules still need Owner Approve before acceptingBookings can stick.
+        if schedule.get("status") == "approved":
+            proposed["status"] = "approved"
+            proposed["acceptingBookings"] = bool(schedule.get("acceptingBookings"))
+        elif user.get("role") == "owner":
+            proposed["status"] = schedule.get("status") or "draft"
+            proposed["acceptingBookings"] = bool(proposed.get("acceptingBookings")) and proposed.get("status") == "approved"
+        else:
             proposed["status"] = "pending"
-        proposed["acceptingBookings"] = bool(proposed.get("acceptingBookings")) and proposed.get("status") == "approved"
+            proposed["acceptingBookings"] = False
+        proposed["updatedAt"] = datetime.now(timezone.utc).isoformat()
         await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, proposed, upsert=True)
         await add_audit(user["name"], f"Weekly availability updated for {practitioner_id}", None)
         return {"schedule": proposed, "conflictsKept": len(outside)}
+
+    @router.put("/schedules/{practitioner_id}/campaign-blocks")
+    async def save_campaign_blocks(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Replace campaign availability in one write. Does not require owner re-approval.
+
+        Closing blocks rejects new campaign bookings only; confirmed visits are never cancelled here.
+        Does not flip practitioner available/bookable flags.
+        """
+        user = await require(request)
+        await _guard(user, practitioner_id)
+        known = {row.get("id") for row in await db.nt_campaigns.find({}, {"_id": 0, "id": 1}).to_list(50)}
+        known.add(TRIAL_CAMPAIGN_ID)
+        try:
+            blocks = validate_campaign_blocks(
+                payload.get("campaignBlocks") or [],
+                practitioner_id=practitioner_id,
+                known_campaign_ids=known,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        schedule = await _schedule(practitioner_id) or draft_schedule(practitioner_id)
+        proposed = {**schedule, "campaignBlocks": blocks, "updatedAt": datetime.now(timezone.utc).isoformat()}
+        # Practitioner-owned promotional inventory — do not bounce the weekly schedule to pending.
+        await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, proposed, upsert=True)
+        await add_audit(
+            user["name"],
+            f"Campaign schedule updated for {practitioner_id} ({len(blocks)} block{'s' if len(blocks) != 1 else ''})",
+            None,
+        )
+        return {"schedule": proposed, "campaignBlocks": blocks}
 
     @router.post("/schedules/{practitioner_id}/exceptions")
     async def add_exception(practitioner_id: str, request: Request, payload: dict = Body(...)):
@@ -1317,9 +1573,14 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
         if not practitioner_bookable(person, schedule):
             continue
         appointments = await coll("appointments").find({"practitionerId": person["id"], "date": day}, {"_id": 0}).to_list(100)
-        # Trial hours follow the practitioner's open week; do not require the trial slug on each weekly row.
+        # Trial inventory uses open campaign blocks (10-minute steps). Regular inventory excludes those blocks.
         hours_slug = None if trial_visit else service.get("slug")
-        for start in candidate_starts(None if location == "clinic" and schedule is None else schedule, day, duration, hours_slug):
+        campaign_id = payload.get("campaignId") or (TRIAL_CAMPAIGN_ID if trial_visit else None)
+        starts = candidate_starts(
+            None if location == "clinic" and schedule is None else schedule,
+            day, duration, hours_slug, campaign=trial_visit, campaign_id=campaign_id,
+        )
+        for start in starts:
             if location != "clinic":
                 previous, following = neighbors(appointments, day, start, duration)
                 if previous:
@@ -1333,8 +1594,11 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
                 point=point, zone=zone_label if location != "clinic" else {"name": "Clinic"},
                 appointments=appointments, rules=rules, drives=_table_drive(table) if location != "clinic" else (lambda _a, _b: (0, "clinic")),
                 location_type="home" if location != "clinic" else "home", now=now, production=production if location != "clinic" else False,
+                campaign=trial_visit, campaign_id=campaign_id,
             )
-            if location == "clinic" and schedule is not None and not interval_open(schedule, day, start, duration, hours_slug):
+            if location == "clinic" and schedule is not None and not interval_open(
+                schedule, day, start, duration, hours_slug, campaign=trial_visit, campaign_id=campaign_id,
+            ):
                 continue
             if probe["ok"]:
                 checked.append({**probe, "time": hhmm(start), "practitionerId": person["id"]})
@@ -1382,7 +1646,10 @@ async def assert_public_slot(db, coll, *, settings, production, practitioner_id,
             raise HTTPException(409, "That practitioner is not available")
         start = minutes(time)
         hours_slug = None if trial_visit else (service or {}).get("slug")
-        if schedule is not None and not interval_open(schedule, day, start, int(duration), hours_slug):
+        campaign_id = TRIAL_CAMPAIGN_ID if trial_visit else None
+        if schedule is not None and not interval_open(
+            schedule, day, start, int(duration), hours_slug, campaign=trial_visit, campaign_id=campaign_id,
+        ):
             raise HTTPException(409, "That time is not open")
         appointments = await coll("appointments").find({"practitionerId": practitioner_id, "date": day}, {"_id": 0}).to_list(100)
         if overlaps_appointment(appointments, day, start, int(duration), exclude_id):
@@ -1403,6 +1670,7 @@ async def assert_public_slot(db, coll, *, settings, production, practitioner_id,
     start = minutes(time)
     drives = conservative_drive if enforced else (lambda _a, _b: (0, "unchecked"))
     now = datetime.now(timezone.utc)
+    campaign_id = TRIAL_CAMPAIGN_ID if trial_visit else None
     for person in people:
         if not qualified(person, service):
             continue
@@ -1421,6 +1689,7 @@ async def assert_public_slot(db, coll, *, settings, production, practitioner_id,
             schedule=schedule, person=person, service=service, day=day, start=start, duration=int(duration),
             point=point, zone=zone or {"name": "mobile"}, appointments=appointments, rules=rules, drives=drives,
             location_type="home", now=now, production=production or schedule is not None, exclude_id=exclude_id,
+            campaign=trial_visit, campaign_id=campaign_id,
         )
         if probe["ok"]:
             return

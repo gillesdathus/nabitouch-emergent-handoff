@@ -23,7 +23,9 @@ Personalized greeting, date, business status, notification entry, and one quick-
 
 ### Schedule
 
-Day, week, and month on a time grid. Mobile uses a horizontal day selector and a vertical timeline. Show available time, bookings, breaks, blocked time, and time off when the schedule API returns them. Selecting an empty block offers create booking or block time. Selecting a visit opens the appointment detail. Availability editing is a short guided flow, not a permanently open form.
+Day, week, and month on a time grid. Mobile uses a horizontal day selector and a vertical timeline. Show available time, bookings, breaks, blocked time, campaign slots, and time off when the schedule API returns them. Selecting an empty block offers create booking or block time. Selecting a visit opens the appointment detail.
+
+Practitioner availability editing is a Schedule workspace with four sections: Weekly Hours, Campaign Slots, Breaks, and Time Off / Exceptions. Campaign Slots reserve promotional inventory (for example “10 Minutes. On Us.”) on the same conflict calendar as paid visits. See `docs/WEEKLY_SCHEDULE_UIUX_PLAN.md`.
 
 ### Profiles
 
