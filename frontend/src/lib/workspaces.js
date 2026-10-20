@@ -28,9 +28,12 @@ export function homeFor(user) {
 }
 
 export function workspaceForPath(pathname) {
-  if (pathname.startsWith("/pro")) return "practitioner";
-  if (pathname.startsWith("/owner")) return "owner";
-  if (pathname.startsWith("/desk")) return "desk";
+  const path = String(pathname || "").split("?")[0];
+  if (path.startsWith("/pro")) return "practitioner";
+  if (path.startsWith("/owner")) return "owner";
+  if (path.startsWith("/desk")) return "desk";
+  // Client Account (/me) is not a public post-login target for staff.
+  if (path === "/me" || path.startsWith("/me/")) return "client";
   return null;
 }
 
@@ -39,4 +42,10 @@ export function canOpen(user, pathname) {
   const need = workspaceForPath(path);
   if (!need) return true;
   return spacesOf(user).includes(need);
+}
+
+/** Post-auth destination: honor ?next= only when that workspace is authorized. */
+export function postLoginPath(user, next) {
+  if (next && canOpen(user, next)) return next;
+  return homeFor(user);
 }

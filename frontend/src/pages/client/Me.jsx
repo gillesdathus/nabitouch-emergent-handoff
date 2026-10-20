@@ -8,7 +8,7 @@ import { SessionPrepLink } from "@/components/session/SessionPrepLink";
 import { FeedbackPrompt } from "@/components/reviews/Reviews";
 import { PaymentPanel } from "@/components/PaymentPanel";
 import { BillingFacts } from "@/components/BillingFacts";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Cake, Gift, Layers, Heart, MapPin, Receipt, RotateCcw, ShieldCheck, Star, Users, Award, Navigation, CreditCard, Pencil, Plus, UserRound, CalendarDays, ClipboardList, ShieldPlus } from "lucide-react";
 import { IconTile, Notice } from "@/components/tide";
@@ -19,6 +19,7 @@ import { Breathing } from "@/components/brand";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, DONE, money, fmtDate, fmtTime, promoEligibility } from "@/lib/domain";
 import { preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
+import { homeFor, spacesOf } from "@/lib/workspaces";
 
 const greet = () => { const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton", hour: "numeric", hourCycle: "h23" }).format(new Date())); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
 
@@ -162,7 +163,13 @@ export default function Me() {
   useEffect(() => {
     mineAll.forEach((a) => { const prev = lastStatus.current[a.id]; if (prev && prev !== a.status && a.status === "arrived") toast.success(`${idx.practitioners[a.practitionerId]?.name || "Your practitioner"} has arrived`, { description: "Nabitouch Live · location sharing has stopped" }); lastStatus.current[a.id] = a.status; });
   }); // eslint-disable-line
-  if (!me) return <SignedOut />;
+  // Staff who signed in via Account (?next=/me) must not see the public signed-out client page.
+  if (!me) {
+    if (user && spacesOf(user).some((space) => space !== "client")) {
+      return <Navigate to={homeFor(user)} replace />;
+    }
+    return <SignedOut />;
+  }
   const mine = state.appointments.filter((a) => a.clientId === me.id);
   const upcoming = mine.filter((a) => OPEN.includes(a.status)).sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   const history = mine.filter((a) => DONE.includes(a.status) || ["cancelled", "no_show"].includes(a.status)).sort((a, b) => b.date.localeCompare(a.date));
