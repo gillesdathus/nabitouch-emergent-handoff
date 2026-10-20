@@ -65,6 +65,16 @@ export default function TeamRequestDetail({ role = "pro" }) {
 
       {row.note && <div className="nb-card p-4 text-sm" data-testid="team-request-note">{row.note}</div>}
 
+      {row.shieldRelated && (
+        <Link
+          to={row.shieldHref || (role === "pro" ? "/pro/shield" : "/owner/shield")}
+          className="nb-card block p-4 text-sm font-semibold text-nb-teal"
+          data-testid="team-request-shield-link"
+        >
+          Open Security Shield for fleet or safety follow-up
+        </Link>
+      )}
+
       {row.category === "running_late" && row.appointmentId && (role === "desk" || role === "owner") && (
         <button
           type="button"

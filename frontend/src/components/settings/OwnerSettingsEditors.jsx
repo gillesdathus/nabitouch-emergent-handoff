@@ -131,7 +131,7 @@ export function CancellationPolicyEditor({ policy = {} }) {
   const invalid = form && form.text.trim().length < 20;
   const submit = async () => { if (await save({ cancellationPolicy: { ...policy, text: form.text.trim().slice(0, 2000), status: form.status, automaticFee: false } }, `Cancellation policy wording saved (${form.status})`)) setForm(null); };
   return (
-    <Card title="Cancellation policy" hint="Wording shown to clients. Automatic cancellation and no-show fees stay off until separately authorized." testid="cancellation-fee" editing={Boolean(form)} onEdit={() => setForm({ text: policy.text || "", status: policy.status || "pending" })}
+    <Card title="Cancellation policy" hint="Wording shown to clients. Automatic card collection stays off; assessed fees use the fee editor below." testid="cancellation-fee" editing={Boolean(form)} onEdit={() => setForm({ text: policy.text || "", status: policy.status || "pending" })}
       summary={<><p className="text-sm" data-testid="settings-cancellation-text">{policy.text || "No wording saved."}</p><p className="mt-2 text-xs text-nb-mute">Status: <b className="capitalize">{policy.status || "pending"}</b> · Automatic fee off</p></>}>
       {form && <>
         <textarea value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} rows={5} maxLength={2000} className="nb-input h-auto py-3" aria-label="Cancellation policy wording" data-testid="settings-cancellation-input" />
@@ -139,6 +139,95 @@ export function CancellationPolicyEditor({ policy = {} }) {
         {invalid && <p className="mt-1 text-xs text-rose-700" role="alert">Write at least 20 characters.</p>}
         <Actions busy={busy} disabled={invalid} onCancel={() => setForm(null)} onSave={submit} testid="settings-cancellation" />
       </>}
+    </Card>
+  );
+}
+
+export function CancellationFeeEditor({ fee = {} }) {
+  const { save, busy } = useSave();
+  const [form, setForm] = useState(null);
+  const invalid = form && form.enabled && !String(form.effectiveOn || "").trim();
+  const submit = async () => {
+    const body = {
+      enabled: Boolean(form.enabled),
+      noShowEnabled: Boolean(form.noShowEnabled),
+      published: Boolean(form.published),
+      automaticCollection: false,
+      waiverRequiresOwner: true,
+      fixedFee: form.fixedFee === "" ? null : Number(form.fixedFee),
+      percentFee: form.percentFee === "" ? null : Number(form.percentFee),
+      noShowFee: form.noShowFee === "" ? null : Number(form.noShowFee),
+      maxFee: form.maxFee === "" ? null : Number(form.maxFee),
+      noticeHours: form.noticeHours === "" ? null : Number(form.noticeHours),
+      effectiveOn: form.effectiveOn || null,
+      text: fee.text,
+    };
+    if (await save({ cancellationFee: body }, `Cancellation fee ${body.enabled ? "enabled" : "disabled"} (manual review only)`)) setForm(null);
+  };
+  return (
+    <Card
+      title="Cancellation fees (staff review)"
+      hint="Suggested amounts on cancel for manager review. Automatic card collection stays off."
+      testid="settings-cancellation-fee"
+      editing={Boolean(form)}
+      onEdit={() => setForm({
+        enabled: Boolean(fee.enabled),
+        noShowEnabled: Boolean(fee.noShowEnabled),
+        published: Boolean(fee.published),
+        fixedFee: fee.fixedFee ?? "",
+        percentFee: fee.percentFee ?? "",
+        noShowFee: fee.noShowFee ?? "",
+        maxFee: fee.maxFee ?? "",
+        noticeHours: fee.noticeHours ?? "",
+        effectiveOn: fee.effectiveOn ? String(fee.effectiveOn).slice(0, 10) : "",
+      })}
+      summary={(
+        <p className="text-xs text-nb-mute" data-testid="settings-cancellation-fee-summary">
+          {fee.enabled ? "Assessed fees on" : "Assessed fees off"}
+          {" · "}
+          {fee.noShowEnabled ? "no-show on" : "no-show off"}
+          {" · automatic collection off"}
+          {fee.effectiveOn ? ` · effective ${String(fee.effectiveOn).slice(0, 10)}` : ""}
+        </p>
+      )}
+    >
+      {form && (
+        <>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} data-testid="settings-fee-enabled" />
+            Enable assessed cancellation fees
+          </label>
+          <label className="mt-2 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={form.noShowEnabled} onChange={(e) => setForm({ ...form, noShowEnabled: e.target.checked })} data-testid="settings-fee-noshow" />
+            Enable assessed no-show fees
+          </label>
+          <label className="mt-2 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={form.published} onChange={(e) => setForm({ ...form, published: e.target.checked })} data-testid="settings-fee-published" />
+            Publish fee wording to clients
+          </label>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[
+              ["fixedFee", "Fixed fee $"],
+              ["percentFee", "Percent %"],
+              ["noShowFee", "No-show $"],
+              ["maxFee", "Cap $"],
+              ["noticeHours", "Notice hours"],
+            ].map(([key, label]) => (
+              <label key={key} className="text-xs font-medium text-nb-mute">
+                {label}
+                <input type="number" min="0" step="1" value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} className="nb-input mt-1 h-10" data-testid={`settings-fee-${key}`} />
+              </label>
+            ))}
+            <label className="text-xs font-medium text-nb-mute">
+              Effective on
+              <input type="date" value={form.effectiveOn} onChange={(e) => setForm({ ...form, effectiveOn: e.target.value })} className="nb-input mt-1 h-10" data-testid="settings-fee-effective" />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-nb-mute">Automatic collection is locked off. Staff review suggested amounts after cancel.</p>
+          {invalid && <p className="mt-1 text-xs text-rose-700" role="alert">Set an effective date before enabling fees.</p>}
+          <Actions busy={busy} disabled={invalid} onCancel={() => setForm(null)} onSave={submit} testid="settings-cancellation-fee" />
+        </>
+      )}
     </Card>
   );
 }

@@ -1,7 +1,8 @@
 """Gap recovery, flash campaigns, consent, and cancellation-fee settings.
 
 Offers are prepared in the app. External promotional sending stays off.
-A cancellation fee is stored so it can be configured, and collection stays off.
+Cancellation fees may be enabled for staff-reviewed assessment; automatic card
+collection stays hard-off until a separate collection path is authorized.
 """
 from __future__ import annotations
 
@@ -106,15 +107,37 @@ def fee_amount(settings, appointment, kind="cancel"):
 
 
 def validate_fee(fee):
+    """Owner may enable assessed fees. Automatic card collection stays off."""
     fee = {**launch_fee(), **(fee or {})}
-    if fee.get("enabled") or fee.get("noShowEnabled") or fee.get("automaticCollection"):
-        raise ValueError("Cancellation fees stay off until a separate authorization")
-    if fee.get("published"):
-        raise ValueError("The cancellation wording is not published")
-    fee["enabled"] = False
-    fee["noShowEnabled"] = False
+    if fee.get("automaticCollection"):
+        raise ValueError("Automatic cancellation fee collection stays off — manager review is required")
     fee["automaticCollection"] = False
-    fee["published"] = False
+    fee["enabled"] = bool(fee.get("enabled"))
+    fee["noShowEnabled"] = bool(fee.get("noShowEnabled"))
+    fee["published"] = bool(fee.get("published"))
+    fee["waiverRequiresOwner"] = True
+    for key in ("fixedFee", "percentFee", "noShowFee", "maxFee", "noticeHours"):
+        raw = fee.get(key)
+        if raw is None or raw == "":
+            fee[key] = None
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{key} must be a number") from exc
+        if value < 0:
+            raise ValueError(f"{key} cannot be negative")
+        fee[key] = money(value) if key != "percentFee" and key != "noticeHours" else value
+        if key == "noticeHours":
+            fee[key] = int(value)
+        if key == "percentFee" and value > 100:
+            raise ValueError("percentFee must be between 0 and 100")
+    if fee["enabled"] and not fee.get("effectiveOn"):
+        raise ValueError("Set an effective date before enabling cancellation fees")
+    if fee.get("effectiveOn"):
+        fee["effectiveOn"] = str(fee["effectiveOn"])
+    text = str(fee.get("text") or FEE_TEXT).strip()
+    fee["text"] = text[:4000] if text else FEE_TEXT
     return fee
 
 
