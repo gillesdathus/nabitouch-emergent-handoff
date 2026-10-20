@@ -261,9 +261,12 @@ def test_placeholder_clinic_is_hidden_and_not_bookable():
     public = public_clinic(clinic)
     assert public["enabled"] is False
     assert public["address"] == ""
+    assert public["addressReady"] is False
     assert public["mobileEnabled"] is True
     saved = {"enabled": False, "address": "10150 104 St NW, Edmonton, AB", "mobileEnabled": True}
     assert clinic_is_bookable(saved) is False
+    assert public_clinic(saved)["addressReady"] is True
+    assert public_clinic(saved)["address"] == ""
     assert clinic_is_bookable({**saved, "enabled": True}) is True
     booked = clinic_visit_address({**saved, "enabled": True}, "side door")
     assert booked["line"] == saved["address"]
