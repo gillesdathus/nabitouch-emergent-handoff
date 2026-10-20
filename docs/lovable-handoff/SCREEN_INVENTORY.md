@@ -39,7 +39,7 @@ Shell items: Today, Profile, Route, Recovery, Hours, Plans.
 | `/pro/visit/:id` | Visit | Timeline and status | `POST /api/appointments/{id}/transition`, tracking session routes | Status updates. Late notice is recorded, not auto-sent |
 | `/pro/soap/:id` | SOAP | Clinical note | `PUT /api/soap/{id}`, `POST /api/soap/{id}/sign`, amendments | Own appointments only |
 | `/pro/profile` | Profile | Biography, photo, gallery | `PUT /api/practitioners/{id}/profile`, media routes | Cannot self-approve credentials |
-| `/pro/availability` | Hours | Time grid plus editor | `GET/PUT /api/schedules/{id}/...` | Pause. Conflicts return 409 and do not move visits |
+| `/pro/availability` | Schedule | Time grid plus Weekly Hours, Campaign Slots, Breaks, Time Off | `GET/PUT /api/schedules/{id}/...`, campaign-blocks | Pause. Campaign open/closed. Conflicts return 409 and do not move visits |
 | `/pro/route` | Route | Day route | `GET /api/schedules/{id}/route` | Road time needs Mapbox. Straight-line text must stay labeled as such |
 | `/pro/plans` | Plans | Care plans | State `plans` | Own plans |
 | `/pro/recovery` | Recovery | Gap recovery | `/api/recovery` | |

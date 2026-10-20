@@ -19,7 +19,8 @@ export function StepWhere() {
   const clinic = idx.settings.clinic;
   const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
-  const clinicShown = clinicBookable(clinic);
+  // Clinic tiles stay off while in-clinic booking is disabled. Trial is always mobile-only.
+  const clinicShown = !trialFlow && clinicBookable(clinic);
   const selectSaved = (a) => {
     const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
     patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
@@ -32,7 +33,7 @@ export function StepWhere() {
       <H
         t="Where should we meet you?"
         s={trialFlow
-          ? (clinicShown ? "Your free 10-minute trial can be at an eligible Edmonton address, or the clinic when it is open for booking. No payment is required." : "Your free 10-minute trial can be at an eligible Edmonton home, office, hotel, or event address. No payment is required.")
+          ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
           : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")}
       />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -41,8 +42,8 @@ export function StepWhere() {
             <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
           </Tile>); })}
       </div>
-      {draft.locationType === "clinic" ? (
-        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">{trialFlow ? "Free trial · in clinic" : "In-clinic visit"}</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
+      {draft.locationType === "clinic" && clinicShown ? (
+        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (
@@ -133,6 +134,7 @@ export function StepWhen() {
           practitionerId: draft.practitionerId || "",
           locationType: draft.locationType,
           address: draft.address || {},
+          ...(draft.campaignId ? { campaignId: draft.campaignId } : {}),
         });
         if (cancel) return;
         setRecommended(body.recommendations || []);
@@ -148,7 +150,7 @@ export function StepWhen() {
     };
     load();
     return () => { cancel = true; };
-  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address]);
+  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address, draft.campaignId]);
   const visible = showAll ? slots : recommended;
   return (
     <div>

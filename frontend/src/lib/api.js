@@ -221,6 +221,7 @@ export const api = {
   recommend: (body) => http.post('/availability/recommendations', body).then(data),
   schedule: (id, params) => http.get(`/schedules/${id}`, { params }).then(data),
   saveWeekly: (id, body) => http.put(`/schedules/${id}/weekly`, body).then(data),
+  saveCampaignBlocks: (id, body) => http.put(`/schedules/${id}/campaign-blocks`, body).then(data),
   addException: (id, body) => http.post(`/schedules/${id}/exceptions`, body).then(data),
   pauseBookings: (id, acceptingBookings) => http.post(`/schedules/${id}/pause`, { acceptingBookings }).then(data),
   approveSchedule: (id) => http.post(`/schedules/${id}/approve`).then(data),
