@@ -59,9 +59,11 @@ def resolve_team_connect(settings):
     if not isinstance(raw, dict):
         return base
     try:
-        urgent = int(raw.get("urgentAckMinutes") or URGENT_MIN)
-        routine = int(raw.get("routineAckMinutes") or ROUTINE_MIN)
-    except (TypeError, ValueError) as exc:
+        urgent_raw = raw["urgentAckMinutes"] if "urgentAckMinutes" in raw else URGENT_MIN
+        routine_raw = raw["routineAckMinutes"] if "routineAckMinutes" in raw else ROUTINE_MIN
+        urgent = int(urgent_raw)
+        routine = int(routine_raw)
+    except (TypeError, ValueError, KeyError) as exc:
         raise ValueError("Escalation minutes must be whole numbers") from exc
     if urgent < 1 or urgent > 60 or routine < 1 or routine > 180:
         raise ValueError("Escalation windows are out of range")
@@ -231,7 +233,7 @@ def build_assist_router(db, coll, user_from, add_audit):
         return {"ok": True, "escalated": changed}
 
     @router.get("")
-    async def list_requests(request: Request, status: str = "", mine: bool = False):
+    async def list_requests(request: Request, status: str = "", mine: bool = False, category: str = ""):
         user = await viewer(request)
         query = {}
         if status:
@@ -241,6 +243,10 @@ def build_assist_router(db, coll, user_from, add_audit):
                 query["status"] = status
             else:
                 raise HTTPException(400, "Unknown status filter")
+        if category:
+            if category not in CATEGORIES:
+                raise HTTPException(400, "Unknown category filter")
+            query["category"] = category
         if mine or not has_role(user, "owner", "manager", "desk"):
             query["$or"] = [
                 {"requesterId": user.get("id")},

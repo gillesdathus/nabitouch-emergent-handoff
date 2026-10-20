@@ -20,7 +20,7 @@ export const TEAM_AREAS = [
   {
     id: "requests",
     title: "Requests",
-    detail: "Assistance board with New, Accepted, In Progress, and Resolved.",
+    detail: "Assistance board with Active, Escalated, and Resolved filters.",
     path: "requests",
     tint: "tint-lagoon",
     phase: 3,
@@ -114,4 +114,11 @@ export function quickHelpHref(role, { category, appointmentId } = {}) {
   if (appointmentId) params.set("appointmentId", appointmentId);
   const query = params.toString();
   return query ? `${base}?${query}` : base;
+}
+
+/** Supplies board deep link with optional appointment for next-client handoff. */
+export function suppliesHref(role, { appointmentId } = {}) {
+  const base = teamPath(role, "supplies");
+  if (!appointmentId) return base;
+  return `${base}?appointmentId=${encodeURIComponent(appointmentId)}`;
 }

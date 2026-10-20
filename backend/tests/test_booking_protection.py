@@ -74,6 +74,28 @@ def test_assess_cancellation_respects_flash_grace():
     assert outside["automaticCollection"] is False
 
 
+def test_assess_no_show_staff_review_only():
+    settings = {"cancellationFee": {
+        **launch_fee(),
+        "enabled": True,
+        "noShowEnabled": True,
+        "noShowFee": 55,
+        "automaticCollection": False,
+        "effectiveOn": "2026-01-01T00:00:00+00:00",
+        "fixedFee": 40,
+    }}
+    appt = {
+        "createdAt": "2026-06-01T00:00:00+00:00",
+        "pricing": {"total": 120},
+        "flashProtection": {"enabled": False},
+    }
+    row = assess_cancellation(settings, appt, kind="no_show", at="2026-10-20T13:00:00+00:00")
+    assert row["kind"] == "no_show"
+    assert row["suggestedFee"] == 55
+    assert row["automaticCollection"] is False
+    assert row["requiresManagerReview"] is True
+
+
 def test_validate_fee_allows_enabled_but_blocks_automatic_collection():
     fee = validate_fee({
         **launch_fee(),

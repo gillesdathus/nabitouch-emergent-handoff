@@ -46,6 +46,7 @@ export default function TeamHelp({ role = "pro" }) {
   const [shareLocation, setShareLocation] = useState(false);
   const [consent, setConsent] = useState(false);
   const [coords, setCoords] = useState(null);
+  const [delayMinutes, setDelayMinutes] = useState(10);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -89,9 +90,14 @@ export default function TeamHelp({ role = "pro" }) {
     if (!category || busy) return;
     setBusy(true);
     try {
+      const delayNote = category === "running_late" && !note.trim()
+        ? `Running about ${delayMinutes} minutes late.`
+        : note;
       const body = {
         category,
-        note,
+        note: category === "running_late" && note.trim() && !note.includes(`${delayMinutes}`)
+          ? `${note.trim()} (${delayMinutes} min)`
+          : delayNote,
         appointmentId: appointmentId || undefined,
         locationShare: !!(shareLocation && consent && coords),
         locationConsent: !!(shareLocation && consent && coords),
@@ -160,9 +166,35 @@ export default function TeamHelp({ role = "pro" }) {
                 ))}
               </select>
             </label>
+            {category === "running_late" && (
+              <div data-testid="team-help-delay-minutes">
+                <p className="nb-label">Estimated delay</p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {[5, 10, 15, 20, 30].map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={delayMinutes === value ? "nb-chip-on" : "nb-chip-off"}
+                      onClick={() => setDelayMinutes(value)}
+                      data-testid={`team-help-delay-${value}`}
+                    >
+                      {value} min
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-nb-mute">Desk can draft an in-app client update from the request. No SMS from Quick Help.</p>
+              </div>
+            )}
             <label className="block text-sm">
               <span className="nb-label">Details {category === "other" ? "(required)" : "(optional)"}</span>
-              <textarea className="nb-input min-h-[96px] py-3" maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you need?" data-testid="team-help-note" />
+              <textarea
+                className="nb-input min-h-[96px] py-3"
+                maxLength={1000}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder={category === "running_late" ? `Running about ${delayMinutes} minutes late…` : "What do you need?"}
+                data-testid="team-help-note"
+              />
             </label>
             <div className="rounded-2xl bg-sky-50 p-4 text-sm" data-testid="team-help-location">
               <p className="font-semibold text-nb-ink">Share location for this request?</p>

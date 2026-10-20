@@ -227,6 +227,29 @@ export default function Zones() {
             <option value="none">No upfront payment when explicitly allowed</option>
           </select>
         </label>
+        <label>
+          <span className="nb-label">Self-pay deposit percent</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            className="nb-input"
+            defaultValue={(st.bookingProtection || {}).selfPayDepositPercent ?? 25}
+            data-testid="settings-bp-deposit-percent"
+            onBlur={(e) => {
+              const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+              save({
+                bookingProtection: {
+                  ...(st.bookingProtection || {}),
+                  insurancePrepayEnabled: Boolean((st.bookingProtection || {}).insurancePrepayEnabled),
+                  insurancePrepayMode: (st.bookingProtection || {}).insurancePrepayMode || "travel_only",
+                  selfPayDepositPercent: pct,
+                },
+              }, "Self-pay deposit percent saved");
+            }}
+          />
+          <p className="mt-1 text-[11px] text-nb-mute">Used for self-pay checkout deposits and insurance “higher of / plus deposit” modes. Staff-reviewed fees only — no auto-charge.</p>
+        </label>
       </div>
       <SectionHead eyebrow="Flash Booking Protection" title="Grace windows for short-lead bookings" className="mt-10" />
       <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-flash-protection">

@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Package } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ModuleNavigation } from "@/components/tide";
 import { TeamSearchField } from "@/components/team/TeamConnectUI";
 import { api, apiError } from "@/lib/api";
+import { OPEN } from "@/lib/domain";
 import { teamNavFor, teamPath } from "@/lib/team-connect";
+import { useDemo } from "@/store/DemoStore";
 
 export default function TeamSupplies({ role = "pro" }) {
+  const { state, practitionerId } = useDemo();
+  const [params] = useSearchParams();
+  const paramAppointment = params.get("appointmentId") || "";
   const [query, setQuery] = useState("");
   const [items, setItems] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -16,7 +21,19 @@ export default function TeamSupplies({ role = "pro" }) {
   const [reqItem, setReqItem] = useState("");
   const [reqQty, setReqQty] = useState("1");
   const [fulfillment, setFulfillment] = useState("next_client");
-  const canAdjust = role === "owner";
+  const [appointmentId, setAppointmentId] = useState(paramAppointment);
+  const [handoffNote, setHandoffNote] = useState("");
+  const canAdjust = role === "owner" || role === "manager";
+
+  useEffect(() => {
+    if (paramAppointment) setAppointmentId(paramAppointment);
+  }, [paramAppointment]);
+
+  const visits = useMemo(() => {
+    const rows = (state.appointments || []).filter((row) => OPEN.includes(row.status));
+    if (role === "pro") return rows.filter((row) => row.practitionerId === practitionerId);
+    return rows.slice(0, 40);
+  }, [state.appointments, practitionerId, role]);
 
   const load = () => {
     api.teamSupplyItems?.(query).then((body) => setItems(body?.items || [])).catch(() => setItems([]));
@@ -43,7 +60,9 @@ export default function TeamSupplies({ role = "pro" }) {
         itemId: reqItem,
         qty: Number(reqQty) || 1,
         fulfillment,
-        idempotencyKey: `${reqItem}:${Date.now()}`,
+        appointmentId: appointmentId || undefined,
+        handoffNote: handoffNote || undefined,
+        idempotencyKey: `${reqItem}:${appointmentId || "none"}:${Date.now()}`,
       });
       toast.success("Supply request sent");
       load();
@@ -56,12 +75,12 @@ export default function TeamSupplies({ role = "pro" }) {
     <div className="mx-auto max-w-3xl space-y-5" data-testid="team-supplies">
       <ModuleNavigation items={teamNavFor(role)} testid="team-module-nav" />
       <div>
-        <p className="nb-eyebrow">{role === "owner" ? "Operations" : "Team Connect"}</p>
+        <p className="nb-eyebrow">{role === "owner" || role === "manager" ? "Operations" : "Team Connect"}</p>
         <h1 className="text-3xl font-semibold tracking-tight">Supplies</h1>
         <p className="mt-1 text-sm text-nb-mute">
           {canAdjust
-            ? "Main stock, reserved, practitioner stock, and recipient confirmation."
-            : "Request supplies and confirm what you actually received."}
+            ? "Main stock, reserved, practitioner stock, and recipient confirmation. Managers can prepare handoffs."
+            : "Request supplies and confirm what you actually received. Next-client handoff uses your linked visit."}
         </p>
       </div>
 
@@ -111,6 +130,22 @@ export default function TeamSupplies({ role = "pro" }) {
             <option value="appointment_area">Current appointment area</option>
           </select>
         </div>
+        <label className="block text-sm">
+          <span className="nb-label">Linked visit {fulfillment === "next_client" ? "(recommended)" : "(optional)"}</span>
+          <select className="nb-input" value={appointmentId} onChange={(e) => setAppointmentId(e.target.value)} data-testid="team-supplies-appointment">
+            <option value="">None</option>
+            {visits.map((row) => (
+              <option key={row.id} value={row.id}>{row.ref} · {row.date} {row.time}</option>
+            ))}
+          </select>
+        </label>
+        <input
+          className="nb-input"
+          placeholder="Handoff note (meeting point, vehicle, etc.)"
+          value={handoffNote}
+          onChange={(e) => setHandoffNote(e.target.value)}
+          data-testid="team-supplies-handoff-note"
+        />
         <button type="button" className="nb-btn-primary h-11 w-full" disabled={!reqItem} onClick={requestStock} data-testid="team-supplies-request">Submit request</button>
       </div>
 
@@ -123,7 +158,12 @@ export default function TeamSupplies({ role = "pro" }) {
               <span className="text-xs capitalize text-nb-mute">{row.status}</span>
             </div>
             <p className="text-xs text-nb-mute">Requested {row.qtyRequested} · prepared {row.qtyPrepared} · received {row.qtyReceived} · outstanding {row.qtyOutstanding}</p>
-            <p className="text-xs text-nb-mute">Fulfillment: {String(row.fulfillment || "").replace(/_/g, " ")}</p>
+            <p className="text-xs text-nb-mute">
+              Fulfillment: {String(row.fulfillment || "").replace(/_/g, " ")}
+              {row.appointmentId ? ` · visit ${row.appointmentId}` : ""}
+              {row.requesterName ? ` · ${row.requesterName}` : ""}
+            </p>
+            {row.handoffNote && <p className="text-xs text-nb-mute" data-testid={`team-supply-handoff-${row.id}`}>{row.handoffNote}</p>}
             {canAdjust && row.status === "new" && (
               <button type="button" className="nb-btn-ghost h-9 text-xs" onClick={() => api.teamPrepareSupply(row.id, { qtyPrepared: row.qtyRequested, fulfillment: row.fulfillment }).then(() => { toast.success("Prepared"); load(); }).catch((e) => toast.error(apiError(e)))} data-testid={`team-supply-prepare-${row.id}`}>Prepare full qty</button>
             )}

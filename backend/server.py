@@ -1246,8 +1246,8 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
     if kind == "delayed":
         await on_transition(appt, "delayed", {"delayMin": upd.get("delayMin")})
         await record_trip_notice(db, saved, "delayed", upd.get("delayMin"), body.get("note") or "")
-        if upd.get("delayMin"):
-            await queue_sms(db, coll, "running_late", saved, f"{appt_id}:{upd['delayMin']}", minutes=upd["delayMin"])
+        # Visit / Team Connect keep delay messaging in-app. Do not auto-SMS from this event.
+        # Approved client SMS would be a separate, explicitly enabled channel.
     if kind == "rescheduled":
         await _maybe_lifecycle_mail(saved, "reschedule")
         await _queue_practitioner_mail(saved, "practitioner_reschedule")
@@ -1301,6 +1301,17 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
             appt = {**appt, "cancellationAssessment": assessment}
         except Exception:
             logging.getLogger(__name__).error("Cancellation assessment failed")
+    if body.to == "no_show":
+        try:
+            settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
+            assessment = assess_cancellation(settings, appt, kind="no_show")
+            await coll("appointments").update_one(
+                {"id": appt_id},
+                {"$set": {"cancellationAssessment": assessment}},
+            )
+            appt = {**appt, "cancellationAssessment": assessment}
+        except Exception:
+            logging.getLogger(__name__).error("No-show assessment failed")
     return appt
 
 

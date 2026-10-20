@@ -57,6 +57,28 @@ export function AppointmentSheet({ apptId, role, onClose }) {
           )}
           {resched && <RescheduleSheet appt={appt} label={`${appt.ref} · ${c ? `${c.firstName} ${c.lastName}` : "Client"}`} cta="Save new time" onClose={() => setResched(null)} onPick={async (date, time) => { try { await run(() => api.event(appt.id, "rescheduled", actor, `${fmtDate(date)} ${fmtTime(time)}`, { date, time }), "Visit rescheduled"); setResched(null); } catch { /* toast shown; keep sheet open */ } }} />}
           <div className="flex items-center gap-2 text-xs"><span className="text-nb-mute">Clinical notes:</span>{role === "owner" || perm("clinical") ? <Pill tone={appt.soapStatus === "signed" ? "green" : appt.soapStatus === "draft" ? "amber" : "slate"} testid="sheet-soap-status">{appt.soapStatus === "signed" ? "SOAP signed" : appt.soapStatus === "draft" ? "SOAP draft" : "Not started"}</Pill> : <span className="flex items-center gap-1 text-slate-400" data-testid="sheet-soap-restricted"><Lock className="h-3 w-3" />Restricted</span>}</div>
+          {appt.flashProtection?.enabled && (
+            <div className="rounded-2xl bg-sky-50 p-3 text-xs" data-testid="sheet-flash-grace">
+              <p className="font-semibold text-nb-ink">Flash Booking Protection</p>
+              <p className="mt-1 text-nb-mute">
+                {appt.flashProtection.graceMinutes != null ? `${appt.flashProtection.graceMinutes} min grace` : "Grace window"}
+                {appt.flashProtection.graceEndsAt ? ` · ends ${fmtStamp(appt.flashProtection.graceEndsAt)}` : ""}
+              </p>
+            </div>
+          )}
+          {appt.cancellationAssessment && (
+            <div className="rounded-2xl bg-amber-50 p-3 text-xs" data-testid="sheet-cancellation-assessment">
+              <p className="font-semibold text-amber-950">
+                {appt.cancellationAssessment.kind === "no_show" ? "No-show" : "Cancellation"} assessment (staff review)
+              </p>
+              <p className="mt-1 text-amber-900">
+                Suggested fee ${Number(appt.cancellationAssessment.suggestedFee || 0).toFixed(2)}
+                {appt.cancellationAssessment.withinFlashGrace ? " · within flash grace ($0)" : ""}
+                {appt.cancellationAssessment.requiresManagerReview ? " · manager review required" : ""}
+              </p>
+              <p className="mt-1 text-amber-800">No automatic card charge. Record any waiver or collection separately.</p>
+            </div>
+          )}
           <div><p className="nb-label">Payment & insurance</p>{can("managePayments") || can("viewInsuranceStatus") ? <PaymentPanel appt={appt} role={role} /> : <p className="text-xs text-slate-400">Hidden by permissions</p>}</div>
           {can("viewHistory") && <div><p className="nb-label">Timeline</p><OpsTimeline appt={appt} /></div>}
         </div>

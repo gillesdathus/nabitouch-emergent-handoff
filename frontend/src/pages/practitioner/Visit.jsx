@@ -23,6 +23,7 @@ import { CleanupPanel, NextBookingCard, SyncStrip, TreatmentTimer } from "@/comp
 import { sendSessionOp, usePendingOps, useSessionOpSync, useTurnaround } from "@/lib/turnaround";
 import { toast } from "sonner";
 import { ClientRatingCard } from "@/pages/practitioner/ClientRatings";
+import { quickHelpHref, suppliesHref } from "@/lib/team-connect";
 
 const READINESS_STATUSES = ["assigned", "confirmed", "preparing", "en_route", "arrived", "interrupted", "in_session", "safety_hold"];
 const SAFETY_STATUSES = ["preparing", "en_route", "arrived", "in_session", "interrupted", "session_ended", "soap_pending", "soap_completed", "leaving", "safety_hold", "completed"];
@@ -255,10 +256,22 @@ export default function Visit() {
           <div className="flex flex-wrap gap-2">
             <button type="button" className="nb-btn-ghost h-11 text-sm" onClick={() => run(() => api.event(appt.id, "delayed", actor, delayReason || `Running ${delayMin} minutes late`, { delayMin }), "Delay saved in the app. No SMS was sent.").then(() => setLate(false)).catch(() => {})} data-testid="visit-delay-save">Save status</button>
             <button type="button" className="nb-btn-primary h-11 px-4 text-sm" onClick={() => run(() => api.postMessage(appt.id, { body: `I'm running ${delayMin} minutes late.${delayReason ? ` ${delayReason}` : ""}`, presetId: "late", minutes: delayMin, reason: delayReason, recordDelay: true }), "Sent in the app and saved on the visit. No SMS was sent.").then(() => setLate(false)).catch(() => {})} data-testid="visit-delay-send">Save and message</button>
+            <Link
+              to={quickHelpHref("pro", { category: "running_late", appointmentId: appt.id })}
+              className="nb-btn-ghost h-11 text-sm"
+              data-testid="visit-delay-quick-help"
+            >
+              Ask desk via Quick Help
+            </Link>
           </div>
         </div>
       )}
       <Notice testid="visit-trip-alerts">Trip status is saved in the app. Running late is not an SMS or an email unless a later, approved channel sends it. None is sent from this screen.</Notice>
+      {["en_route", "arrived", "in_session", "preparing"].includes(appt.status) && (
+        <Link to={suppliesHref("pro", { appointmentId: appt.id })} className="nb-btn-ghost h-11 w-full text-sm" data-testid="visit-supplies-link">
+          Request supplies for next-client handoff
+        </Link>
+      )}
       <Link to={`/pro/visit/${appt.id}/native`} data-testid="native-nav-link" className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3 text-sm ring-1 ring-amber-200"><span className="font-medium text-amber-900">In-app navigation design</span><span className="text-[10px] font-bold uppercase tracking-wider text-amber-800">Not operational</span></Link>
       <div className="nb-card p-5"><p className="nb-label">Payment</p><PaymentPanel appt={appt} role="pro" /></div>
       <Confirm open={!!ask} onOpenChange={() => setAsk(null)} title={ask?.label} body={ask?.confirm} confirmLabel={ask?.label} onConfirm={() => doIt(ask)} testid="lifecycle-confirm" />
