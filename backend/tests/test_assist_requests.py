@@ -1,5 +1,5 @@
 """Quick Help request helpers."""
-from assist_requests import CATEGORIES, default_team_connect_settings, resolve_team_connect
+from assist_requests import ACTIVE, CATEGORIES, STATUSES, default_team_connect_settings, resolve_team_connect
 
 
 def test_categories_match_brief():
@@ -9,6 +9,8 @@ def test_categories_match_brief():
     }
     assert CATEGORIES["safety_concern"]["priority"] == "urgent"
     assert CATEGORIES["running_late"]["priority"] == "routine"
+    assert "escalated" in STATUSES
+    assert "escalated" in ACTIVE
 
 
 def test_resolve_team_connect_defaults_and_validation():

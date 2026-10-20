@@ -65,3 +65,39 @@ def test_staff_dl_masks_number(monkeypatch):
 def test_compare_digest_used_for_codes():
     # Guard: verification path must use constant-time compare (imported via hmac).
     assert hmac.compare_digest(shield_mod.hash_arrival_code("a", "1"), shield_mod.hash_arrival_code("a", "1"))
+
+
+def test_parse_expiry_and_staff_vehicle_doc_mask(monkeypatch):
+    from datetime import date
+
+    assert shield_mod.parse_expiry("2027-06-01") == date(2027, 6, 1)
+    assert shield_mod.parse_expiry("not-a-date") is None
+    monkeypatch.setattr(shield_mod, "open_text", lambda v: "POL-998877")
+    out = shield_mod.staff_vehicle_doc({
+        "id": "vd-1",
+        "vehicleId": "v1",
+        "docType": "insurance",
+        "policyReference": "sealed",
+        "status": "verified",
+        "expiresOn": "2027-06-01",
+        "versions": [],
+    })
+    assert "policyReference" not in out
+    assert out["policyReferenceMasked"].endswith("8877")
+
+
+def test_shield_require_helpers_respect_flags(monkeypatch):
+    monkeypatch.delenv("SECURITY_SHIELD_DOCS_ENABLED", raising=False)
+    monkeypatch.delenv("SECURITY_SHIELD_ARRIVAL_CODE_ENABLED", raising=False)
+    monkeypatch.delenv("SECURITY_SHIELD_FLEET_ENABLED", raising=False)
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as docs_exc:
+        shield_mod._require_docs()
+    assert docs_exc.value.status_code == 403
+    with pytest.raises(HTTPException) as arrival_exc:
+        shield_mod._require_arrival()
+    assert arrival_exc.value.status_code == 403
+    with pytest.raises(HTTPException) as any_exc:
+        shield_mod._require_any_shield()
+    assert any_exc.value.status_code == 403

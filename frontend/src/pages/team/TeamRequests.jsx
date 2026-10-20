@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Shield } from "lucide-react";
 import { EmptyState, ModuleNavigation } from "@/components/tide";
 import { PriorityPill, RequestStatusPill } from "@/components/team/TeamConnectUI";
 import { api, apiError } from "@/lib/api";
-import { teamNavFor, teamPath } from "@/lib/team-connect";
+import { QUICK_HELP_CATEGORIES, teamNavFor, teamPath } from "@/lib/team-connect";
 import { toast } from "sonner";
 
 const TABS = [
   { id: "active", label: "Active" },
   { id: "new", label: "New" },
+  { id: "escalated", label: "Escalated" },
   { id: "in_progress", label: "In Progress" },
   { id: "resolved", label: "Resolved" },
 ];
@@ -23,12 +24,13 @@ function timeLabel(iso) {
 
 export default function TeamRequests({ role = "pro" }) {
   const [tab, setTab] = useState(role === "pro" ? "active" : "new");
+  const [category, setCategory] = useState("");
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
   const load = () => {
     api.teamRequestsTick?.().catch(() => {});
-    api.teamRequests({ status: tab, mine: role === "pro" })
+    api.teamRequests({ status: tab, mine: role === "pro", category: category || undefined })
       .then((body) => setRows(body?.requests || []))
       .catch((err) => setError(apiError(err)));
   };
@@ -37,7 +39,7 @@ export default function TeamRequests({ role = "pro" }) {
     load();
     const timer = setInterval(load, 20000);
     return () => clearInterval(timer);
-  }, [tab, role]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, role, category]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="mx-auto max-w-3xl space-y-5" data-testid="team-requests">
@@ -69,6 +71,16 @@ export default function TeamRequests({ role = "pro" }) {
         ))}
       </div>
 
+      <label className="block text-sm" data-testid="team-request-category-filter">
+        <span className="nb-label">Category</span>
+        <select className="nb-input" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">All categories</option>
+          {QUICK_HELP_CATEGORIES.map((cat) => (
+            <option key={cat.id} value={cat.id}>{cat.title}</option>
+          ))}
+        </select>
+      </label>
+
       {error && <p className="text-sm text-rose-700">{error}</p>}
 
       <div className="space-y-3" data-testid="team-request-list">
@@ -82,6 +94,7 @@ export default function TeamRequests({ role = "pro" }) {
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-nb-mute">{row.ref}</span>
               <div className="flex items-center gap-2">
+                {row.shieldRelated && <Shield className="h-3.5 w-3.5 text-nb-teal" aria-label="Shield related" data-testid={`team-request-shield-${row.id}`} />}
                 <PriorityPill level={row.priority === "urgent" ? "high" : "medium"} />
                 <RequestStatusPill status={row.status} />
               </div>
@@ -93,6 +106,16 @@ export default function TeamRequests({ role = "pro" }) {
               {" · "}
               {timeLabel(row.createdAt)}
             </p>
+            {row.status === "new" && row.escalateAt && (
+              <p className="text-[11px] font-semibold text-amber-800" data-testid={`team-request-escalate-${row.id}`}>
+                Escalates {timeLabel(row.escalateAt)}
+              </p>
+            )}
+            {row.escalatedAt && (
+              <p className="text-[11px] font-semibold text-rose-800" data-testid={`team-request-escalated-${row.id}`}>
+                Escalated {timeLabel(row.escalatedAt)}
+              </p>
+            )}
             {row.note && <p className="line-clamp-2 text-sm text-nb-mute">{row.note}</p>}
           </Link>
         ))}

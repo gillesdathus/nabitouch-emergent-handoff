@@ -75,16 +75,30 @@ export default function TeamRequestDetail({ role = "pro" }) {
         </Link>
       )}
 
+      {row.status === "new" && row.escalateAt && (
+        <p className="text-xs font-semibold text-amber-800" data-testid="team-request-escalate-at">
+          Escalates if unacknowledged by {new Date(row.escalateAt).toLocaleString("en-CA", { timeZone: "America/Edmonton", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        </p>
+      )}
+      {row.escalatedAt && (
+        <p className="text-xs font-semibold text-rose-800" data-testid="team-request-escalated-at">
+          Escalated {new Date(row.escalatedAt).toLocaleString("en-CA", { timeZone: "America/Edmonton", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+        </p>
+      )}
+
       {row.category === "running_late" && row.appointmentId && (role === "desk" || role === "owner") && (
-        <button
-          type="button"
-          className="nb-btn-ghost h-11 text-sm"
-          data-testid="team-request-client-draft"
-          disabled={busy}
-          onClick={() => act(() => api.teamClientCommDraft({ appointmentId: row.appointmentId, assistRequestId: row.id }), "Client draft ready for approval")}
-        >
-          Create client delay draft
-        </button>
+        <div className="space-y-2" data-testid="team-request-delay-draft-box">
+          <p className="text-xs text-nb-mute">Client delay drafts stay in-app for desk approval. No SMS is sent from Team Connect.</p>
+          <button
+            type="button"
+            className="nb-btn-ghost h-11 text-sm"
+            data-testid="team-request-client-draft"
+            disabled={busy}
+            onClick={() => act(() => api.teamClientCommDraft({ appointmentId: row.appointmentId, assistRequestId: row.id, delayMinutes: 10 }), "Client draft ready for approval")}
+          >
+            Create client delay draft
+          </button>
+        </div>
       )}
       {(role === "desk" || role === "owner") && (
         <Link to={teamPath(role, "client-comms")} className="text-sm font-semibold text-nb-blue">Open client delay review</Link>
