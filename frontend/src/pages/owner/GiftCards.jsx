@@ -87,7 +87,15 @@ export default function GiftCardsAdmin() {
           </Reveal>
         ))}
       </div>
-      {rows?.length === 0 && <EmptyState icon={Gift} testid="gift-admin-empty" title="No gift cards" body="Issued and requested cards appear here." />}
+      {rows?.length === 0 && (
+        <EmptyState
+          icon={Gift}
+          testid="gift-admin-empty"
+          title="No gift cards"
+          body="Issued and requested cards appear here."
+          action={isOwner ? <button type="button" disabled={!enabled} onClick={() => setIssuing(true)} className="nb-btn-primary h-11 px-5" data-testid="gift-empty-issue"><Plus className="mr-1 inline h-4 w-4" />Issue card</button> : undefined}
+        />
+      )}
       {isOwner && <div className="mt-12"><GiftProducts /></div>}
       <GiftCardDrawer card={detail} open={Boolean(detail)} onOpenChange={(o) => !o && setDetail(null)}>
         {detail && enabled && <StaffActions card={detail} isOwner={isOwner} onChange={() => { open(detail.id); load(); }} />}

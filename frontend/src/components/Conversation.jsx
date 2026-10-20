@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageCircle, Send } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { EmptyState } from "@/components/tide";
@@ -17,7 +17,7 @@ function receipt(message, role) {
   return role === message.authorRole ? "Sent in the app" : "In the app";
 }
 
-export function Conversation({ appointmentId, viewerRole, title, counterpart }) {
+export function Conversation({ appointmentId, viewerRole, title, counterpart, onRead }) {
   const [thread, setThread] = useState(null);
   const [presets, setPresets] = useState([]);
   const [body, setBody] = useState("");
@@ -27,6 +27,8 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState("connecting");
+  const onReadRef = useRef(onRead);
+  useEffect(() => { onReadRef.current = onRead; }, [onRead]);
 
   const load = () => api.appointmentMessages(appointmentId).then(setThread).catch((err) => setError(apiError(err)));
 
@@ -36,7 +38,9 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart }) 
     setError("");
     api.messagePresets().then((body) => { if (alive) setPresets(body.presets || []); }).catch(() => {});
     load();
-    api.markMessagesRead(appointmentId).catch(() => {});
+    api.markMessagesRead(appointmentId)
+      .then(() => { if (alive && onReadRef.current) onReadRef.current(); })
+      .catch(() => {});
     const poll = setInterval(load, 8000);
     let source;
     const base = process.env.REACT_APP_BACKEND_URL;

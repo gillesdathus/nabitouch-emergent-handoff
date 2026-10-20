@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useDemo } from "@/store/DemoStore";
 import { money } from "@/lib/domain";
+import { EmptyState, PageHeader, SaveFeedback } from "@/components/tide";
 
 const EMPTY = {
   title: "", description: "", serviceSlug: "all", bookingStart: "", bookingEnd: "",
@@ -65,6 +66,8 @@ export default function Campaigns() {
   const [menu, setMenu] = useState(null);
   const [preview, setPreview] = useState(null);
   const [performance, setPerformance] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveNote, setSaveNote] = useState({ state: "idle", message: "" });
   const services = state.services || [];
   const serviceName = (slug) => services.find((item) => item.slug === slug)?.name || (slug === "all" ? "All services" : slug || "No service");
 
@@ -117,19 +120,28 @@ export default function Campaigns() {
   });
   const save = async () => {
     const form = editor;
+    if (saving) return;
     if (!form.title || !form.bookingStart || !form.expiresLocal) {
+      setSaveNote({ state: "error", message: "Add a name, appointment date, and expiration." });
       toast.error("Add a name, appointment date, and expiration.");
       return;
     }
+    setSaving(true);
+    setSaveNote({ state: "saving", message: "Saving campaign…" });
     try {
       const body = payload(form);
       if (form.id) await api.updateCampaign(form.id, body);
       else await api.saveCampaign(body);
+      setSaveNote({ state: "success", message: form.id ? "Campaign updated." : "Campaign saved as a draft." });
       toast.success(form.id ? "Campaign updated." : "Campaign saved as a draft.");
       setEditor(null);
       await load();
     } catch (error) {
-      toast.error(error?.response?.data?.detail || "The campaign was not saved");
+      const message = error?.response?.data?.detail || "The campaign was not saved";
+      setSaveNote({ state: "error", message });
+      toast.error(message);
+    } finally {
+      setSaving(false);
     }
   };
   const setStatus = async (id, status) => {
@@ -158,17 +170,18 @@ export default function Campaigns() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-1 py-2" data-testid="campaign-manager">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="nb-eyebrow">Flash booking</p>
-          <h1 className="text-3xl font-semibold tracking-tight">Flash Campaigns</h1>
-          <p className="mt-1 text-sm text-nb-mute" data-testid="campaign-sending">{sending ? "Promotional sending is on." : "Promotional sending is off. A live campaign can be booked in the app, and no commercial message is sent."}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="nb-btn-ghost h-11 px-4" onClick={createTenMinutes} data-testid="campaign-ten-minutes">Create 10 Minutes. On Us. trial (draft)</button>
-          <button type="button" className="nb-btn-primary h-11 px-4" onClick={openNew} data-testid="campaign-create"><Plus className="h-4 w-4" />Create campaign</button>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Flash booking"
+        title="Flash Campaigns"
+        sub={sending ? "Promotional sending is on." : "Promotional sending is off. A live campaign can be booked in the app, and no commercial message is sent."}
+        right={(
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="nb-btn-ghost h-11 px-4" onClick={createTenMinutes} data-testid="campaign-ten-minutes">Create 10 Minutes. On Us. trial (draft)</button>
+            <button type="button" className="nb-btn-primary h-11 px-4" onClick={openNew} data-testid="campaign-create"><Plus className="h-4 w-4" />Create campaign</button>
+          </div>
+        )}
+      />
+      <p className="sr-only" data-testid="campaign-sending">{sending ? "Promotional sending is on." : "Promotional sending is off. A live campaign can be booked in the app, and no commercial message is sent."}</p>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Campaign status">
           {FILTERS.map((item) => <button key={item} type="button" role="tab" aria-selected={filter === item} className={`rounded-full px-3 py-2 text-xs font-semibold capitalize ${filter === item ? "bg-nb-ink text-white" : "bg-white text-nb-mute ring-1 ring-sky-100"}`} onClick={() => setFilter(item)} data-testid={`campaign-filter-${item}`}>{item}</button>)}
@@ -178,7 +191,14 @@ export default function Campaigns() {
           <input className="nb-input h-11 pl-9" placeholder="Search campaigns" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search campaigns" data-testid="campaign-search" />
         </label>
       </div>
-      {!visible.length && <p className="rounded-3xl bg-white p-6 text-sm text-nb-mute ring-1 ring-sky-100" data-testid="campaign-empty">{rows.length ? "No campaigns match this filter." : "No flash campaigns yet. Create one when you are ready to offer a limited booking window."}</p>}
+      {!visible.length && (
+        <EmptyState
+          testid="campaign-empty"
+          title={rows.length ? "No campaigns match this filter" : "No flash campaigns yet"}
+          body={rows.length ? "Clear the search or choose another status." : "Create one when you are ready to offer a limited booking window."}
+          action={!rows.length ? <button type="button" className="nb-btn-primary h-11 px-5" onClick={openNew} data-testid="campaign-empty-create"><Plus className="mr-1 inline h-4 w-4" />Create campaign</button> : undefined}
+        />
+      )}
       <div className="grid gap-3">
         {visible.map((row) => {
           const status = displayStatus(row);
@@ -317,10 +337,11 @@ export default function Campaigns() {
                 <p>Expires {editor.expiresLocal ? edmontonLabel(edmontonToUtc(editor.expiresLocal)) : "not set"} · {editor.maxRedemptions} spots</p>
                 <p className="text-xs text-nb-mute">This preview uses the values in this draft. It does not create a booking.</p>
               </div>}
+              <SaveFeedback state={saveNote.state} message={saveNote.message} testid="campaign-save-feedback" />
               <div className="flex gap-2">
-                {step > 0 && <button type="button" className="nb-btn-ghost h-11 px-4" onClick={() => setStep(step - 1)}>Back</button>}
+                {step > 0 && <button type="button" className="nb-btn-ghost h-11 px-4" disabled={saving} onClick={() => setStep(step - 1)}>Back</button>}
                 {step < 4 && <button type="button" className="nb-btn-primary h-11 px-4" onClick={() => setStep(step + 1)} data-testid="campaign-next">Continue</button>}
-                {step === 4 && <button type="button" className="nb-btn-primary h-11 px-4" onClick={save} data-testid="campaign-save">{editor.id ? "Save changes" : "Save draft"}</button>}
+                {step === 4 && <button type="button" className="nb-btn-primary h-11 px-4" disabled={saving} onClick={save} data-testid="campaign-save">{saving ? "Saving…" : editor.id ? "Save changes" : "Save draft"}</button>}
               </div>
             </div>
           )}

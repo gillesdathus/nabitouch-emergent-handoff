@@ -7,7 +7,7 @@ import { CatalogueImage } from "@/components/ui-kit";
 import { IconTile, Notice, PageHeader, Reveal, TideAvatar } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 import { api } from "@/lib/api";
-import { bookableCatalogueService, clinicBookable, money, promoBannerCopy, publiclyBookable, trialCampaignListed, welcomeOfferListed } from "@/lib/domain";
+import { bookableCatalogueService, clinicBookable, money, promoBannerCopy, publiclyBookable, trialCampaignVisible, welcomeOfferVisible } from "@/lib/domain";
 
 const GROUPS = [
   ["Relax", Leaf, "tint-mint", "text-nb-teal", (service) => /relax/i.test(service.category || service.name || "") || ["swedish", "hot-stone", "scalp", "foot-reflexology"].includes(service.slug)],
@@ -32,14 +32,15 @@ export default function Home() {
   const nav = useNavigate();
   const [query, setQuery] = useState(draft.addressQuery || "");
   const [campaigns, setCampaigns] = useState([]);
+  const eligibility = state.offerEligibility;
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome, "home");
+  const eligible = welcomeOfferVisible(welcome, "home", eligibility);
   const welcomeCopy = promoBannerCopy(welcome);
   const welcomeBadge = welcome?.type === "percent" ? `${Number(welcome.value) || 0}%` : (welcome ? money(welcome.value) : "");
   const services = state.services.filter(bookableCatalogueService);
   const people = state.practitioners.filter(publiclyBookable);
   const clinicOpen = clinicBookable(idx.settings?.clinic);
-  const trial = campaigns.find((row) => trialCampaignListed(row, "home"));
+  const trial = campaigns.find((row) => trialCampaignVisible(row, "home", eligibility));
   const flash = campaigns.find((row) => row.offerKind !== "trial" && row.showHome !== false);
   const resume = draft.serviceSlug && draft.step > 0;
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDemo } from "@/store/DemoStore";
+import { EmptyState, PageHeader } from "@/components/tide";
 
 const KINDS = [
   ["association", "Association license #"],
@@ -43,10 +44,12 @@ export default function Credentials() {
   const launch = board?.launch;
   return (
     <div className="mx-auto max-w-5xl space-y-5" data-testid="credential-dashboard">
-      <div>
-        <p className="nb-eyebrow">People</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Creden<span className="font-display font-normal italic nb-gradient-text">tials</span></h1>
-      </div>
+      <PageHeader
+        eyebrow="People"
+        title={<>Creden<span className="font-display font-normal italic nb-gradient-text">tials</span></>}
+        sub="Association, liability, municipal, and CPR records — separate from Security Shield driver's licences."
+        right={<button type="button" className="nb-btn-primary h-10 shrink-0 px-4 text-sm" onClick={() => setAdding((value) => !value)} data-testid="credential-add">{adding ? "Close" : "Add credential"}</button>}
+      />
       <div className="grid gap-4 lg:grid-cols-2">
       <section className="nb-card p-5 text-sm">
         <h2 className="font-semibold">Activation and the 14-day grace</h2>
@@ -105,7 +108,6 @@ export default function Credentials() {
           {!person.activationReady && <p className="text-xs text-nb-mute">Approval stays disabled until a staff login is linked to this profile. Credentials have a 14-day grace after activation.</p>}
         </section>
       ))}
-      <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setAdding((value) => !value)} data-testid="credential-add">{adding ? "Close" : "Add credential"}</button>
       {adding && <form onSubmit={save} className="nb-card grid gap-3 p-5 sm:grid-cols-2">
         <label className="text-sm"><span className="nb-label">Practitioner</span>
           <select className="nb-input" required value={form.practitionerId} onChange={(e) => setForm({ ...form, practitionerId: e.target.value })} data-testid="credential-practitioner">
@@ -125,7 +127,16 @@ export default function Credentials() {
             {row.status === "verified" ? <span className="text-teal-700">Verified</span> : <button type="button" className="nb-btn-ghost h-10" data-testid={`credential-verify-${row.id}`} onClick={async () => { await run(() => api.verifyCredential(row.id), "Credential verified"); load(); }}>Mark verified</button>}
           </li>
         ))}
-        {rows.length === 0 && <li className="text-sm text-nb-mute">No credentials recorded yet.</li>}
+        {rows.length === 0 && (
+          <li>
+            <EmptyState
+              title="No credentials recorded yet"
+              body="Add association, liability, municipal, or CPR details for review."
+              action={<button type="button" className="nb-btn-primary h-11 px-5" onClick={() => setAdding(true)} data-testid="credential-empty-add">Add credential</button>}
+              testid="credential-empty"
+            />
+          </li>
+        )}
       </ul>
       <section data-testid="credential-reminders">
         <h2 className="text-sm font-semibold">Expiry reminders</h2>

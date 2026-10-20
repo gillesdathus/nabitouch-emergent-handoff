@@ -80,6 +80,18 @@ def is_trial_appointment(appt):
     return False
 
 
+def has_regular_treatment_history(appointments):
+    """True when the person already had a non-trial visit that counts as a regular treatment client."""
+    for appt in appointments or []:
+        if is_trial_appointment(appt):
+            continue
+        status = str((appt or {}).get("status") or "")
+        if not status or status in {"cancelled", "refunded"}:
+            continue
+        return True
+    return False
+
+
 def trial_duration_ok(duration):
     try:
         return int(duration) == TRIAL_DURATION_MIN

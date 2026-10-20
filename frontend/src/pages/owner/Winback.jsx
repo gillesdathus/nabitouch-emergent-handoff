@@ -2,21 +2,41 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Copy, HeartHandshake, Settings2 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
-import { EmptyState, Field, Notice, PageHeader, Segmented } from "@/components/tide";
+import { EmptyState, Field, Notice, PageHeader, SaveFeedback, Segmented } from "@/components/tide";
 import { fmtDate } from "@/lib/domain";
 
 function SettingsForm({ cfg, onSaved }) {
   const [f, setF] = useState(cfg);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
   useEffect(() => setF(cfg), [cfg]);
   const set = (k) => (e) => setF({ ...f, [k]: Number(e.target.value) });
-  const save = () => api.saveWinbackSettings(f).then(() => { toast.success("Winback settings saved"); onSaved(); }).catch((e) => toast.error(apiError(e)));
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setFeedback({ state: "saving", message: "Saving rules…" });
+    try {
+      await api.saveWinbackSettings(f);
+      toast.success("Winback settings saved");
+      setFeedback({ state: "success", message: "Rules saved." });
+      onSaved();
+    } catch (e) {
+      setFeedback({ state: "error", message: apiError(e) });
+      toast.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section className="nb-card grid gap-3 p-5 sm:grid-cols-4 sm:items-end" data-testid="winback-settings">
       <p className="flex items-center gap-2 font-semibold sm:col-span-4"><Settings2 className="h-4 w-4" />Rules</p>
       <Field label="Inactive for (days)"><input type="number" className="nb-input h-11 w-full" value={f.inactiveDays} onChange={set("inactiveDays")} data-testid="winback-days" /></Field>
       <Field label="Discount on treatment (%)"><input type="number" className="nb-input h-11 w-full" value={f.percent} onChange={set("percent")} data-testid="winback-percent" /></Field>
       <Field label="Code valid for (days)"><input type="number" className="nb-input h-11 w-full" value={f.validDays} onChange={set("validDays")} data-testid="winback-valid" /></Field>
-      <button type="button" onClick={save} data-testid="winback-settings-save" className="nb-btn-primary h-11 text-sm">Save rules</button>
+      <div className="sm:col-span-4 space-y-2">
+        <SaveFeedback state={feedback.state} message={feedback.message} testid="winback-settings-feedback" />
+        <button type="button" disabled={busy} onClick={save} data-testid="winback-settings-save" className="nb-btn-primary h-11 text-sm">{busy ? "Saving…" : "Save rules"}</button>
+      </div>
     </section>
   );
 }

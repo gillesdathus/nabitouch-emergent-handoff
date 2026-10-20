@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Check, ChevronRight, Info, Lock } from "lucide-react";
 import { CatalogueImage } from "@/components/ui-kit";
@@ -136,6 +136,58 @@ export function HubLink({ to, icon: Icon, title, detail, meta, testid, onClick, 
   const className = "flex min-h-14 items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-sky-50 focus-visible:bg-sky-50";
   if (onClick) return <button type="button" data-testid={testid} onClick={onClick} className={className}>{body}</button>;
   return <Link to={to} data-testid={testid} className={className}>{body}</Link>;
+}
+
+/** Horizontal module subnav for cohesive workspaces (e.g. Security Shield). */
+export function ModuleNavigation({ items, testid = "module-nav" }) {
+  const { pathname } = useLocation();
+  return (
+    <nav data-testid={testid} aria-label="Module" className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto pb-1">
+      {items.map((item) => {
+        const prefixes = item.match || [item.to];
+        const active = item.end
+          ? pathname === item.to
+          : prefixes.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+        return (
+          <NavLink
+            key={item.to + item.label}
+            to={item.to}
+            end={item.end}
+            data-testid={`${testid}-${item.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+            className={cx(
+              "inline-flex h-9 shrink-0 items-center rounded-full px-3.5 text-sm font-medium transition-colors",
+              active ? "bg-nb-ink text-white" : "bg-white text-nb-mute ring-1 ring-sky-100 hover:text-nb-ink",
+            )}
+            aria-current={active ? "page" : undefined}
+          >
+            {item.label}
+          </NavLink>
+        );
+      })}
+    </nav>
+  );
+}
+
+export function StatusBadge({ children, tone = "neutral", testid }) {
+  const tones = {
+    neutral: "bg-slate-100 text-slate-700",
+    success: "bg-teal-50 text-teal-800",
+    warn: "bg-amber-50 text-amber-900",
+    danger: "bg-rose-50 text-rose-800",
+    info: "bg-sky-50 text-sky-900",
+  };
+  return (
+    <span data-testid={testid} className={cx("inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize", tones[tone] || tones.neutral)}>
+      {children}
+    </span>
+  );
+}
+
+export function SaveFeedback({ state, message, testid = "save-feedback" }) {
+  if (!state || state === "idle") return null;
+  const copy = message || (state === "saving" ? "Saving…" : state === "success" ? "Saved" : state === "error" ? "Something went wrong" : "");
+  const tone = state === "error" ? "text-rose-700 bg-rose-50" : state === "success" ? "text-teal-800 bg-teal-50" : "text-nb-mute bg-slate-50";
+  return <p data-testid={testid} role="status" className={cx("rounded-2xl px-3.5 py-2 text-sm", tone)}>{copy}</p>;
 }
 
 export function TideAvatar({ person, size = 40 }) {

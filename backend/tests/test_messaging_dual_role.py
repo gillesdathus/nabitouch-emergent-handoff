@@ -1,5 +1,13 @@
 """Dual Owner+Practitioner messaging access and author role."""
-from messaging import acting_chat_role, can_access
+from messaging import OPEN_VISIT_STATUSES, acting_chat_role, can_access
+
+
+def test_open_visit_statuses_include_active_trip_states():
+    assert "assigned" in OPEN_VISIT_STATUSES
+    assert "en_route" in OPEN_VISIT_STATUSES
+    assert "completed" not in OPEN_VISIT_STATUSES
+    assert "cancelled" not in OPEN_VISIT_STATUSES
+    assert "closed" not in OPEN_VISIT_STATUSES
 
 
 def test_acting_chat_role_owner_practitioner_on_own_visit():

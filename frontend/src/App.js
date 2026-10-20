@@ -48,7 +48,12 @@ const OwnerChannels = lazy(() => import("@/pages/owner/Channels"));
 const OwnerWinback = lazy(() => import("@/pages/owner/Winback"));
 const SafetyAlerts = lazy(() => import("@/pages/owner/Safety"));
 const OwnerFleet = lazy(() => import("@/pages/owner/Fleet"));
+const OwnerFleetNew = lazy(() => import("@/pages/owner/Fleet").then((m) => ({ default: m.FleetNew })));
+const OwnerFleetDetail = lazy(() => import("@/pages/owner/Fleet").then((m) => ({ default: m.FleetDetail })));
 const OwnerSecurityShield = lazy(() => import("@/pages/owner/SecurityShield"));
+const OwnerShieldVisits = lazy(() => import("@/pages/owner/SecurityShield").then((m) => ({ default: m.ShieldVisitsPage })));
+const OwnerShieldRenewals = lazy(() => import("@/pages/owner/SecurityShield").then((m) => ({ default: m.ShieldRenewalsPage })));
+const OwnerDriverCredentials = lazy(() => import("@/pages/owner/DriverCredentials"));
 const OwnerVisitTimeline = lazy(() => import("@/pages/owner/VisitTimeline"));
 const ProMyVehicle = lazy(() => import("@/pages/practitioner/MyVehicle"));
 const ProShieldDocs = lazy(() => import("@/pages/practitioner/ShieldDocs"));
@@ -172,7 +177,12 @@ export default function App() {
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
                   <Route path="/owner/fleet" element={<OwnerFleet />} />
+                  <Route path="/owner/fleet/new" element={<OwnerFleetNew />} />
+                  <Route path="/owner/fleet/:id" element={<OwnerFleetDetail />} />
                   <Route path="/owner/shield" element={<OwnerSecurityShield />} />
+                  <Route path="/owner/shield/drivers" element={<OwnerDriverCredentials />} />
+                  <Route path="/owner/shield/renewals" element={<OwnerShieldRenewals />} />
+                  <Route path="/owner/shield/visits" element={<OwnerShieldVisits />} />
                   <Route path="/owner/shield/timeline/:id" element={<OwnerVisitTimeline />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />

@@ -6,7 +6,7 @@ import { PromoBanner } from "@/components/client";
 import { EmptyState, PageHeader, Reveal, Segmented } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 import { bookingPathForService, serviceSelectionPatch } from "@/lib/booking-selection";
-import { bookableCatalogueService, money, welcomeOfferListed } from "@/lib/domain";
+import { bookableCatalogueService, money, welcomeOfferVisible } from "@/lib/domain";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -37,7 +37,7 @@ export default function Services() {
   const nav = useNavigate();
   const [filter, setFilter] = useState("all");
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome, "services");
+  const eligible = welcomeOfferVisible(welcome, "services", state.offerEligibility);
   const list = state.services.filter((service) => bookableCatalogueService(service) && match(filter, service));
 
   const bookService = (service) => {

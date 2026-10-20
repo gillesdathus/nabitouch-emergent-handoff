@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { GraduationCap } from "lucide-react";
-import { EmptyState } from "@/components/tide";
+import { EmptyState, PageHeader } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 
 const PRESETS = [["24h", "24 hours"], ["3d", "3 days"], ["7d", "7 days"], ["14d", "14 days"], ["30d", "30 days"]];
@@ -47,17 +47,17 @@ export default function TrainingCenter() {
   };
   return (
     <div className="space-y-5" data-testid="training-center">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="nb-eyebrow">Manage</p>
-          <h1 className="text-3xl font-semibold tracking-tight">Training Center</h1>
-          <p className="mt-1 max-w-2xl text-sm text-nb-mute">Training uses a separate database, separate sign-in, and fictional records. It does not change live bookings, payments, or availability.</p>
-        </div>
-        <div className="flex gap-2">
-          <select className="nb-input h-11 w-auto" aria-label="Training duration" value={preset} onChange={(event) => setPreset(event.target.value)} data-testid="training-preset">{PRESETS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
-          <button type="button" className="nb-btn-primary h-11 px-4" onClick={create} data-testid="training-create">Create training scenario</button>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Manage"
+        title="Training Center"
+        sub="Training uses a separate database, separate sign-in, and fictional records. It does not change live bookings, payments, or availability."
+        right={(
+          <div className="flex gap-2">
+            <select className="nb-input h-11 w-auto" aria-label="Training duration" value={preset} onChange={(event) => setPreset(event.target.value)} data-testid="training-preset">{PRESETS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
+            <button type="button" className="nb-btn-primary h-11 px-4" onClick={create} data-testid="training-create">Create training scenario</button>
+          </div>
+        )}
+      />
       {secrets && (
         <section className="rounded-3xl bg-amber-50 p-4 text-sm ring-1 ring-amber-200" data-testid="training-passwords">
           <p className="font-semibold">Training sign-in details, shown once</p>
@@ -65,7 +65,17 @@ export default function TrainingCenter() {
           <ul className="mt-2 space-y-1">{secrets.map((row) => <li key={row.email}>{row.name} · {row.role} · {row.email} · {row.password}</li>)}</ul>
         </section>
       )}
-      {!rows.length && <div className="nb-card"><EmptyState icon={GraduationCap} title="No training scenario is open" body="Create one when you want an isolated practice workspace. It does not touch live clients." testid="training-empty" /></div>}
+      {!rows.length && (
+        <div className="nb-card">
+          <EmptyState
+            icon={GraduationCap}
+            title="No training scenario is open"
+            body="Create one when you want an isolated practice workspace. It does not touch live clients."
+            action={<button type="button" className="nb-btn-primary h-11 px-5" onClick={create} data-testid="training-empty-create">Create training scenario</button>}
+            testid="training-empty"
+          />
+        </div>
+      )}
       <div className="grid gap-3">
         {rows.map((row) => (
           <article key={row.id} className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-sky-100" data-testid={`training-scenario-${row.id}`}>

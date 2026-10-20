@@ -3,13 +3,15 @@ import { toast } from "sonner";
 import { api, apiError } from "@/lib/api";
 import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
-import { Notice, PageHeader } from "@/components/tide";
+import { EmptyState, Notice, PageHeader, SaveFeedback } from "@/components/tide";
 
 export default function ShieldDocs() {
   const { idx } = useDemo();
   const enabled = restrictedFlag(idx?.settings, "securityShieldDocsEnabled");
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState({ jurisdiction: "AB", licenceClass: "5", licenceNumber: "", expiresOn: "" });
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
 
   const load = () => api.shieldDriverCredentials().then((r) => setRows(r.credentials || [])).catch((e) => toast.error(apiError(e)));
   useEffect(() => { if (enabled) load(); }, [enabled]); // eslint-disable-line
@@ -24,24 +26,39 @@ export default function ShieldDocs() {
   }
 
   const submit = async () => {
+    if (busy) return;
+    if (!form.licenceNumber || !form.expiresOn) {
+      setFeedback({ state: "error", message: "Enter licence number and expiry date." });
+      return;
+    }
+    setBusy(true);
+    setFeedback({ state: "saving", message: "Submitting for review…" });
     try {
       await api.shieldSubmitDriverCredential(form);
       toast.success("Submitted for owner review");
+      setFeedback({ state: "success", message: "Submitted for owner review." });
       setForm((f) => ({ ...f, licenceNumber: "", expiresOn: "" }));
       load();
-    } catch (e) { toast.error(apiError(e)); }
+    } catch (e) {
+      setFeedback({ state: "error", message: apiError(e) });
+      toast.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="mx-auto max-w-lg space-y-6" data-testid="pro-shield-docs">
       <PageHeader eyebrow="Security Shield" title="My driver's licence" sub="Clients never see your licence number or document. Auto insurance for your assigned vehicle is managed by the owner under Fleet." />
       <div className="nb-card space-y-2 p-4">
+        <SaveFeedback state={feedback.state} message={feedback.message} testid="pro-dl-feedback" />
         <input className="nb-input h-10" placeholder="Jurisdiction" value={form.jurisdiction} onChange={(e) => setForm({ ...form, jurisdiction: e.target.value })} />
         <input className="nb-input h-10" placeholder="Licence class" value={form.licenceClass} onChange={(e) => setForm({ ...form, licenceClass: e.target.value })} />
         <input className="nb-input h-10" placeholder="Licence number" value={form.licenceNumber} onChange={(e) => setForm({ ...form, licenceNumber: e.target.value })} data-testid="pro-dl-number" />
         <input className="nb-input h-10" type="date" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="pro-dl-expires" />
-        <button type="button" onClick={submit} className="nb-btn-primary h-11 w-full" data-testid="pro-dl-submit">Submit for review</button>
+        <button type="button" disabled={busy} onClick={submit} className="nb-btn-primary h-11 w-full" data-testid="pro-dl-submit">{busy ? "Submitting…" : "Submit for review"}</button>
       </div>
+      {!rows.length && <EmptyState title="No licence on file" body="Submit your driver's licence details for owner review." testid="pro-dl-empty" />}
       {rows.map((row) => (
         <div key={row.id} className="nb-card p-4" data-testid={`pro-dl-${row.id}`}>
           <p className="font-semibold">{row.dashboardStatus.replace(/_/g, " ")}</p>

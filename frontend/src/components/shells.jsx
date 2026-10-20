@@ -22,33 +22,63 @@ const ICONS = {
   "My Nabitouch": UserRound,
 };
 
-const OWNER_MORE = [
-  ["/owner/clients", "Clients"],
-  ["/owner/practitioners", "Practitioners"],
-  ["/owner/dispatch", "Live Fleet"],
-  ["/owner/fleet", "Security Shield · Fleet"],
-  ["/owner/shield", "Security Shield"],
-  ["/owner/turnaround", "Session turnaround"],
-  ["/owner/feedback", "Client feedback"],
-  ["/owner/messages", "Visit messages"],
-  ["/owner/campaigns", "Flash campaigns"],
-  ["/owner/promos", "Promotions & rewards"],
-  ["/owner/giftcards", "Gift cards"],
-  ["/owner/plans", "Wellness plans"],
-  ["/owner/safety", "Safety alerts"],
-  ["/owner/winback", "Welcome-back invites"],
-  ["/owner/channels", "Email & texts"],
-  ["/owner/reports", "Financial reports"],
-  ["/owner/zones", "Zones & settings"],
-  ["/owner/credentials", "Credentials"],
-  ["/owner/availability", "Availability"],
-  ["/owner/routes", "Routes"],
-  ["/owner/recovery", "Recovery"],
-  ["/owner/permissions", "Reception access"],
-  ["/owner/insights", "Insights"],
-  ["/owner/legacy", "Legacy clients"],
-  ["/owner/training", "Training Center"],
+/** Grouped More destinations — Clients/Practitioners/Availability/Routes live under Manage/Schedule. */
+const OWNER_MORE_GROUPS = [
+  {
+    title: "Security Shield",
+    items: [
+      { to: "/owner/shield", label: "Overview", end: true },
+      { to: "/owner/fleet", label: "Fleet" },
+      { to: "/owner/shield/drivers", label: "Driver credentials" },
+      { to: "/owner/shield/renewals", label: "Renewals" },
+      { to: "/owner/shield/visits", label: "Active visits" },
+      { to: "/owner/safety", label: "Safety alerts" },
+    ],
+  },
+  {
+    title: "Marketing & growth",
+    items: [
+      { to: "/owner/promos", label: "Promotions & rewards" },
+      { to: "/owner/campaigns", label: "Flash campaigns" },
+      { to: "/owner/giftcards", label: "Gift cards" },
+      { to: "/owner/plans", label: "Wellness plans" },
+      { to: "/owner/winback", label: "Welcome-back invites" },
+      { to: "/owner/channels", label: "Email & texts" },
+    ],
+  },
+  {
+    title: "Client experience",
+    items: [
+      { to: "/owner/messages", label: "Visit messages" },
+      { to: "/owner/feedback", label: "Client feedback" },
+      { to: "/owner/turnaround", label: "Session turnaround" },
+    ],
+  },
+  {
+    title: "Business insights",
+    items: [
+      { to: "/owner/insights", label: "Insights" },
+      { to: "/owner/reports", label: "Financial reports" },
+    ],
+  },
+  {
+    title: "Business settings",
+    items: [
+      { to: "/owner/zones", label: "Zones & settings" },
+      { to: "/owner/permissions", label: "Reception access" },
+      { to: "/owner/legacy", label: "Legacy clients" },
+    ],
+  },
+  {
+    title: "Training & support",
+    items: [
+      { to: "/owner/training", label: "Training Center" },
+      { to: "/owner/recovery", label: "Recovery" },
+    ],
+  },
 ];
+
+const OWNER_MORE = OWNER_MORE_GROUPS.flatMap((group) => group.items);
 
 const STAFF = {
   pro: {
@@ -61,8 +91,8 @@ const STAFF = {
       { to: "/pro/profile", label: "Me", icon: UserRound },
     ],
     more: [
-      { to: "/pro/vehicle", label: "My vehicle", icon: Truck },
-      { to: "/pro/shield", label: "Driver's licence", icon: ShieldCheck },
+      { to: "/pro/vehicle", label: "My vehicle", icon: Truck, group: "Security" },
+      { to: "/pro/shield", label: "Driver's licence", icon: ShieldCheck, group: "Security" },
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
       { to: "/pro/earnings", label: "Earnings", icon: ReceiptText },
       { to: "/pro/ratings", label: "Client ratings", icon: Star },
@@ -115,11 +145,36 @@ function DockItem({ icon: Icon, label, active, primary, badge }) {
   );
 }
 
-function MoreSheet({ more, testid, active, badges = {} }) {
+function MoreLink({ item, testid, badges }) {
+  return (
+    <NavLink
+      key={item.to}
+      to={item.to}
+      end={item.end}
+      data-testid={`${testid}-more-${slug(item.label)}`}
+      className={({ isActive }) => cn(
+        "flex min-h-11 items-center justify-between gap-2 rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100",
+        isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50",
+      )}
+    >
+      <span>{item.label}</span>
+      {badges[item.to] > 0 && (
+        <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${slug(item.label)}`}>
+          {badges[item.to] > 9 ? "9+" : badges[item.to]}
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
+function MoreSheet({ more, groups, testid, active, badges = {} }) {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
   const badgeTotal = Object.values(badges).reduce((sum, n) => sum + (Number(n) || 0), 0);
   useEffect(() => { setOpen(false); }, [pathname]);
+  const sections = groups?.length
+    ? groups
+    : [{ title: null, items: more }];
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger data-testid={`${testid}-more`} aria-label="More" className="min-w-0 flex-1">
@@ -127,12 +182,16 @@ function MoreSheet({ more, testid, active, badges = {} }) {
       </SheetTrigger>
       <SheetContent side="bottom" className="max-h-[80dvh] overflow-y-auto rounded-t-[28px] pb-[calc(1.25rem+var(--nb-safe-b))]" data-testid={`${testid}-more-sheet`}>
         <SheetTitle className="mb-3 text-base">More</SheetTitle>
-        <div className="grid grid-cols-2 gap-2">
-          {more.map((item) => (
-            <NavLink key={item.to} to={item.to} data-testid={`${testid}-more-${slug(item.label)}`} className={({ isActive }) => cn("flex min-h-11 items-center justify-between gap-2 rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100", isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50")}>
-              <span>{item.label}</span>
-              {badges[item.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${slug(item.label)}`}>{badges[item.to] > 9 ? "9+" : badges[item.to]}</span>}
-            </NavLink>
+        <div className="space-y-4">
+          {sections.map((section) => (
+            <div key={section.title || "more"}>
+              {section.title && <p className="nb-eyebrow mb-2 px-0.5">{section.title}</p>}
+              <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
+                {section.items.map((item) => (
+                  <MoreLink key={item.to} item={item} testid={testid} badges={badges} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </SheetContent>
@@ -140,9 +199,13 @@ function MoreSheet({ more, testid, active, badges = {} }) {
   );
 }
 
-export function FloatingNav({ items, more = [], testid = "bottom-nav", badges = {} }) {
+export function FloatingNav({ items, more = [], groups, testid = "bottom-nav", badges = {} }) {
   const { pathname } = useLocation();
-  const moreActive = more.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
+  const flat = groups?.length ? groups.flatMap((g) => g.items) : more;
+  const moreActive = flat.some((item) => {
+    if (item.end) return pathname === item.to;
+    return pathname === item.to || pathname.startsWith(`${item.to}/`);
+  });
   return (
     <nav data-testid={testid} className="nb-dock fixed inset-x-0 bottom-0 z-50 border-t border-sky-100 bg-white/95 backdrop-blur-md lg:hidden" aria-label="Primary">
       <div className="mx-auto flex h-[var(--nb-nav-h)] max-w-xl items-stretch justify-between gap-0.5 px-1.5">
@@ -151,7 +214,7 @@ export function FloatingNav({ items, more = [], testid = "bottom-nav", badges = 
             {({ isActive }) => <DockItem icon={it.icon || ICONS[it.label]} label={it.short || it.label} active={isActive} primary={it.primary} badge={badges[it.to]} />}
           </NavLink>
         ))}
-        {more.length > 0 && <MoreSheet more={more} testid={testid} active={moreActive} badges={badges} />}
+        {flat.length > 0 && <MoreSheet more={more} groups={groups} testid={testid} active={moreActive} badges={badges} />}
       </div>
     </nav>
   );
@@ -274,7 +337,9 @@ function StaffShellInner({ role }) {
   useEffect(() => {
     if (role !== "pro") return undefined;
     let stop = false;
-    const load = () => api.inbox().then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); }).catch(() => {});
+    const load = () => api.inbox()
+      .then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); })
+      .catch(() => { if (!stop) setUnread(0); });
     load();
     const timer = setInterval(load, 20000);
     return () => { stop = true; clearInterval(timer); };
@@ -301,9 +366,22 @@ function StaffShellInner({ role }) {
         </nav>
         {role === "owner" && (
           <div className="no-scrollbar mt-6 min-h-0 flex-1 overflow-y-auto">
-            <p className="nb-eyebrow mb-2 px-3">Inside Manage</p>
-            {OWNER_MORE.map(([to, label]) => (
-              <NavLink key={to} to={to} data-testid={`owner-more-${label.split(" ")[0].toLowerCase()}`} className={({ isActive }) => cn("block rounded-xl px-3 py-1.5 text-[13px] transition-colors", isActive ? "bg-sky-50 font-semibold text-nb-blue" : "text-nb-mute hover:text-nb-ink")}>{label}</NavLink>
+            <p className="nb-eyebrow mb-2 px-3">More</p>
+            {OWNER_MORE_GROUPS.map((group) => (
+              <div key={group.title} className="mb-3">
+                <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-nb-teal">{group.title}</p>
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    data-testid={`owner-more-${slug(item.label)}`}
+                    className={({ isActive }) => cn("block rounded-xl px-3 py-1.5 text-[13px] transition-colors", isActive ? "bg-sky-50 font-semibold text-nb-blue" : "text-nb-mute hover:text-nb-ink")}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
             ))}
           </div>
         )}
@@ -326,7 +404,13 @@ function StaffShellInner({ role }) {
         </header>
         <main className="nb-main-clear mx-auto min-w-0 max-w-[1600px] px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8"><Page><Outlet /></Page></main>
       </div>
-      <FloatingNav items={cfg.nav} more={role === "owner" ? OWNER_MORE.map(([to, label]) => ({ to, label })) : cfg.more} testid={`${role}-bottom`} badges={badges} />
+      <FloatingNav
+        items={cfg.nav}
+        more={role === "owner" ? OWNER_MORE : cfg.more}
+        groups={role === "owner" ? OWNER_MORE_GROUPS : undefined}
+        testid={`${role}-bottom`}
+        badges={badges}
+      />
     </div>
   );
 }
