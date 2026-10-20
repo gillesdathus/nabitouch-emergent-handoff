@@ -1,5 +1,5 @@
 """Dual Owner+Practitioner messaging access and author role."""
-from messaging import OPEN_VISIT_STATUSES, acting_chat_role, can_access
+from messaging import OPEN_VISIT_STATUSES, PRESETS, acting_chat_role, can_access
 
 
 def test_open_visit_statuses_include_active_trip_states():
@@ -31,8 +31,23 @@ def test_acting_chat_role_falls_back_when_not_assigned():
     assert acting_chat_role(user, appt) == "owner"
 
 
+def test_dual_role_uses_practitioner_presets_on_assigned_visit():
+    """Primary role owner must still resolve practitioner quick-message presets when assigned."""
+    user = {
+        "role": "owner",
+        "roles": ["owner", "practitioner"],
+        "subject": "p-nabitu-kahindo",
+    }
+    appt = {"practitionerId": "p-nabitu-kahindo", "clientId": "c-1", "status": "assigned"}
+    chat_role = acting_chat_role(user, appt)
+    assert chat_role == "practitioner"
+    assert PRESETS.get((chat_role, "on_my_way"))
+    assert PRESETS.get((user.get("role"), "on_my_way")) is None
+
+
 def test_can_access_dual_role_assigned_visit():
     user = {
+        "id": "u-nabitu",
         "role": "owner",
         "roles": ["owner", "practitioner"],
         "subject": "p-nabitu-kahindo",

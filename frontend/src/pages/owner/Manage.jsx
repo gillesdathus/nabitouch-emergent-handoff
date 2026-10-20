@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClientDirectory } from "@/components/clients/ClientDirectory";
 import { Avatar, CatalogueImage, Pill } from "@/components/ui-kit";
 import { HubLink, HubSection, PageHeader } from "@/components/tide";
-import { BadgeCheck, BarChart3, CalendarClock, Gift, GraduationCap, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
+import { BadgeCheck, BarChart3, CalendarClock, Gift, GraduationCap, Headphones, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { ClientProfile, PractitionerProfile } from "@/components/ops/Profiles";
@@ -319,6 +319,7 @@ export default function Manage() {
       <PageHeader eyebrow="Management" title="People and services" sub="Operations, people, catalogue, and the business settings that already exist in this workspace." />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <HubSection title="Operations" testid="manage-section-operations">
+          <HubLink to="/owner/team" icon={Headphones} tint="tint-ice" title="Team Connect" detail="Messages, Quick Help, assistance board, and supplies." testid="manage-link-team" />
           <HubLink to="/owner/dispatch" icon={Radio} tint="tint-lagoon" title="Dispatch" detail="Live visits on the road — arrivals, tracking, and coordination." meta={onDuty ? String(onDuty) : undefined} testid="manage-link-live" />
           <HubLink to="/owner/shield" icon={Shield} tint="tint-lagoon" title="Security Shield" detail="Fleet registry, driver credentials, renewals, visits, and safety." testid="manage-link-shield" />
           <HubLink to="/owner/availability" icon={CalendarClock} tint="tint-ice" title="Availability" detail="Weekly hours, breaks, and travel buffers." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-link-availability" />

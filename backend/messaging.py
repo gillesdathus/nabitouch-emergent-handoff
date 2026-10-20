@@ -233,10 +233,14 @@ async def open_appointment_ids(coll, practitioner_id):
 
 
 async def practitioner_inbox_counts(db, coll, practitioner_id):
-    """Unread client/desk messages on currently open, assigned visits only."""
+    """Unread client/desk messages on currently open, assigned visits only.
+
+    Total equals the sum of per-appointment counts so the nav badge never exceeds
+    conversations that still appear in the open-visit inbox.
+    """
     aids = await open_appointment_ids(coll, practitioner_id)
     if not aids:
-        return 0, {}
+        return 0, {}, []
     cursor = db.nt_messages.aggregate([
         {
             "$match": {
@@ -246,17 +250,20 @@ async def practitioner_inbox_counts(db, coll, practitioner_id):
                 "readBy.practitioner": {"$exists": False},
             }
         },
-        {"$group": {"_id": "$appointmentId", "count": {"$sum": 1}}},
+        {"$group": {"_id": "$appointmentId", "count": {"$sum": 1}, "lastAt": {"$max": "$createdAt"}}},
     ])
     by_appointment = {}
     total = 0
+    ranked = []
     async for row in cursor:
         aid = row.get("_id")
         count = int(row.get("count") or 0)
         if aid and count:
             by_appointment[aid] = count
             total += count
-    return total, by_appointment
+            ranked.append({"appointmentId": aid, "unread": count, "lastAt": row.get("lastAt")})
+    ranked.sort(key=lambda item: item.get("lastAt") or "", reverse=True)
+    return total, by_appointment, ranked
 
 
 def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
@@ -293,11 +300,13 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
         roles = _roles_of(user)
         # Dual-role practitioners (e.g. Nabitu) and pure practitioners: only OPEN assigned visits.
         if subject and "practitioner" in roles:
-            unread, by_appointment = await practitioner_inbox_counts(db, coll, subject)
+            unread, by_appointment, threads = await practitioner_inbox_counts(db, coll, subject)
             return {
                 "unread": unread,
                 "byAppointment": by_appointment,
+                "threads": threads,
                 "channel": "in_app",
+                "scope": "open_assigned_visits",
                 "sms": False,
                 "email": False,
             }
@@ -305,22 +314,24 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
         if role == "client":
             query["clientId"] = subject
         elif role == "practitioner":
-            unread, by_appointment = await practitioner_inbox_counts(db, coll, subject)
+            unread, by_appointment, threads = await practitioner_inbox_counts(db, coll, subject)
             return {
                 "unread": unread,
                 "byAppointment": by_appointment,
+                "threads": threads,
                 "channel": "in_app",
+                "scope": "open_assigned_visits",
                 "sms": False,
                 "email": False,
             }
         elif role == "desk":
             perms = await reception_perms()
             if not (perms.get("viewHistory") or perms.get("createBooking")):
-                return {"unread": 0, "byAppointment": {}, "channel": "in_app", "sms": False, "email": False}
+                return {"unread": 0, "byAppointment": {}, "threads": [], "channel": "in_app", "sms": False, "email": False}
         elif role != "owner":
-            return {"unread": 0, "byAppointment": {}, "channel": "in_app", "sms": False, "email": False}
+            return {"unread": 0, "byAppointment": {}, "threads": [], "channel": "in_app", "sms": False, "email": False}
         unread = await db.nt_messages.count_documents(query)
-        return {"unread": unread, "byAppointment": {}, "channel": "in_app", "sms": False, "email": False}
+        return {"unread": unread, "byAppointment": {}, "threads": [], "channel": "in_app", "sms": False, "email": False}
 
     @router.get("/appointments/{aid}/messages")
     async def list_messages(aid: str, request: Request):
@@ -347,7 +358,8 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
         preset_id = body.get("presetId") or None
         minutes = body.get("minutes")
         reason = body.get("reason") or ""
-        preset = PRESETS.get((user.get("role"), preset_id)) if preset_id else None
+        chat_role = acting_chat_role(user, appt)
+        preset = PRESETS.get((chat_role, preset_id)) if preset_id else None
         if preset_id and not preset:
             raise HTTPException(403, "That quick message is not available for your role")
         if preset:
@@ -382,7 +394,6 @@ def build_messaging_router(db, coll, user_from, add_audit, reception_perms):
                 return {"message": _public_message(existing), "duplicate": True}
             delay = (chosen, _clean(reason) if reason else f"Running {chosen} minutes late")
         stamp = _now()
-        chat_role = acting_chat_role(user, appt)
         labels = {"client": "Client", "practitioner": "Practitioner", "desk": "Reception", "owner": "Owner"}
         doc = {
             "id": "msg-" + uuid.uuid4().hex[:16],

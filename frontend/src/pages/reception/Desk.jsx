@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus, LogIn, LogOut } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Headphones, Plus, LogIn, LogOut } from "lucide-react";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
 import { Avatar, StatusPill, PayPill, SectionHead } from "@/components/ui-kit";
@@ -17,6 +18,10 @@ export default function Desk() {
   return (
     <div className="space-y-6" data-testid="desk-schedule">
       <SectionHead eyebrow="Front desk" title="Schedule" action={perm("createBooking") && <button onClick={() => setNb(true)} data-testid="desk-new-booking-btn" className="nb-btn-primary h-10 text-sm"><Plus className="h-4 w-4" />Phone booking</button>} />
+      <Link to="/desk/team/requests" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="desk-team-assist">
+        <Headphones className="h-5 w-5 shrink-0 text-nb-blue" />
+        <span className="flex-1"><span className="font-semibold">Pending assistance</span><span className="block text-xs text-nb-mute">Team Connect requests and client coordination</span></span>
+      </Link>
       {unassigned.length > 0 && <div className="space-y-2" data-testid="desk-unassigned">{unassigned.map((a) => <button key={a.id} onClick={() => setSel(a.id)} data-testid={`desk-unassigned-${a.id}`} className="flex w-full items-center gap-3 rounded-2xl bg-amber-50 p-4 text-left text-sm text-amber-900"><span className="flex-1"><b>Needs a practitioner:</b> {a.ref} · {idx.clients[a.clientId]?.firstName} · {idx.services[a.serviceSlug].name} · {fmtDate(a.date)} {fmtTime(a.time)}</span><span className="font-semibold">Assign →</span></button>)}</div>}
       <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">{days.map((d) => <button key={d} onClick={() => setDay(d)} data-testid={`desk-day-${d}`} className={`flex h-20 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border-2 text-sm ${day === d ? "border-transparent text-white nb-gradient" : "border-sky-100 bg-white"}`}><span className={`text-[10px] uppercase ${day === d ? "text-white/80" : "text-nb-mute"}`}>{fmtDate(d, { weekday: "short" })}</span><b>{fmtDate(d, { day: "numeric" })}</b></button>)}</div>
       <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-4 lg:px-0" data-testid="desk-lanes">

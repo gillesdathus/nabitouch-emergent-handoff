@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { AlertTriangle, Bell, ChevronRight, ClipboardEdit, MapPin, Navigation, Package } from "lucide-react";
+import { AlertTriangle, Bell, ChevronRight, ClipboardEdit, Headphones, LifeBuoy, MapPin, MessageSquare, Navigation, Package } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, StatusPill, SectionHead, PageSkeleton } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
@@ -80,6 +80,22 @@ export default function Today() {
           <Link to={`/pro/visit/${next.id}`} data-testid="pro-open-next-visit" className="flex items-center justify-between bg-white/10 px-6 py-4 text-sm font-semibold hover:bg-white/15">Open visit <ChevronRight className="h-5 w-5" /></Link>
         </motion.div>
       ) : <div className="nb-soft p-6 text-sm" data-testid="pro-today-empty-all">No upcoming appointments. When clients book you, they appear here.</div>}
+
+      <div className="grid gap-3 sm:grid-cols-2" data-testid="pro-team-shortcuts">
+        <Link to="/pro/team/help" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-today-quick-help">
+          <LifeBuoy className="h-5 w-5 shrink-0 text-nb-teal" />
+          <span><span className="font-semibold">Quick Help</span><span className="block text-xs text-nb-mute">Running late, vehicle, safety, supplies</span></span>
+        </Link>
+        <Link to="/pro/team" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-today-team-connect">
+          <Headphones className="h-5 w-5 shrink-0 text-nb-blue" />
+          <span><span className="font-semibold">Team Connect</span><span className="block text-xs text-nb-mute">Messages, requests, and supplies</span></span>
+        </Link>
+      </div>
+      <Link to="/pro/messages" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-today-messages">
+        <MessageSquare className="h-5 w-5 shrink-0 text-nb-navy" />
+        <span className="flex-1"><span className="font-semibold">Client messages</span><span className="block text-xs text-nb-mute">Visit conversations with clients</span></span>
+        <ChevronRight className="h-4 w-4 text-sky-300" />
+      </Link>
 
       <div className="nb-card flex gap-3 p-4 text-sm"><Package className="h-5 w-5 shrink-0 text-nb-teal" /><div><p className="font-semibold">Travel prep</p><p className="text-xs text-nb-mute">Table & face cradle · fresh linens · oils & hypoallergenic lotion · bolsters · sanitiser</p></div></div>
 

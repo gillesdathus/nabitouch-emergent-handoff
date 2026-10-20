@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/tide";
 import { Conversation } from "@/components/Conversation";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { visibleUnreadFromInbox } from "@/lib/team-connect";
 import { PractitionerSetupRequired, PractitionerUnauthorized, usePractitionerProfile } from "@/components/PractitionerRouteGuard";
 
 export default function ProMessages() {
@@ -24,7 +25,7 @@ export default function ProMessages() {
   const refreshInbox = useCallback(() => {
     return api.inbox?.()
       .then((body) => {
-        setUnread(Number(body?.unread || 0));
+        setUnread(visibleUnreadFromInbox(body));
         setByAppointment(body?.byAppointment || {});
       })
       .catch(() => {
@@ -50,7 +51,7 @@ export default function ProMessages() {
       api.inbox?.()
         .then((body) => {
           if (stop) return;
-          setUnread(Number(body?.unread || 0));
+          setUnread(visibleUnreadFromInbox(body));
           setByAppointment(body?.byAppointment || {});
         })
         .catch(() => {
@@ -76,6 +77,8 @@ export default function ProMessages() {
       <SectionHead eyebrow="Communication" title="Messages" />
       <p className="text-sm text-nb-mute">
         In-app visit conversations with your clients. {unread > 0 ? <span data-testid="pro-messages-unread">{unread} unread</span> : "No unread messages."}
+        {" "}
+        <Link to="/pro/team/messages" className="font-semibold text-nb-blue" data-testid="pro-messages-team-link">Team Connect</Link>
       </p>
       {visits.length === 0 && (
         <EmptyState icon={MessageCircle} title="No open conversations" body="Messages appear here for your active visits. Open a visit anytime from Today." testid="pro-messages-empty" />

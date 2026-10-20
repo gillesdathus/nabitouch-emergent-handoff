@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
@@ -9,6 +9,7 @@ import { Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
 import { BOTTOM_NAV, PUBLIC_NAV, showsMarketingFooter } from "@/lib/navigation";
+import { visibleUnreadFromInbox } from "@/lib/team-connect";
 import { cn } from "@/lib/utils";
 import { registerPush } from "@/lib/nativeShell";
 
@@ -49,6 +50,7 @@ const OWNER_MORE_GROUPS = [
   {
     title: "Client experience",
     items: [
+      { to: "/owner/team", label: "Team Connect" },
       { to: "/owner/messages", label: "Visit messages" },
       { to: "/owner/feedback", label: "Client feedback" },
       { to: "/owner/turnaround", label: "Session turnaround" },
@@ -91,6 +93,7 @@ const STAFF = {
       { to: "/pro/profile", label: "Me", icon: UserRound },
     ],
     more: [
+      { to: "/pro/team", label: "Team Connect", icon: Headphones, group: "Team" },
       { to: "/pro/vehicle", label: "My vehicle", icon: Truck, group: "Security" },
       { to: "/pro/shield", label: "Driver's licence", icon: ShieldCheck, group: "Security" },
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
@@ -117,6 +120,7 @@ const STAFF = {
       { to: "/desk/clients", label: "Clients", icon: Users },
     ],
     more: [
+      { to: "/desk/team", label: "Team Connect", icon: Headphones },
       { to: "/desk/verify", label: "Payments", icon: ShieldCheck },
       { to: "/desk/messages", label: "Messages", icon: MessageSquare },
       { to: "/desk/safety", label: "Safety", icon: ShieldCheck },
@@ -338,7 +342,7 @@ function StaffShellInner({ role }) {
     if (role !== "pro") return undefined;
     let stop = false;
     const load = () => api.inbox()
-      .then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); })
+      .then((body) => { if (!stop) setUnread(visibleUnreadFromInbox(body)); })
       .catch(() => { if (!stop) setUnread(0); });
     load();
     const timer = setInterval(load, 20000);

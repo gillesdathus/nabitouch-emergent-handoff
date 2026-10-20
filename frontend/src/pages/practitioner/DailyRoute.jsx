@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { LifeBuoy } from "lucide-react";
 import { LiveMap } from "@/components/LiveMap";
 import { useDemo } from "@/store/DemoStore";
 import { fmtDate, fmtTime, todayISO, OPEN } from "@/lib/domain";
@@ -58,6 +59,11 @@ export default function DailyRoute({ mode = "pro" }) {
         {mode === "owner" && <select className="nb-input w-auto" value={personId} onChange={(event) => setPersonId(event.target.value)} data-testid="route-practitioner">{people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select>}
         <input className="nb-input w-auto" type="date" value={date} onChange={(event) => setDate(event.target.value)} data-testid="route-date" />
         <button type="button" className="nb-btn-ghost h-12" onClick={load}>Refresh estimates</button>
+        {mode === "pro" && (
+          <Link to="/pro/team/help" className="nb-btn-ghost inline-flex h-12 items-center gap-2 px-4" data-testid="route-quick-help">
+            <LifeBuoy className="h-4 w-4" />Quick Help
+          </Link>
+        )}
       </div>
       {error && <p className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700" data-testid="route-error">{error}</p>}
 
