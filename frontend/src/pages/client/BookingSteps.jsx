@@ -37,7 +37,7 @@ export function StepWhere() {
           </Tile>); })}
       </div>
       {draft.locationType === "clinic" ? (
-        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">{trialFlow ? "Free trial · in clinic" : "In-clinic visit"}</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
+        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">{trialFlow ? "Free trial · in clinic" : "In-clinic visit"}</p><p className="text-nb-mute">{clinic.address || (trialFlow && clinic.addressReady ? "Nabitouch clinic" : "Clinic address on file")} · no travel fee</p></div>
       ) : (
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (

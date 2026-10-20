@@ -773,15 +773,27 @@ def merge_clinic(current, incoming, resolved=None, provider_down=False):
 
 
 def public_clinic(clinic):
-    """Public pages never receive a placeholder clinic address."""
+    """Public pages never receive a placeholder clinic address.
+
+    When general in-clinic booking is off, the street line stays hidden, but
+    addressReady tells trial campaigns the clinic can still host a reserved visit.
+    """
     clinic = clinic if isinstance(clinic, dict) else {}
     mobile = clinic.get("mobileEnabled") is not False
+    ready = clinic_has_address(clinic)
     if not clinic_is_bookable(clinic):
-        return {"enabled": False, "mobileEnabled": mobile, "address": "", "name": clinic.get("name") or "Nabitouch"}
+        return {
+            "enabled": False,
+            "mobileEnabled": mobile,
+            "address": "",
+            "addressReady": ready,
+            "name": clinic.get("name") or "Nabitouch",
+        }
     return {
         "enabled": True,
         "mobileEnabled": mobile,
         "address": clinic.get("address") or "",
+        "addressReady": ready,
         "name": clinic.get("name") or "Nabitouch",
         "phoneDisplay": clinic.get("phoneDisplay") or "",
         "hours": clinic.get("hours") or "",

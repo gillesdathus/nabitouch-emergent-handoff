@@ -217,9 +217,10 @@ export default function Booking() {
     return () => { stop = true; };
   }, [quoteKey, api]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
-  const clinicReady = Boolean(String(idx.settings?.clinic?.address || "").trim());
+  const clinic = idx.settings?.clinic || {};
+  const clinicReady = Boolean(clinic.addressReady === true || String(clinic.address || "").trim());
   const whereOk = draft.locationType === "clinic"
-    ? (trialFlow ? clinicReady : clinicBookable(idx.settings.clinic))
+    ? (trialFlow ? clinicReady : clinicBookable(clinic))
     : (!!zr?.zone && draft.address?.clientConfirmed === true);
   const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
