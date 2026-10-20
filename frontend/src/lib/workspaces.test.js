@@ -1,8 +1,14 @@
-import { BOOKING_SOURCES, canOpen, homeFor, spacesOf, WORKSPACES } from "./workspaces";
+import { BOOKING_SOURCES, canOpen, homeFor, postLoginPath, spacesOf, WORKSPACES } from "./workspaces";
 
 const owner = { role: "owner", workspaces: ["owner", "practitioner"] };
 const client = { role: "client", workspaces: ["client"] };
 const desk = { role: "desk", workspaces: ["desk"] };
+const dual = {
+  role: "owner",
+  roles: ["owner", "practitioner"],
+  preferredWorkspace: "practitioner",
+  workspaces: ["practitioner", "owner"],
+};
 
 test("sends each role to its own workspace", () => {
   expect(homeFor(client)).toBe("/me");
@@ -36,4 +42,22 @@ test("rejects a workspace the account was not given", () => {
   expect(canOpen(client, "/book")).toBe(true);
   expect(canOpen(client, "/book?service=svc-swedish")).toBe(true);
   expect(canOpen(client, "/login?next=%2Fbook%3Fservice%3Dx")).toBe(true);
+});
+
+test("client Account is not a post-login target for staff (MFA next=/me regression)", () => {
+  expect(canOpen(owner, "/me")).toBe(false);
+  expect(canOpen(owner, "/me/billing")).toBe(false);
+  expect(canOpen(desk, "/me")).toBe(false);
+  expect(canOpen({ role: "practitioner", workspaces: ["practitioner"] }, "/me")).toBe(false);
+  expect(canOpen(client, "/me")).toBe(true);
+  expect(canOpen(client, "/me/profile")).toBe(true);
+  expect(postLoginPath(owner, "/me")).toBe("/owner");
+  expect(postLoginPath(dual, "/me")).toBe("/pro");
+  expect(postLoginPath(owner, "/owner/dashboard")).toBe("/owner/dashboard");
+  expect(postLoginPath(desk, "/desk")).toBe("/desk");
+  expect(postLoginPath(client, "/me")).toBe("/me");
+  expect(postLoginPath(client, null)).toBe("/me");
+  // Empty workspaces[] falls back to primary role home.
+  expect(postLoginPath({ role: "owner", workspaces: [] }, "/me")).toBe("/owner");
+  expect(postLoginPath({ role: "client", workspaces: [] }, "/owner")).toBe("/me");
 });

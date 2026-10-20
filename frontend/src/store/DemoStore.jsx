@@ -23,6 +23,7 @@ export function DemoProvider({ children }) {
   const [ownerMode, setOwnerModeRaw] = useState(() => localStorage.getItem(LS.owner) === '1');
   const [draft, setDraft] = useState(() => readStoredBookingDraft(emptyDraft));
   const busy = useRef(false);
+  const meSeq = useRef(0);
 
   useEffect(() => {
     writeStoredBookingDraft(draft);
@@ -34,34 +35,40 @@ export function DemoProvider({ children }) {
 
   useEffect(() => {
     refresh();
-    api.me().then(setUser).catch(() => setUser(null));
+    const seq = ++meSeq.current;
+    api.me()
+      .then((profile) => { if (seq === meSeq.current) setUser(profile); })
+      .catch(() => { if (seq === meSeq.current) setUser(null); });
     api.authConfig().then((c) => setDemoMode(c.demoMode)).catch(() => {});
     const t = setInterval(() => { if (!document.hidden && !busy.current) refresh(); }, 2500);
     return () => clearInterval(t);
   }, [refresh]);
 
-  const authed = async (p) => { const u = await p; setUser(u); await refresh(); return u; };
+  const applySession = async (profile) => {
+    meSeq.current += 1;
+    setUser(profile);
+    await refresh();
+    return profile;
+  };
+  const authed = async (p) => applySession(await p);
   const auth = {
     user, demoMode,
     login: async (email, password) => {
       const signed = await api.login(email, password);
       if (signed?.mfaRequired || signed?.enrollmentRequired) return signed;
-      setUser(signed);
-      await refresh();
-      return signed;
+      return applySession(signed);
     },
     register: (body) => authed(api.register(body)),
     demoLogin: async (role, subject) => {
       const signed = await api.demoLogin(role, subject);
       if (signed?.mfaRequired || signed?.enrollmentRequired) return signed;
-      setUser(signed);
-      await refresh();
-      return signed;
+      return applySession(signed);
     },
-    finish: (session) => authed(Promise.resolve(session)),
+    finish: (session) => applySession(session),
     logout: async () => {
       await unregisterPush().catch(() => {});
       await api.logout();
+      meSeq.current += 1;
       setUser(null);
       setOwnerModeRaw(false);
       localStorage.removeItem(LS.owner);

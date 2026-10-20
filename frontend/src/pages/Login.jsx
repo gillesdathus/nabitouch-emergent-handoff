@@ -5,7 +5,7 @@ import { Logo, Breathing } from "@/components/brand";
 import { AuthenticatorSetup } from "@/components/AuthenticatorSetup";
 import { useDemo } from "@/store/DemoStore";
 import { api, apiError } from "@/lib/api";
-import { canOpen, homeFor } from "@/lib/workspaces";
+import { postLoginPath } from "@/lib/workspaces";
 
 export default function Login() {
   const { login, finish } = useDemo();
@@ -20,8 +20,7 @@ export default function Login() {
   const enrollOnce = useRef(false);
   const clearEnrollment = () => { enrollOnce.current = false; setEnroll(null); setCode(""); setErr(""); };
   const go = (u) => {
-    const next = params.get("next");
-    nav(next && canOpen(u, next) ? next : homeFor(u));
+    nav(postLoginPath(u, params.get("next")));
   };
   const submit = async (e) => {
     e.preventDefault(); setBusy(true); setErr("");

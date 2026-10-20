@@ -326,6 +326,8 @@ export function ClientShell() {
 export function StaffShell({ role }) {
   const { user } = useDemo();
   const loc = useLocation();
+  // Gate already waits for user === undefined. null means signed out.
+  if (user === undefined) return null;
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname)}`} replace />;
   if (!spacesOf(user).includes(NEED[role])) return <Navigate to={homeFor(user)} replace />;
   return <StaffShellInner role={role} />;
