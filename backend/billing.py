@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -12,6 +13,7 @@ from fastapi.responses import Response
 
 from documents import ScannerUnavailable, assess
 from config import giftcards_enabled, invoice_email_enabled
+from stripe_gateway import stripe_request
 from plans import settle_checkout as plan_settle, subscription_event as plan_subscription_event
 from giftcards import activate_paid as gift_activate_paid, debit as gift_debit, norm_code, reverse as gift_reverse
 from notifications import enqueue_billing
@@ -23,8 +25,8 @@ def require_giftcards():
         raise HTTPException(503, "Gift-card transactions are turned off")
 from fieldcrypto import open_bytes, seal_bytes
 from payment_policy import (
-    CHECKOUT_HOLD_MINUTES, allowed_online_amounts, checkout_event_action, collection_status, deposit_cents,
-    due_after_payment, resolve_payment_policy, review_after_expiry,
+    CHECKOUT_HOLD_MINUTES, authorized_checkout_cents, checkout_event_action, collection_status, gift_redemption_cents, manual_settlement_cents,
+    due_after_payment, review_after_expiry,
 )
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, OperationFailure
@@ -247,13 +249,17 @@ def stripe_signature_matches(payload: bytes, header: str, secret: str) -> bool:
     for piece in (header or "").split(","):
         if "=" in piece:
             key, value = piece.split("=", 1)
-            parts[key.strip()] = value.strip()
-    stamp = parts.get("t")
-    given = parts.get("v1")
-    if not stamp or not given or not secret:
+            parts.setdefault(key.strip(), []).append(value.strip())
+    stamp = (parts.get("t") or [None])[0]
+    if not stamp or not parts.get("v1") or not secret:
+        return False
+    try:
+        if abs(time.time() - int(stamp)) > 300:
+            return False
+    except ValueError:
         return False
     digest = hmac.new(secret.encode(), stamp.encode() + b"." + payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(digest, given)
+    return any(hmac.compare_digest(digest, given) for given in parts["v1"])
 
 
 async def ensure_billing(db):
@@ -265,6 +271,7 @@ async def ensure_billing(db):
     await db.nt_ledger.create_index("id", unique=True)
     await db.nt_ledger.create_index("idempotencyKey", unique=True)
     await db.nt_ledger.create_index("invoiceId")
+    await db.nt_ledger.create_index("paymentIntent", sparse=True)
     await db.nt_claims.create_index("id", unique=True)
     await db.nt_tips.create_index("idempotencyKey", unique=True)
     await db.nt_claims.create_index("invoiceId")
@@ -275,11 +282,14 @@ async def ensure_billing(db):
     await db.nt_notices.create_index([("recipientId", 1), ("at", 1)])
     await db.nt_checkouts.create_index("id", unique=True)
     await db.nt_checkouts.create_index("sessionId", unique=True)
+    await db.nt_checkouts.create_index("requestKey", unique=True, sparse=True)
+    await db.nt_stripe_events.create_index("id", unique=True)
+    await db.nt_stripe_refunds.create_index("id", unique=True)
     await db.nt_ops.create_index("id", unique=True)
 
 
 async def clear_billing(db):
-    for name in ("nt_invoices", "nt_ledger", "nt_claims", "nt_notices", "nt_files", "nt_imports", "nt_checkouts", "nt_ops"):
+    for name in ("nt_invoices", "nt_ledger", "nt_claims", "nt_notices", "nt_files", "nt_imports", "nt_checkouts", "nt_ops", "nt_stripe_events", "nt_stripe_refunds"):
         await db[name].delete_many({})
 
 
@@ -292,6 +302,8 @@ async def _body(request):
 
 
 def build_billing_router(db, coll, add_audit, user_from):
+    from rbac import has_role
+
     r = APIRouter(prefix="/api")
 
     async def settings():
@@ -306,36 +318,48 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(401, "Not authenticated")
         return user
 
-    async def appointment(aid):
+    async def appointment(aid, *, required=True):
+        if not aid:
+            if required:
+                raise HTTPException(404, "Appointment not found")
+            return {}
         found = await coll("appointments").find_one({"id": aid}, {"_id": 0})
         if not found:
-            raise HTTPException(404, "Appointment not found")
+            if required:
+                raise HTTPException(404, "Appointment not found")
+            return {}
         return found
 
     async def sync_payment_due(invoice):
         """Copy the ledger result onto the visit. A missing payment policy leaves older visits unchanged."""
+        if not invoice.get("appointmentId"):
+            return
         lines = await ledger_for(invoice["id"])
         received, _balance, _state, _overdue = project(invoice, lines)
         refunded = sum(int(line["amountCents"]) for line in lines if line["type"] in ("refund", "reversal"))
-        fields = due_after_payment(invoice["totalCents"], received, refunded)
+        fields = due_after_payment(0 if invoice.get("state") == "voided" else invoice["totalCents"], received, refunded)
         await coll("appointments").update_one(
             {"id": invoice.get("appointmentId"), "paymentDue": {"$type": "object"}},
             {"$set": {f"paymentDue.{key}": value for key, value in fields.items()}},
         )
 
     def allowed(user, appt, kind):
-        if user["role"] == "owner":
+        if has_role(user, "owner"):
             return True
-        if user["role"] == "practitioner" and user.get("subject") == appt.get("practitionerId") and kind in ("view", "cash", "claim"):
+        if has_role(user, "practitioner") and user.get("subject") == (appt or {}).get("practitionerId") and kind in ("view", "cash", "claim"):
             return True
-        if user["role"] == "client" and user.get("subject") == appt.get("clientId") and kind == "view":
+        if user.get("role") == "client" and user.get("subject") == (appt or {}).get("clientId") and kind == "view":
             return True
-        if user["role"] == "desk" and kind == "view":
+        if has_role(user, "desk") and kind == "view":
             return True
         return False
 
     async def desk_can(user, key):
-        return user["role"] == "desk" and bool((await perms()).get(key))
+        return has_role(user, "desk") and not has_role(user, "owner") and bool((await perms()).get(key))
+
+    async def can_manage_invoice(user, invoice, appt=None):
+        visit = appt if appt is not None else await appointment(invoice.get("appointmentId"), required=False)
+        return has_role(user, "owner") or await desk_can(user, "managePayments") or allowed(user, visit, "cash")
 
     async def load(iid):
         found = await db.nt_invoices.find_one({"id": iid}, {"_id": 0})
@@ -376,6 +400,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         elif not allowed(user, appt, "view"):
             raise HTTPException(404, "Invoice not found")
         view = public_invoice(invoice, await ledger_for(invoice["id"]), await claim_views(invoice["id"]))
+        try:
+            payable = authorized_checkout_cents(appt, view["balance"]["cents"], view["received"]["cents"])
+        except ValueError:
+            payable = 0
+        view["payableNow"] = money_view(payable)
         if user["role"] == "client":
             for claim in view["claims"]:
                 claim["notes"] = ""
@@ -383,6 +412,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         return view
 
     async def notify_client(invoice, dedupe):
+        if os.environ.get("PAYMENT_MODE") == "test":
+            return
         recipient = invoice.get("clientId")
         if not recipient:
             return
@@ -404,12 +435,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         except DuplicateKeyError:
             return
         person = await coll("clients").find_one({"id": recipient}, {"_id": 0, "email": 1})
-        if person and person.get("email"):
-            try:
-                from emailer import send_email
-                await send_email(to=person["email"], subject=notice["emailSubject"], html="<p>A billing update is ready in your Nabitouch account.</p>")
-            except Exception:
-                pass
+        if invoice_email_enabled() and person and person.get("email"):
+            await enqueue_billing(db, invoice, "billing_update", dedupe)
         try:
             from tracking_store import client as redis_client
             await redis_client().publish(f"nt:bill:ch:{recipient}", json.dumps({"id": notice["id"], "kind": notice["kind"]}))
@@ -495,12 +522,79 @@ def build_billing_router(db, coll, add_audit, user_from):
         await add_audit(user.get("name") or "staff", f"{stored.get('number') or stored['id']} {line['type']} {money_view(line['amountCents'])['display']}", stored.get("appointmentId"))
         return stored
 
+    @r.post("/invoices")
+    async def create_manual_invoice(request: Request):
+        """Standalone invoice. Does not require an appointment and does not imply treatment completion."""
+        user = await actor(request)
+        body = await _body(request) or {}
+        if not (has_role(user, "owner") or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to create invoices")
+        client_id = str(body.get("clientId") or "").strip()
+        client = await coll("clients").find_one({"id": client_id}, {"_id": 0}) if client_id else None
+        if not client:
+            raise HTTPException(400, "Choose a patient for this invoice")
+        practitioner_id = str(body.get("practitionerId") or "").strip() or None
+        practitioner = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0}) if practitioner_id else None
+        service_date = str(body.get("serviceDate") or now().date().isoformat())
+        notes = str(body.get("notes") or "").strip()[:500]
+        rows = []
+        for item in body.get("lines") or []:
+            slug = str(item.get("serviceSlug") or "").strip()
+            service = await coll("services").find_one({"slug": slug}, {"_id": 0}) if slug else None
+            duration = int(item.get("duration") or 0)
+            qty = max(1, int(item.get("quantity") or 1))
+            if item.get("unitCents") is not None:
+                unit = int(item.get("unitCents"))
+            elif service and duration and service.get("prices"):
+                unit = to_cents(service["prices"].get(str(duration)) or service["prices"].get(duration) or 0)
+            else:
+                unit = to_cents(item.get("unitPrice") or 0)
+            if unit < 0:
+                raise HTTPException(400, "Line amounts cannot be negative")
+            desc = str(item.get("description") or (service or {}).get("name") or "Service").strip()[:120]
+            if duration:
+                desc = f"{desc} ({duration} min)"
+            rows.append({
+                "description": desc, "quantity": qty, "netCents": unit * qty, "taxCode": "taxable",
+                "serviceSlug": slug or None, "duration": duration or None,
+                "unitCents": unit, "practitionerId": item.get("practitionerId") or practitioner_id,
+            })
+        if not rows:
+            raise HTTPException(400, "Add at least one service line")
+        discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        if discount:
+            rows.append({"description": str(body.get("discountLabel") or "Discount"), "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
+        net = sum(int(row["netCents"]) for row in rows)
+        gst_rate = Decimal(str((await settings()).get("gst") or 0.05))
+        tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if net > 0 else 0
+        total = net + tax
+        if total < 0:
+            raise HTTPException(400, "Invoice total cannot be negative")
+        invoice = {
+            "id": "inv-" + uuid.uuid4().hex[:12], "number": None, "appointmentId": None, "clientId": client_id,
+            "practitionerId": practitioner_id,
+            "clientName": ((client.get("firstName") or "") + " " + (client.get("lastName") or "")).strip() or "Client",
+            "practitionerName": (practitioner or {}).get("name") or "",
+            "service": rows[0]["description"], "duration": rows[0].get("duration"), "serviceDate": service_date,
+            "issueDate": None, "dueDate": None, "currency": "CAD", "state": "draft", "version": 1,
+            "origin": "manual", "countsAsRevenue": True, "notes": notes,
+            "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
+            "createdAt": now_iso(), "idempotencyKey": body.get("idempotencyKey"),
+        }
+        if body.get("idempotencyKey"):
+            existing = await db.nt_invoices.find_one({"idempotencyKey": body["idempotencyKey"], "origin": "manual"}, {"_id": 0})
+            if existing:
+                return await view_for(user, existing)
+        await db.nt_invoices.insert_one(dict(invoice))
+        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}", None)
+        return await view_for(user, invoice)
+
     @r.post("/invoices/from-appointment/{aid}")
     async def draft_invoice(aid: str, request: Request):
         user = await actor(request)
         body = await _body(request)
         appt = await appointment(aid)
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        if not await can_manage_invoice(user, {"appointmentId": aid}, appt):
             raise HTTPException(403, "Not permitted to invoice this visit")
         if appt.get("status") == "cancelled":
             raise HTTPException(409, "A cancelled visit is not invoiced")
@@ -559,11 +653,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     async def can_list(user, client_id):
-        if user["role"] == "owner":
+        if has_role(user, "owner"):
             return True
-        if user["role"] == "desk":
+        if has_role(user, "desk"):
             return await desk_can(user, "managePayments") or await desk_can(user, "viewInsuranceStatus")
-        return user["role"] == "client" and (not client_id or client_id == user.get("subject"))
+        return user.get("role") == "client" and (not client_id or client_id == user.get("subject"))
 
     @r.get("/invoices")
     async def list_invoices(request: Request, clientId: str = "", state: str = "", limit: int = 50, skip: int = 0):
@@ -639,9 +733,17 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(403, "Not permitted to apply a gift card")
         if invoice["state"] not in ("issued", "partially_paid"):
             raise HTTPException(409, "Only an issued invoice with a balance can take a gift card")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0 or amount > view["balance"]["cents"]:
-            raise HTTPException(400, "Amount must be positive and no more than the balance")
+        visit = await appointment(invoice["appointmentId"]) if invoice.get("appointmentId") else {}
+        card = await db.nt_giftcards.find_one({"code": norm_code(body.get("code"))}, {"_id": 0, "status": 1, "balanceCents": 1})
+        if not card or card.get("status") != "active":
+            raise HTTPException(404, "Gift card not found or not active")
+        try:
+            amount = gift_redemption_cents(
+                visit, view["balance"]["cents"], view["received"]["cents"], card.get("balanceCents") or 0,
+                body.get("amountCents") if "amountCents" in body else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         key = str(body.get("idempotencyKey") or "")
         if not 8 <= len(key) <= 80:
             raise HTTPException(400, "Idempotency key is required")
@@ -670,8 +772,8 @@ def build_billing_router(db, coll, add_audit, user_from):
         user = await actor(request)
         body = await _body(request)
         invoice = await load(iid)
-        appt = await appointment(invoice["appointmentId"])
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_manage_invoice(user, invoice, appt):
             raise HTTPException(403, "Not permitted to issue this invoice")
         if invoice["state"] != "draft":
             return await view_for(user, invoice)
@@ -698,31 +800,39 @@ def build_billing_router(db, coll, add_audit, user_from):
         user = await actor(request)
         body = await _body(request)
         invoice = await load(iid)
-        appt = await appointment(invoice["appointmentId"])
-        method = body.get("method")
-        if method != "cash":
-            raise HTTPException(400, "This endpoint records cash. Card and insurance use their own confirmation.")
-        if user["role"] == "client":
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        method = str(body.get("method") or "cash").strip().lower().replace("-", "_")
+        allowed_methods = {"cash", "etransfer", "e_transfer", "terminal", "external_card", "other"}
+        if method not in allowed_methods:
+            raise HTTPException(400, "Use cash, e-transfer, terminal, or other for manual payments. Stripe stays on Checkout.")
+        if method in ("e_transfer", "external_card"):
+            method = "etransfer" if method == "e_transfer" else "terminal"
+        if user.get("role") == "client":
             raise HTTPException(403, "Clients cannot confirm cash")
-        if not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
+        if not await can_manage_invoice(user, invoice, appt):
             raise HTTPException(403, "Not permitted to record this payment")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(400, "Amount must be a positive number of cents")
         if invoice["state"] == "draft":
             raise HTTPException(409, "Issue the invoice before recording a payment")
         if invoice["state"] == "voided":
             raise HTTPException(409, "A voided invoice cannot take a payment")
+        received_now, balance_now, _state_now, _overdue_now = project(invoice, await ledger_for(iid))
+        try:
+            amount = manual_settlement_cents(appt, balance_now, received_now, body.get("amountCents") if "amountCents" in body else None)
+        except ValueError as exc:
+            status = 409 if "outstanding balance" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
 
         def build(current, lines):
             received, balance, _state, _overdue = project(current, lines)
-            if amount > balance:
-                raise HTTPException(409, "That payment is more than the outstanding balance")
-            return {"type": "client_payment", "method": "cash", "amountCents": amount, "reference": body.get("reference")}
+            try:
+                manual_settlement_cents(appt, balance, received, amount)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            return {"type": "client_payment", "method": method, "amountCents": amount, "reference": body.get("reference"), "provider": "manual"}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
         await sync_payment_due(saved)
-        await notify_client(saved, "cash:" + str(body.get("idempotencyKey")))
+        await notify_client(saved, f"{method}:" + str(body.get("idempotencyKey")))
         return await view_for(user, saved)
 
     @r.post("/invoices/{iid}/adjustments")
@@ -771,8 +881,40 @@ def build_billing_router(db, coll, add_audit, user_from):
         invoice = await load(iid)
         amount = body.get("amountCents")
         payment_id = body.get("paymentId")
-        if not isinstance(amount, int) or amount <= 0:
+        if type(amount) is not int or amount <= 0:
             raise HTTPException(400, "Refund cents are required")
+
+        payment = await db.nt_ledger.find_one({"id": payment_id, "invoiceId": iid, "type": "client_payment"}, {"_id": 0})
+        if payment and payment.get("method") == "stripe":
+            operation_key = str(body.get("idempotencyKey") or "")
+            if not 8 <= len(operation_key) <= 80:
+                raise HTTPException(400, "Idempotency key is required")
+            if not payment.get("paymentIntent"):
+                raise HTTPException(409, "Historical Stripe payment requires provider reconciliation before refund")
+            # Validate captured amount before requesting money movement. Stripe
+            # also enforces the remaining refundable capture under concurrency.
+            build_lines = await ledger_for(iid)
+            already = sum(line["amountCents"] for line in build_lines if line["type"] == "refund" and line.get("reference") == payment_id)
+            refund_key = "refund-" + hashlib.sha256(f"{iid}:{operation_key}".encode()).hexdigest()
+            prior = await db.nt_stripe_refunds.find_one({"id": refund_key})
+            if prior and (prior["amountCents"] != amount or prior["paymentId"] != payment_id):
+                raise HTTPException(409, "Refund key was already used with different parameters")
+            if prior and prior.get("stripeRefundId"):
+                return {**await view_for(user, invoice), "refundPendingWebhook": prior.get("status") != "reconciled", "stripeRefundId": prior["stripeRefundId"]}
+            if prior and now() - datetime.fromisoformat(prior["at"]) > timedelta(hours=23):
+                raise HTTPException(409, "Uncertain refund requires provider reconciliation before retry")
+            if not prior and amount > payment["amountCents"] - already:
+                raise HTTPException(409, "Refund exceeds the captured amount")
+            try:
+                await db.nt_stripe_refunds.insert_one({"id": refund_key, "invoiceId": iid, "paymentId": payment_id, "amountCents": amount, "status": "requested", "at": now_iso()})
+            except DuplicateKeyError:
+                pass
+            result = await stripe_request("POST", "refunds", data={"payment_intent": payment["paymentIntent"], "amount": str(amount), "metadata[invoiceId]": iid, "metadata[refundRequestId]": refund_key}, idempotency_key=refund_key)
+            reconciled = bool(await db.nt_ledger.find_one({"stripeRefundId": result["id"]}))
+            await db.nt_stripe_refunds.update_one({"id": refund_key}, {"$set": {"stripeRefundId": result["id"], **({"status": "reconciled"} if reconciled else {})}})
+            # Even a succeeded API response is not ledger acceptance. The signed
+            # refund webhook records it; browser responses never do.
+            return {**await view_for(user, await load(iid)), "refundPendingWebhook": not reconciled, "stripeRefundId": result["id"]}
 
         def build(current, lines):
             payment = next((line for line in lines if line["id"] == payment_id and line["type"] == "client_payment"), None)
@@ -803,6 +945,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"type": "void", "method": None, "amountCents": 0, "reference": (body.get("reason") or "void")[:160]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await sync_payment_due(saved)
         return await view_for(user, saved)
 
     async def can_claim(user, appt):
@@ -1001,10 +1144,13 @@ def build_billing_router(db, coll, add_audit, user_from):
     async def stripe_status(request: Request):
         await actor(request)
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
+        from config import stripe_card_checkout_enabled
         return {
             "configured": bool(key),
             "liveEnabled": key.startswith("sk_live"),
             "testKeyPresent": key.startswith("sk_test_"),
+            "cardCheckoutEnabled": stripe_card_checkout_enabled(),
+            "paymentMode": os.environ.get("PAYMENT_MODE", ""),
             "webhookConfigured": bool(card_secret()),
             "externalVerification": "not-run",
         }
@@ -1024,11 +1170,18 @@ def build_billing_router(db, coll, add_audit, user_from):
             if invoice.get("balanceCents") != balance or invoice.get("state") != state:
                 mismatches.append({"id": invoice["id"], "storedBalance": invoice.get("balanceCents"), "ledgerBalance": balance, "storedState": invoice.get("state"), "ledgerState": state})
         pending = await db.nt_ops.count_documents({"status": "pending"})
+        stripe_rows = []
+        async for checkout in db.nt_checkouts.find({"invoiceId": {"$exists": True}, "provider": "stripe"}, {"_id": 0}).limit(500):
+            payment = await db.nt_ledger.find_one({"reference": checkout["sessionId"], "type": "client_payment"}, {"_id": 0})
+            stripe_rows.append({"invoiceId": checkout["invoiceId"], "sessionId": checkout["sessionId"], "paymentIntent": checkout.get("paymentIntent"), "status": checkout["status"], "chargeCents": checkout["chargeCents"], "invoiceCents": checkout["amountCents"], "tipCents": checkout.get("tipCents", 0), "ledgerPaymentId": (payment or {}).get("id"), "ledgerMatches": bool(payment and payment["amountCents"] == checkout["amountCents"] and payment.get("paymentIntent") == checkout.get("paymentIntent"))})
         return {
             "transactionMode": "replica-set" if hello.get("setName") else "standalone-journal",
             "replicaSet": bool(hello.get("setName")),
             "pendingOperations": pending,
             "mismatches": mismatches[:50],
+            "stripePayments": stripe_rows,
+            "stripeEventsNeedingRetry": await db.nt_stripe_events.count_documents({"status": {"$in": ["retry", "processing"]}}),
+            "externalVerification": "not-run",
         }
 
     @r.post("/billing/reconciliation/repair")
@@ -1077,73 +1230,92 @@ def build_billing_router(db, coll, add_audit, user_from):
         body = await _body(request)
         received, balance, _state, _overdue = project(invoice, await ledger_for(iid))
         visit = await appointment(invoice["appointmentId"])
-        settings = await db.nt_settings.find_one({"id": "app"}) or {}
-        from config import is_production
-        policy = resolve_payment_policy(
-            settings.get("paymentPolicy"), production=is_production(),
-            explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
-        )
-        amount = body.get("amountCents", balance)
-        if visit.get("payNow") == "deposit" and "amountCents" not in body and received <= 0:
-            try:
-                amount = deposit_cents(int(invoice["totalCents"]), policy)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        if not isinstance(amount, int) or amount <= 0 or amount > balance:
-            raise HTTPException(400, "Amount must be within the outstanding balance")
-        if user["role"] == "client" and visit.get("payNow") in ("full", "deposit") and amount not in allowed_online_amounts(balance, policy, received):
-            raise HTTPException(400, "That amount is not one of the amounts due")
+        if visit.get("status") == "cancelled":
+            raise HTTPException(409, "A cancelled visit cannot start a new payment")
+        requested = body.get("amountCents") if "amountCents" in body else None
+        try:
+            amount = authorized_checkout_cents(visit, balance, received, requested)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         if user["role"] == "client":
             expected = min(int(invoice.get("expectedInsuranceCents") or 0), balance)
             share = balance - expected
-            if "amountCents" not in body or amount > share:
+            if amount > share:
                 amount = share
             if amount <= 0:
                 raise HTTPException(409, "The remaining balance is expected from insurance")
         tip = body.get("tipCents") or 0
-        if not isinstance(tip, int) or tip < 0 or tip > min(20000, int(invoice["totalCents"])):
+        if type(tip) is not int or tip < 0 or tip > min(20000, int(invoice["totalCents"])):
             raise HTTPException(400, "Tip must be between $0 and the invoice total (max $200)")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
         session_id = None
         hosted_url = None
-        if key.startswith("sk_live"):
-            raise HTTPException(503, "Live card checkout is not enabled")
-        if key.startswith("sk_test_"):
-            import httpx
-            from config import public_base_url
-            app_url = public_base_url(request)
+        # One immutable provider request per invoice version, including
+        # simultaneous clicks and retries after an uncertain network response.
+        request_key = "checkout-" + hashlib.sha256(f"{iid}:{invoice['version']}".encode()).hexdigest()
+        from config import public_base_url
+        while True:
+            previous = await db.nt_checkouts.find_one({"requestKey": request_key}, {"_id": 0})
+            if not previous or datetime.fromisoformat(previous["expiresAt"]) > now():
+                break
+            if previous.get("provider") == "stripe":
+                if not previous["sessionId"].startswith("cs_"):
+                    raise HTTPException(409, "Uncertain checkout creation requires provider reconciliation")
+                remote = await stripe_request("GET", "checkout/sessions/" + previous["sessionId"])
+                if remote.get("status") != "expired":
+                    raise HTTPException(409, "Previous checkout is not expired; await its webhook before retrying")
+            request_key = "checkout-" + hashlib.sha256(request_key.encode()).hexdigest()
+        reservation = {
+            "id": "chk-" + request_key[9:33], "requestKey": request_key,
+            "invoiceId": iid, "sessionId": "creating-" + request_key,
+            "amountCents": amount, "tipCents": tip, "chargeCents": amount + tip,
+            "practitionerId": invoice.get("practitionerId"), "status": "pending",
+            "createdBy": user.get("role"), "at": now_iso(),
+            "expiresAt": (now() + timedelta(minutes=CHECKOUT_HOLD_MINUTES + 1)).isoformat(),
+            "appUrl": public_base_url(request),
+            "provider": "stripe" if key else "simulated",
+        }
+        try:
+            await db.nt_checkouts.insert_one(dict(reservation))
+        except DuplicateKeyError:
+            reservation = await db.nt_checkouts.find_one({"requestKey": request_key}, {"_id": 0})
+        if reservation["amountCents"] != amount or reservation.get("tipCents", 0) != tip:
+            raise HTTPException(409, "An existing checkout has different amounts; complete it or wait for expiry")
+        if datetime.fromisoformat(reservation["expiresAt"]) <= now():
+            raise HTTPException(409, "Checkout expired; refresh the invoice before creating another payment")
+        if reservation.get("url"):
+            return {"confirmed": reservation.get("status") == "paid", "sessionId": reservation["sessionId"], "url": reservation["url"], "amount": money_view(amount), "tip": money_view(tip)}
+        if key:
+            app_url = reservation["appUrl"]
             form = {
                 "mode": "payment",
-                "success_url": app_url + "/me/billing?card=return&session_id={CHECKOUT_SESSION_ID}",
-                "cancel_url": app_url + "/me/billing?card=cancel",
+                "integration_identifier": "nabitouch_qlagoonx",
+                "success_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
                 "line_items[0][quantity]": "1",
                 "line_items[0][price_data][currency]": "cad",
                 "line_items[0][price_data][unit_amount]": str(amount),
                 "line_items[0][price_data][product_data][name]": invoice.get("number") or "Nabitouch invoice",
                 "metadata[invoiceId]": iid,
+                "metadata[checkoutId]": reservation["id"],
+                "payment_intent_data[metadata][invoiceId]": iid,
+                "payment_intent_data[metadata][checkoutId]": reservation["id"],
+                "expires_at": str(int(datetime.fromisoformat(reservation["expiresAt"]).timestamp())),
             }
             if tip:
                 form.update({"line_items[1][quantity]": "1", "line_items[1][price_data][currency]": "cad", "line_items[1][price_data][unit_amount]": str(tip),
                              "line_items[1][price_data][product_data][name]": "Tip for your practitioner (100% passed through)"})
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
-            if resp.status_code >= 400:
-                raise HTTPException(502, "Card checkout could not be started")
-            created = resp.json()
+            created = await stripe_request("POST", "checkout/sessions", data=form, idempotency_key=request_key)
             session_id = created.get("id")
             hosted_url = created.get("url")
-            if not session_id:
+            expect_live = os.environ.get("PAYMENT_MODE") == "live"
+            if not session_id or not hosted_url or bool(created.get("livemode")) != expect_live:
                 raise HTTPException(502, "Card checkout could not be started")
         elif payments_simulated():
             session_id = "cs_test_" + uuid.uuid4().hex[:16]
         else:
             raise HTTPException(503, "Card checkout is not configured")
-        await db.nt_checkouts.insert_one({
-            "id": "chk-" + uuid.uuid4().hex[:12], "invoiceId": iid, "sessionId": session_id,
-            "amountCents": amount, "tipCents": tip, "chargeCents": amount + tip, "practitionerId": invoice.get("practitionerId"),
-            "createdBy": user.get("role"), "status": "pending", "at": now_iso(),
-            "expiresAt": (now() + timedelta(minutes=CHECKOUT_HOLD_MINUTES)).isoformat(),
-        })
+        await db.nt_checkouts.update_one({"id": reservation["id"]}, {"$set": {"sessionId": session_id, "url": hosted_url}})
         return {"confirmed": False, "sessionId": session_id, "url": hosted_url, "amount": money_view(amount), "tip": money_view(tip)}
 
     @r.post("/invoices/{iid}/release")
@@ -1187,28 +1359,70 @@ def build_billing_router(db, coll, add_audit, user_from):
 
     @r.get("/billing/stripe/return")
     async def stripe_return(request: Request, session_id: str = ""):
-        """Webhook fallback: confirm a returning checkout directly with Stripe. Settlement is idempotent."""
+        """Read-only browser return; only signed webhooks settle payments."""
         user = await actor(request)
         row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0}) if session_id else None
         if not row:
-            return {"confirmed": False}
-        if user["role"] == "client":
-            owner_id = row.get("clientId") or (await db.nt_invoices.find_one({"id": row.get("invoiceId")}, {"_id": 0, "clientId": 1}) or {}).get("clientId") if row.get("invoiceId") else (await db.nt_giftcards.find_one({"id": row.get("giftCardId")}, {"_id": 0, "purchaserId": 1}) or {}).get("purchaserId")
-            if owner_id != user.get("subject"):
-                return {"confirmed": False}
+            raise HTTPException(404, "Checkout not found")
+        invoice = await load(row["invoiceId"]) if row.get("invoiceId") else None
+        if invoice:
+            await view_for(user, invoice)
+        elif user["role"] != "owner" and (user["role"] != "client" or row.get("clientId") != user.get("subject")):
+            raise HTTPException(404, "Checkout not found")
+        status = "pending"
+        reason = None
         if row.get("status") == "paid":
-            return {"confirmed": True}
-        key = os.environ.get("STRIPE_SECRET_KEY") or ""
-        if not key.startswith("sk_test_"):
-            return {"confirmed": False}
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"https://api.stripe.com/v1/checkout/sessions/{session_id}", auth=(key, ""))
-        session = resp.json() if resp.status_code < 400 else {}
-        if session.get("payment_status") != "paid":
-            return {"confirmed": False}
-        result = await process_event({"id": "poll-" + session_id, "type": "checkout.session.completed", "data": {"object": session}})
-        return {"confirmed": bool(result.get("settled"))}
+            status = "confirmed"
+            if invoice:
+                lines = await ledger_for(invoice["id"])
+                payment = next((line for line in lines if line["type"] == "client_payment" and line.get("reference") == session_id), None)
+                if not payment:
+                    raise HTTPException(503, "Payment verification temporarily unavailable")
+                refunded = sum(line["amountCents"] for line in lines if line["type"] == "refund" and line.get("reference") == payment["id"])
+                if refunded:
+                    status = "refunded" if refunded >= payment["amountCents"] else "partially_refunded"
+        elif row.get("status") == "expired":
+            status = "cancelled" if row.get("cancelledByUser") else "failed"
+            reason = row.get("failureReason") or "expired"
+        elif row.get("provider") == "stripe":
+            remote = await stripe_request("GET", "checkout/sessions/" + session_id + "?expand[]=payment_intent")
+            if remote.get("status") == "expired":
+                status, reason = ("cancelled" if row.get("cancelledByUser") else "failed"), "expired"
+            else:
+                intent = remote.get("payment_intent")
+                if isinstance(intent, dict) and intent.get("status") == "requires_payment_method" and intent.get("last_payment_error"):
+                    status, reason = "failed", "payment_failed"
+            # Even provider-paid is pending until the signed webhook ledger exists.
+        response = {"confirmed": status == "confirmed", "status": status, "reason": reason}
+        if invoice:
+            _received, balance, _state, _overdue = project(invoice, await ledger_for(invoice["id"]))
+            response.update(amount=money_view(row["amountCents"]), balance=money_view(balance))
+        return response
+
+    @r.post("/billing/stripe/checkout/{session_id}/cancel")
+    async def cancel_checkout(session_id: str, request: Request):
+        user = await actor(request)
+        if user["role"] not in ("client", "owner") and not await desk_can(user, "managePayments"):
+            raise HTTPException(403, "Not permitted to cancel checkout")
+        row = await db.nt_checkouts.find_one({"sessionId": session_id}, {"_id": 0})
+        if not row or not row.get("invoiceId"):
+            raise HTTPException(404, "Checkout not found")
+        await view_for(user, await load(row["invoiceId"]))
+        if row.get("status") == "paid":
+            raise HTTPException(409, "Payment already completed; refresh its status")
+        if row.get("provider") != "stripe":
+            raise HTTPException(409, "Provider cancellation is unavailable")
+        remote = await stripe_request("GET", "checkout/sessions/" + session_id)
+        if remote.get("status") != "expired":
+            if remote.get("status") != "open":
+                raise HTTPException(409, "Payment already submitted; await verification")
+            remote = await stripe_request("POST", "checkout/sessions/" + session_id + "/expire", data={}, idempotency_key="expire-" + hashlib.sha256(session_id.encode()).hexdigest())
+        if remote.get("status") != "expired":
+            raise HTTPException(503, "Cancellation verification temporarily unavailable")
+        # Leave the expiry transition to its signed webhook so appointment
+        # payment-review updates are not skipped by an early local status write.
+        await db.nt_checkouts.update_one({"id": row["id"], "status": {"$ne": "paid"}}, {"$set": {"cancelledByUser": True}})
+        return await stripe_return(request, session_id)
 
     @r.post("/billing/stripe/webhook")
     @r.post("/stripe/webhook")
@@ -1221,9 +1435,70 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Invalid signature")
         try:
             event = json.loads(payload)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             raise HTTPException(400, "Invalid event")
-        return await process_event(event)
+        if not isinstance(event, dict) or not isinstance(event.get("data"), dict) or not isinstance(event["data"].get("object"), dict):
+            raise HTTPException(400, "Invalid event")
+        live_event = event.get("livemode") is True or event["data"]["object"].get("livemode") is True
+        mode = os.environ.get("PAYMENT_MODE", "").strip().lower()
+        from config import stripe_card_checkout_enabled
+        if mode == "live":
+            if not live_event:
+                raise HTTPException(400, "Live event mode is required")
+            if not stripe_card_checkout_enabled():
+                raise HTTPException(400, "Live Stripe events are prohibited while card checkout is off")
+        elif live_event:
+            raise HTTPException(400, "Live Stripe events are prohibited")
+        if mode == "test" and event.get("livemode") is not False:
+            raise HTTPException(400, "Sandbox event mode is required")
+        eid = str(event.get("id") or "")
+        if not 8 <= len(eid) <= 255:
+            raise HTTPException(400, "Event id is required")
+        # Store only safe routing/audit fields, never raw customer/card payloads.
+        await db.nt_stripe_events.update_one({"id": eid}, {"$setOnInsert": {"kind": event.get("type"), "objectId": event["data"]["object"].get("id"), "at": now_iso()}, "$set": {"status": "processing"}, "$inc": {"deliveries": 1}}, upsert=True)
+        try:
+            result = await process_event(event)
+        except HTTPException as exc:
+            await db.nt_stripe_events.update_one({"id": eid}, {"$set": {"status": "retry", "httpStatus": exc.status_code}})
+            raise
+        await db.nt_stripe_events.update_one({"id": eid}, {"$set": {"status": "processed", "settled": bool(result.get("settled"))}})
+        return result
+
+    async def settle_refund(obj, event_id):
+        if obj.get("status") != "succeeded":
+            await db.nt_stripe_refunds.update_many({"stripeRefundId": obj.get("id"), "status": {"$ne": "reconciled"}}, {"$set": {"status": obj.get("status")}})
+            return {"received": True, "settled": False}
+        if obj.get("currency") != "cad" or type(obj.get("amount")) is not int or obj["amount"] <= 0:
+            raise HTTPException(409, "Refund amount/currency requires review")
+        # A null lookup would match legacy ledger rows with no PaymentIntent.
+        # Never allocate a legacy Charge refund to an unrelated invoice.
+        if not isinstance(obj.get("payment_intent"), str) or not obj["payment_intent"].startswith("pi_"):
+            raise HTTPException(409, "Refund requires a reconciled PaymentIntent reference")
+        payment = await db.nt_ledger.find_one({"type": "client_payment", "method": "stripe", "paymentIntent": obj.get("payment_intent")}, {"_id": 0})
+        if not payment:
+            # Refund can arrive before checkout success. Non-2xx asks Stripe to
+            # retry; never acknowledge an unrecorded financial change as settled.
+            raise HTTPException(503, "Refund awaits its captured payment")
+        refund_id = str(obj.get("id") or "")
+        if not refund_id.startswith("re_"):
+            raise HTTPException(400, "Refund identifier is required")
+        invoice = await load(payment["invoiceId"])
+        def build(current, lines):
+            refunds = [line for line in lines if line["type"] == "refund" and line.get("reference") == payment["id"]]
+            already = sum(line["amountCents"] for line in refunds)
+            tip_already = sum(line.get("tipRefundCents", 0) for line in refunds)
+            invoice_part = min(obj["amount"], payment["amountCents"] - already)
+            tip_part = obj["amount"] - invoice_part
+            if invoice_part < 0 or tip_part > payment.get("tipCents", 0) - tip_already:
+                raise HTTPException(409, "Refund exceeds captured invoice and tip")
+            return {"type": "refund", "method": "stripe", "amountCents": invoice_part, "tipRefundCents": tip_part, "stripeRefundAmountCents": obj["amount"], "reference": payment["id"], "stripeRefundId": refund_id, "paymentIntent": payment["paymentIntent"], "stripeEventId": event_id}
+        saved = await mutate(invoice, {"name": "Stripe", "role": "owner"}, "stripe-refund-" + refund_id, build)
+        refund_line = await db.nt_ledger.find_one({"idempotencyKey": "stripe-refund-" + refund_id})
+        if refund_line.get("tipRefundCents"):
+            await db.nt_tips.update_one({"idempotencyKey": "stripe-refund-tip-" + refund_id}, {"$setOnInsert": {"id": "tip-" + uuid.uuid4().hex[:12], "invoiceId": invoice["id"], "practitionerId": invoice.get("practitionerId"), "amountCents": -refund_line["tipRefundCents"], "method": "stripe", "reference": refund_id, "at": now_iso()}}, upsert=True)
+        await db.nt_stripe_refunds.update_many({"$or": [{"stripeRefundId": refund_id}, {"id": (obj.get("metadata") or {}).get("refundRequestId")}]}, {"$set": {"status": "reconciled", "eventId": event_id}})
+        await sync_payment_due(saved)
+        return {"received": True, "settled": True}
 
     async def process_event(event):
         event_id = str(event.get("id") or "")
@@ -1231,9 +1506,33 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Event id is required")
         kind = event.get("type")
         obj = ((event.get("data") or {}).get("object") or {})
-        if kind == "checkout.session.expired":
+        if kind == "payment_intent.payment_failed":
+            checkout_id = (obj.get("metadata") or {}).get("checkoutId")
+            if checkout_id:
+                changed = await db.nt_checkouts.update_one({"id": checkout_id}, {"$set": {"lastFailureEventId": event_id}})
+                if not changed.matched_count:
+                    raise HTTPException(503, "Payment failure awaits checkout creation")
+            return {"received": True, "settled": False}
+        if kind in ("refund.created", "refund.updated", "refund.failed"):
+            return await settle_refund(obj, event_id)
+        if kind == "charge.refunded":
+            # Individual refund events are the authoritative per-refund ledger
+            # key. Fetch the complete list, avoiding truncated embedded arrays.
+            cursor = ""
+            while True:
+                page = await stripe_request("GET", "refunds?charge=" + str(obj.get("id")) + "&limit=100" + ("&starting_after=" + cursor if cursor else ""))
+                for refund_obj in page.get("data", []):
+                    await settle_refund(refund_obj, event_id)
+                if not page.get("has_more"):
+                    break
+                cursor = page["data"][-1]["id"]
+            return {"received": True, "settled": True}
+        if kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
+            known = await db.nt_checkouts.find_one({"sessionId": obj.get("id")})
+            if not known:
+                raise HTTPException(503, "Checkout failure/expiry awaits checkout creation")
             expired = await db.nt_checkouts.find_one_and_update(
-                {"sessionId": obj.get("id"), "status": "pending"}, {"$set": {"status": "expired"}}, return_document=ReturnDocument.AFTER,
+                {"sessionId": obj.get("id"), "status": "pending"}, {"$set": {"status": "expired", "failureReason": "payment_failed" if kind.endswith("failed") else "expired"}}, return_document=ReturnDocument.AFTER,
             )
             review = False
             if expired and expired.get("invoiceId"):
@@ -1253,17 +1552,26 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"received": True, "settled": False, "review": review}
         if kind in ("invoice.paid", "customer.subscription.updated", "customer.subscription.deleted"):
             return await plan_subscription_event(db, kind, obj, add_audit)
-        if kind != "checkout.session.completed":
+        if kind not in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+            return {"received": True, "settled": False}
+        if obj.get("payment_status") != "paid":
             return {"received": True, "settled": False}
         checkout_row = await db.nt_checkouts.find_one({"sessionId": obj.get("id")})
+        if not checkout_row and (obj.get("metadata") or {}).get("checkoutId"):
+            checkout_row = await db.nt_checkouts.find_one({"id": obj["metadata"]["checkoutId"]})
+            if checkout_row:
+                await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"sessionId": obj["id"]}})
+                checkout_row["sessionId"] = obj["id"]
         if not checkout_row:
-            return {"received": True, "settled": False}
+            raise HTTPException(503, "Checkout is not yet available for reconciliation")
+        if obj.get("currency") not in ("cad", None) or (checkout_row.get("provider") == "stripe" and (obj.get("currency") != "cad" or not obj.get("payment_intent"))):
+            raise HTTPException(409, "Checkout currency/payment reference does not match")
+        if (obj.get("metadata") or {}).get("invoiceId") not in (None, checkout_row.get("invoiceId")):
+            raise HTTPException(409, "Checkout invoice does not match")
         action = checkout_event_action(checkout_row.get("status"), obj.get("amount_total"), checkout_row.get("chargeCents", checkout_row["amountCents"]))
         if action == "reject":
             raise HTTPException(409, "Checkout amount does not match the invoice")
-        if action == "duplicate":
-            return {"received": True, "settled": True}
-        if action != "settle":
+        if action not in ("settle", "duplicate"):
             return {"received": True, "settled": False}
         if checkout_row.get("planPurchaseId"):
             settled = await plan_settle(db, checkout_row, obj, event_id, add_audit)
@@ -1282,19 +1590,22 @@ def build_billing_router(db, coll, add_audit, user_from):
             _received, due, _state, _overdue = project(current, lines)
             if checkout_row["amountCents"] > due:
                 raise HTTPException(409, "That payment is more than the outstanding balance")
-            return {"type": "client_payment", "method": "stripe", "amountCents": checkout_row["amountCents"], "reference": checkout_row["sessionId"]}
+            return {"type": "client_payment", "method": "stripe", "amountCents": checkout_row["amountCents"], "tipCents": checkout_row.get("tipCents", 0), "reference": checkout_row["sessionId"], "paymentIntent": obj.get("payment_intent"), "stripeEventId": event_id}
 
-        try:
-            saved = await mutate(invoice, {"name": "Stripe", "role": "owner"}, "stripe-" + str(obj.get("id"))[:70], build)
-        except HTTPException as exc:
-            if exc.status_code == 409:
-                return {"received": True, "settled": False}
-            raise
-        await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"status": "paid", "eventId": event_id}})
-        if checkout_row.get("tipCents"):
+        # Older releases used a truncated Session id as their operation key.
+        # Recognize their append-only payment before using the new hashed key.
+        prior_payment = await db.nt_ledger.find_one({"invoiceId": invoice["id"], "type": "client_payment", "method": "stripe", "reference": obj["id"]})
+        if prior_payment:
+            if prior_payment["amountCents"] != checkout_row["amountCents"] or prior_payment.get("paymentIntent") not in (None, obj.get("payment_intent")):
+                raise HTTPException(409, "Existing Stripe payment requires reconciliation")
+            saved = invoice
+        else:
+            saved = await mutate(invoice, {"name": "Stripe", "role": "owner"}, "stripe-" + hashlib.sha256(str(obj.get("id")).encode()).hexdigest(), build)
+        await db.nt_checkouts.update_one({"id": checkout_row["id"]}, {"$set": {"status": "paid", "eventId": event_id, "paymentIntent": obj.get("payment_intent")}})
+        if checkout_row.get("tipCents") and not await db.nt_tips.find_one({"method": "stripe", "reference": checkout_row["sessionId"]}):
             try:
                 await db.nt_tips.insert_one({"id": "tip-" + uuid.uuid4().hex[:10], "invoiceId": invoice["id"], "practitionerId": checkout_row.get("practitionerId") or invoice.get("practitionerId"),
-                                             "amountCents": checkout_row["tipCents"], "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-tip-" + str(obj.get("id"))[:60], "at": now_iso()})
+                                             "amountCents": checkout_row["tipCents"], "method": "stripe", "reference": checkout_row["sessionId"], "idempotencyKey": "stripe-tip-" + hashlib.sha256(str(obj.get("id")).encode()).hexdigest(), "at": now_iso()})
             except DuplicateKeyError:
                 pass
         await sync_payment_due(saved)
@@ -1346,17 +1657,25 @@ def build_billing_router(db, coll, add_audit, user_from):
         appt = await appointment(invoice["appointmentId"])
         if user["role"] == "client" or not (user["role"] == "owner" or await desk_can(user, "managePayments") or allowed(user, appt, "cash")):
             raise HTTPException(403, "Not permitted to confirm this transfer")
-        amount = body.get("amountCents")
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(400, "Amount must be a positive number of cents")
+        if invoice["state"] in ("draft", "voided"):
+            raise HTTPException(409, "Only an issued invoice can take a confirmed transfer")
+        received_now, balance_now, _state_now, _overdue_now = project(invoice, await ledger_for(iid))
+        try:
+            amount = manual_settlement_cents(appt, balance_now, received_now, body.get("amountCents") if "amountCents" in body else None)
+        except ValueError as exc:
+            status = 409 if "outstanding balance" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
 
         def build(current, lines):
-            _received, due, _state, _overdue = project(current, lines)
-            if amount > due:
-                raise HTTPException(409, "That payment is more than the outstanding balance")
+            received, balance, _state, _overdue = project(current, lines)
+            try:
+                manual_settlement_cents(appt, balance, received, amount)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
             return {"type": "client_payment", "method": "etransfer", "amountCents": amount, "reference": (body.get("reference") or "")[:80]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await sync_payment_due(saved)
         await notify_client(saved, "etransfer:" + str(body.get("idempotencyKey")))
         return await view_for(user, saved)
 

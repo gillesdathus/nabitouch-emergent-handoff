@@ -254,7 +254,7 @@ def build_plans_router(db, coll, add_audit, user_from):
     @r.get("")
     async def published():
         rows = await db.nt_plan_products.find({"status": "published"}, {"_id": 0}).sort("order", 1).to_list(50)
-        return {"products": [public_product(p) for p in rows], "checkoutEnabled": stripe_card_checkout_enabled()}
+        return {"products": [public_product(p) for p in rows], "checkoutEnabled": stripe_card_checkout_enabled() and os.environ.get("PAYMENT_MODE") != "test"}
 
     @r.get("/products")
     async def products(request: Request):
@@ -322,14 +322,14 @@ def build_plans_router(db, coll, add_audit, user_from):
                 "history": history, "totals": {s: sum(1 for c in credits if c["state"] == s) for s in ("available", "reserved", "consumed")}}
 
     async def start_checkout(request, purchase, product, subscription=False):
+        if os.environ.get("PAYMENT_MODE") == "test":
+            raise HTTPException(503, "New wellness-plan payments await credit/refund reconciliation; existing credits remain usable")
         if not stripe_card_checkout_enabled():
             raise HTTPException(503, "Card checkout is turned off")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
         url = None
-        if key.startswith("sk_live"):
-            raise HTTPException(503, "Live card checkout is not enabled")
-        if key.startswith("sk_test_"):
-            import httpx
+        if key.startswith(("sk_test_", "sk_live_")):
+            from stripe_gateway import stripe_request
             from config import public_base_url
             app_url = public_base_url(request)
             form = {"mode": "subscription" if subscription else "payment", "success_url": app_url + "/me/plans?plan=return&session_id={CHECKOUT_SESSION_ID}", "cancel_url": app_url + "/me/plans?plan=cancel",
@@ -338,11 +338,10 @@ def build_plans_router(db, coll, add_audit, user_from):
             if subscription:
                 form["line_items[0][price_data][recurring][interval]"] = "month"
                 form["subscription_data[metadata][membershipId]"] = purchase["membershipId"]
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
-            if resp.status_code >= 400 or not resp.json().get("id"):
+            created = await stripe_request("POST", "checkout/sessions", data=form, idempotency_key=f"plan-{purchase['id']}")
+            session_id, url = created.get("id"), created.get("url")
+            if not session_id:
                 raise HTTPException(502, "Card checkout could not be started")
-            session_id, url = resp.json()["id"], resp.json().get("url")
         elif payments_simulated():
             session_id = "cs_test_" + uuid.uuid4().hex[:16]
         else:
@@ -445,26 +444,14 @@ def build_plans_router(db, coll, add_audit, user_from):
 
     @r.get("/return")
     async def checkout_return(request: Request, session_id: str = ""):
-        """Webhook fallback: confirm a returning checkout with Stripe. Settlement is idempotent."""
+        """Read-only browser return; only signed webhooks settle payments."""
         user = await actor(request)
         row = await db.nt_checkouts.find_one({"sessionId": session_id, "planPurchaseId": {"$exists": True}}, {"_id": 0}) if session_id else None
         if not row or (user["role"] == "client" and row.get("clientId") != user.get("subject")):
             return {"confirmed": False}
         if row.get("status") == "paid":
             return {"confirmed": True}
-        key = os.environ.get("STRIPE_SECRET_KEY") or ""
-        if not key.startswith("sk_test_"):
-            return {"confirmed": False}
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"https://api.stripe.com/v1/checkout/sessions/{session_id}", auth=(key, ""))
-        session = resp.json() if resp.status_code < 400 else {}
-        if session.get("payment_status") != "paid" or int(session.get("amount_total") or 0) != row["amountCents"]:
-            return {"confirmed": False}
-        ok = await settle_checkout(db, row, session, "poll-" + session_id, add_audit)
-        if ok:
-            await db.nt_checkouts.update_one({"id": row["id"]}, {"$set": {"status": "paid", "eventId": "poll-" + session_id}})
-        return {"confirmed": ok}
+        return {"confirmed": False, "status": row.get("status", "pending")}
 
     @r.post("/memberships/{mid}/cancel")
     async def cancel_membership(mid: str, request: Request):
@@ -507,6 +494,11 @@ def build_plans_router(db, coll, add_audit, user_from):
     @r.post("/purchases/{ppid}/refund")
     async def refund(ppid: str, request: Request):
         user = await actor(request, "owner")
+        # The legacy credit refund path mutates credits before provider success.
+        # Keep it inaccessible to real Stripe funds until credit/refund webhook
+        # reconciliation is implemented and separately accepted.
+        if os.environ.get("PAYMENT_MODE") == "test":
+            raise HTTPException(503, "Stripe plan refunds require credit reconciliation; no credits or funds were changed")
         body = await body_of(request)
         key = idem(body)
         reason = str(body.get("reason") or "").strip()[:160]

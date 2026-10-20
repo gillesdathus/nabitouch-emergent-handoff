@@ -59,3 +59,25 @@ def statement_email(brand, name, period, pay, link):
 
 def booking_change_email(brand, client, title, rows, link):
     return (f"{title} — {brand}", layout(brand, client, f"{title}.", rows, ("View your visit", link)))
+
+
+def email_test_message():
+    from emailtpl import wrap
+    subject = "Nabitouch — Email Delivery Test"
+    body = (
+        '<p style="margin:0 0 18px">Hi there,</p>'
+        '<p style="margin:0 0 18px">This is a controlled Nabitouch transactional email test. No action is needed.</p>'
+        '<p style="margin:0 0 18px">This message contains no appointment or health information.</p>'
+        '<p style="margin:0 0 18px">Visit <a href="https://nabitouch.com" style="color:#0E7C86">https://nabitouch.com</a> if you reached this by mistake.</p>'
+        '<p style="margin:0">Nabitouch will never ask for your password or full payment card details by email.</p>'
+    )
+    return subject, wrap(body, subject, delivery_test=True)
+
+
+def billing_update_email(brand, name, view, link):
+    return ("Nabitouch billing update", layout(brand, name, "A billing update is ready in your Nabitouch account.", [], ("View billing", link)))
+
+
+def review_invitation_email(brand, name, link):
+    return ("How was your Nabitouch visit?", layout(brand, name,
+        "Thank you for visiting Nabitouch. We would value your private feedback.", [], ("Share feedback", link)))

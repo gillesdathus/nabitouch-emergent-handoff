@@ -1,0 +1,78 @@
+name: nabitouch-staging
+services:
+  api:
+    cpus: 0.50
+    mem_limit: 768m
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+    image: ${STAGING_API_IMAGE:?set reviewed staging image}
+    env_file: ["${STAGING_API_ENV:?set staging-only env path}"]
+    volumes:
+      - ${STAGING_REDIS_TLS_DIR:?set staging TLS directory}/ca.crt:/certs/ca.crt:ro
+    depends_on:
+      mongo: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    networks: [edge, data]
+    restart: unless-stopped
+  web:
+    cpus: 0.15
+    mem_limit: 128m
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+    image: ${STAGING_WEB_IMAGE:?set reviewed staging image}
+    ports: ["127.0.0.1:${STAGING_HTTP_PORT:-18081}:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [edge]
+    restart: unless-stopped
+  mongo:
+    cpus: 0.40
+    mem_limit: 768m
+    pids_limit: 256
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--auth", "--keyFile", "/etc/mongo.key", "--wiredTigerCacheSizeGB", "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: staging_root
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+    secrets: [mongo_root_password, mongo_app_password]
+    volumes:
+      - staging-mongo:/data/db
+      - ${STAGING_MONGO_KEYFILE:?set private staging Mongo keyfile}:/etc/mongo.key:ro
+      - ./mongo-app.js:/docker-entrypoint-initdb.d/10-staging-app.js:ro
+      - ./init-replica.js:/opt/init-replica.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "const fs=require('fs');db.getSiblingDB('admin').auth('staging_root',fs.readFileSync('/run/secrets/mongo_root_password','utf8').trim());if(!db.hello().isWritablePrimary)quit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [data]
+    restart: unless-stopped
+  redis:
+    cpus: 0.15
+    mem_limit: 192m
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: "5m", max-file: "2"}}
+    image: redis:7-alpine
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    secrets: [redis_acl, redis_password]
+    volumes:
+      - ./redis.conf:/etc/redis/redis.conf:ro
+      - ${STAGING_REDIS_TLS_DIR:?set staging TLS directory}:/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/redis_password) redis-cli --tls --cacert /tls/ca.crt -h redis ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [data]
+    restart: unless-stopped
+networks:
+  edge: {}
+  data: {internal: true}
+volumes:
+  staging-mongo: {}
+secrets:
+  mongo_root_password: {file: "${STAGING_MONGO_ROOT_PASSWORD_FILE:?set staging secret file}"}
+  mongo_app_password: {file: "${STAGING_MONGO_APP_PASSWORD_FILE:?set staging secret file}"}
+  redis_password: {file: "${STAGING_REDIS_PASSWORD_FILE:?set staging secret file}"}
+  redis_acl: {file: "${STAGING_REDIS_ACL_FILE:?set staging ACL file}"}

@@ -133,6 +133,7 @@ def test_sensitive_fields_are_sealed_at_rest_and_absent_from_the_access_log():
     sarah = requests.post(f"{API}/auth/register", json={
         "email": email, "password": "seal-pass-" + uuid.uuid4().hex[:8], "firstName": "Seal", "lastName": "Client",
         "phone": "780-555-0101", "dob": "1990-01-01", "marketingConsent": False,
+        "acceptTerms": True, "termsAccepted": True, "privacyAccepted": True,
     }, timeout=20)
     assert sarah.status_code == 200, sarah.text
     headers = {"Authorization": f"Bearer {sarah.cookies.get('access_token')}"}
@@ -175,8 +176,13 @@ def test_stale_cookie_does_not_block_mfa_challenge():
         body = started.json()
         assert body.get("mfaRequired") is True and not started.cookies.get("access_token")
         if body.get("enrollmentRequired"):
+            refused = session.post(f"{API}/auth/mfa/enroll", json={"challenge": "invalid"}, timeout=20)
+            assert refused.status_code == 403
+            assert session.post(f"{API}/auth/mfa/enroll", json={}, timeout=20).status_code == 403
             enrolled = session.post(f"{API}/auth/mfa/enroll", json={"challenge": body["challenge"]}, timeout=20)
             assert enrolled.status_code == 200 and enrolled.json().get("secret"), enrolled.text
+            invalid_code = session.post(f"{API}/auth/mfa/confirm", json={"challenge": body["challenge"], "code": "invalid"}, timeout=20)
+            assert invalid_code.status_code == 400
         else:
             challenged = session.post(f"{API}/auth/mfa/verify", json={"challenge": body["challenge"], "code": "000000"}, timeout=20)
             assert challenged.status_code == 401, challenged.text

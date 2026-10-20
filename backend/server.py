@@ -36,40 +36,62 @@ from billing import build_billing_router, clear_billing, ensure_billing
 from clinical import build_clinical_router, clear_clinical, ensure_clinical
 from history_import import build_import_router, clear_imports, ensure_imports
 from legacy import build_legacy_router, clear_legacy, ensure_legacy
-from tracking import build_tracking_router, clear_runtime, end_tracking, issue_guest_capability, on_transition
+from tracking import build_tracking_router, clear_runtime, end_tracking, issue_guest_capability, on_transition, open_sharing_session
 from emailer import send_email
 from html import escape
 import asyncio
 from math import radians, sin, cos, asin, sqrt
-from config import cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider, is_production, stripe_card_checkout_enabled, validate_env
+from config import (
+    cors_origins, demo_mode, document_uploads_enabled, email_lifecycle_enabled, email_provider,
+    is_production, practitioner_booking_email_enabled, profile_photos_enabled,
+    security_shield_arrival_code_enabled, security_shield_docs_enabled,
+    security_shield_expiry_enforcement_enabled, security_shield_fleet_enabled,
+    security_shield_safety_sampling_enabled, stripe_card_checkout_enabled, validate_env,
+)
 from redact import AccessPathRedact, RedactLogFilter
 from availability import (
-    assert_public_slot, build_schedule_router, clinic_is_bookable, draft_schedule, note_cancellation, public_cancellation, public_clinic, validate_clinic,
+    assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, gps_origin, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
     validate_policy, validate_scheduling, visible_to,
 )
-from payment_policy import resolve_payment_policy, settlement
+from payment_policy import due_for_booking, resolve_payment_policy
 from recovery import (
-    apply_campaign_price, award_campaign, build_recovery_router, consume_recovery_hold, release_campaign, reserve_campaign, validate_fee,
+    apply_campaign_price, award_campaign, build_recovery_router, campaign_quote, consume_recovery_hold,
+    release_campaign, release_campaign_for_appointment, reserve_campaign, validate_fee,
 )
 from pricing import (
-    BLOCKING_STATUSES, client_matches_person, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
+    BLOCKING_STATUSES, client_matches_person, ensure_welcome_offer, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
 from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
-    enqueue_booking_confirmation, enqueue_operational, ensure_notifications, notification_summary, process_available,
+    enqueue_booking_confirmation, enqueue_operational, enqueue_practitioner_notice, ensure_notifications,
+    notification_summary, process_available, resolve_practitioner_account,
+    enqueue_email_test, freeze_delivery, enqueue_due_email_reminders, reconcile_pending_email_receipts,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
+from trial import (
+    TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG, ensure_trial_campaign_locations, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
+    trial_duration_ok,
+)
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
 from safety import build_safety_router, ensure_safety
+from fleet import build_fleet_router, ensure_fleet
+from shield import (
+    assert_arrival_verified_for_treatment, assert_driving_docs_ok, build_shield_router,
+    ensure_arrival_code_on_booking, ensure_shield, run_renewal_scan,
+)
 from devices import build_devices_router, ensure_devices, notify as push_notify
 from winback import build_winback_router, ensure_winback, reserve_invite, settle_invite, valid_invite, winback_quote
+from followup_coupons import (
+    build_followup_router, ensure_followup, followup_quote, issue_on_complete,
+    reserve_followup, settle_followup, valid_followup,
+)
 from finance import build_finance_router
 from readiness import build_readiness_router
-from email_templates import invoice_email, payment_link_email, receipt_email, statement_email
+from email_templates import invoice_email, payment_link_email, receipt_email, statement_email, email_test_message, review_invitation_email, billing_update_email
 from config import giftcards_enabled, invoice_email_enabled
 from sms import build_sms_router, due_reminders, ensure_sms, queue_sms, readiness as sms_readiness
 from session_care import assert_session_ready, build_session_care_router, clear_session_care, consent_snapshot, ensure_session_care
@@ -173,8 +195,20 @@ async def _training_cleanup():
 async def _notification_worker():
     """Poll the Mongo outbox. The row is already durable before this runs."""
     worker_id = "mail-" + uuid.uuid4().hex[:8]
+    last_reminders = 0
     while True:
         try:
+            if os.environ.get("NOTIFICATION_WORKER_ENABLED", "true").lower() == "false":
+                await asyncio.sleep(1)
+                continue
+            if asyncio.get_running_loop().time() - last_reminders > 60:
+                await reconcile_pending_email_receipts(db)
+                await enqueue_due_email_reminders(db, coll)
+                try:
+                    await run_renewal_scan(db, coll)
+                except Exception:
+                    logging.getLogger(__name__).exception("Shield renewal scan failed")
+                last_reminders = asyncio.get_running_loop().time()
             worked = await process_available(db, _deliver_booking, worker_id, _audit_mail)
         except Exception:
             logging.getLogger(__name__).error("Notification worker iteration failed")
@@ -219,14 +253,23 @@ async def lifespan(_app):
     await ensure_giftcards(db)
     await ensure_plans(db)
     await ensure_safety(db)
+    await ensure_fleet(db)
+    await ensure_shield(db)
     await ensure_devices(db)
     await ensure_winback(db)
+    await ensure_followup(db)
     await ensure_sms(db)
     await db.nt_cron_runs.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("at", expireAfterSeconds=120)
+    # Seed before trial/welcome upserts. ensure_trial_service inserts a catalogue
+    # row on empty DBs; running it first would make services.count > 0 and skip
+    # reset_data, leaving QA/launch boots without swedish, practitioners, or settings.
     if await coll("services").count_documents({}) == 0:
         await reset_data()
+    await ensure_trial_service(db)
+    await ensure_trial_campaign_locations(db)
+    await ensure_welcome_offer(db)
     if not is_production():
         await coll("promotions").update_many(
             {"approval": {"$exists": False}, "enabled": True},
@@ -289,6 +332,11 @@ async def health():
         "redis": await redis_state(),
         "documentUploads": document_uploads_enabled(),
         "cardCheckout": stripe_card_checkout_enabled(),
+        "securityShieldFleet": security_shield_fleet_enabled(),
+        "securityShieldDocs": security_shield_docs_enabled(),
+        "securityShieldArrivalCode": security_shield_arrival_code_enabled(),
+        "securityShieldExpiryEnforcement": security_shield_expiry_enforcement_enabled(),
+        "securityShieldSafetySampling": security_shield_safety_sampling_enabled(),
     }
 
 
@@ -308,7 +356,7 @@ async def resend_receipt(request: Request):
         raise HTTPException(400, "Invalid event")
     if not isinstance(event, dict):
         raise HTTPException(400, "Invalid event")
-    updated = await apply_delivery_receipt(db, event)
+    updated = await apply_delivery_receipt(db, event, request.headers.get("svix-id"))
     return {"accepted": True, "updated": updated}
 
 
@@ -318,7 +366,12 @@ def _email_status():
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     return {"provider": email_provider(), "resendKey": bool(key), "sender": sender or None, "replyTo": (os.environ.get("EMAIL_REPLY_TO") or "").strip() or None,
             "webhookSecret": bool((os.environ.get("RESEND_WEBHOOK_SECRET") or "").strip()), "testRecipient": (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip() or None,
-            "types": {"lifecycle": email_lifecycle_enabled(), "invoices": invoice_email_enabled(), "statements": statement_email_enabled()}}
+            "types": {
+                "lifecycle": email_lifecycle_enabled(),
+                "invoices": invoice_email_enabled(),
+                "statements": statement_email_enabled(),
+                "practitionerBooking": practitioner_booking_email_enabled(),
+            }}
 
 
 @api.get("/ops/email/status")
@@ -331,16 +384,21 @@ async def email_status(request: Request):
 async def email_test(request: Request):
     """One fixed message to EMAIL_TEST_RECIPIENT only. No caller-supplied recipient, subject or body."""
     user = await require(request, "owner")
-    from emailer import send_email
+    from emailer import acceptance_guard, acceptance_message_guard
     target = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
     if not target:
         raise HTTPException(409, "Set EMAIL_TEST_RECIPIENT first")
-    html = ('<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#0B1B3F">'
-            '<p style="font-size:18px;font-weight:bold">Nabitouch email test</p><p>This test confirms your app can send email. No action is needed.</p>'
-            '<p style="font-size:12px;color:#667">Sent by Nabitouch from the owner settings. We never ask for your password or card details by email.</p></td></tr></table>')
-    message_id = await send_email(to=target, subject="Nabitouch email test", html=html, idempotency_key=f"email-test-{uuid.uuid4().hex}")
-    await add_audit(user["name"], "Email test sent")
-    return {"sent": bool(message_id), "id": message_id, "provider": _email_status()["provider"]}
+    acceptance_guard(target)
+    acceptance_message_guard(*email_test_message())
+    key = request.headers.get("Idempotency-Key") or ""
+    if not key and os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() == "true":
+        raise HTTPException(409, "A stable test-message Idempotency-Key is required")
+    if len(key) > 200:
+        raise HTTPException(400, "Invalid test-message key")
+    note, _created = await enqueue_email_test(db, target, key or uuid.uuid4().hex)
+    await process_available(db, _deliver_booking, "owner-email-test", _audit_mail, notification_id=note["id"])
+    saved = await db.nt_notifications.find_one({"id": note["id"]}, NO_ID)
+    return {"sent": saved.get("status") == "sent", "id": saved.get("providerId"), "notificationId": note["id"], "status": saved.get("status"), "provider": _email_status()["provider"]}
 
 
 @api.get("/notifications/channels")
@@ -376,15 +434,48 @@ PRACTITIONER_HIDDEN = {"base", "licenseExpiry", "insuranceExpiry"}
 
 
 def busy_slot(appt):
-    return {"id": appt["id"], "date": appt["date"], "time": appt["time"], "duration": appt["duration"],
-            "practitionerId": appt.get("practitionerId"), "status": appt["status"]}
+    """A public busy block. An incomplete stored row is not a booked time."""
+    if not appt.get("date") or not appt.get("time") or appt.get("duration") in (None, ""):
+        return None
+    return {"id": appt.get("id"), "date": appt["date"], "time": appt["time"], "duration": appt["duration"],
+            "practitionerId": appt.get("practitionerId"), "status": appt.get("status")}
+
+
+def present_trip(appt):
+    """A sample trip is not a recorded drive. It keeps its destination and drops any invented origin."""
+    trip = dict((appt or {}).get("trip") or {})
+    if not trip or not trip.get("simulated") or trip.get("sharingSource") == "practitioner":
+        return appt
+    for key in ("from", "km", "driveMin", "demoSec"):
+        trip.pop(key, None)
+    trip["sharing"] = False
+    trip["location"] = "sample"
+    return {**appt, "trip": trip}
+
+
+def present_shield_fields(appt, role):
+    """Strip arrival-code secrets from state. Clients load plaintext via /shield/.../arrival-code."""
+    if not appt:
+        return appt
+    meta = appt.get("arrivalCode")
+    if not meta:
+        return appt
+    safe = {
+        "issued": bool(meta.get("codeHash")),
+        "digits": meta.get("digits") or 6,
+        "verifiedAt": meta.get("verifiedAt"),
+        "lockedUntil": meta.get("lockedUntil"),
+        "attempts": (meta.get("attempts") or 0) if role in ("owner", "practitioner", "manager") else 0,
+        "fallbackUsed": bool(meta.get("fallbackUsed")) if role in ("owner", "manager") else False,
+    }
+    return {**appt, "arrivalCode": safe}
 
 
 def hide_practitioner_home(appt):
-    """Clients and the desk see the visit, not the practitioner's home coordinate stored as the trip origin."""
+    """Clients and the desk see the visit, not the practitioner's exact start. A missing GPS fix is left missing."""
     trip = appt.get("trip") or {}
     dest = trip.get("to") or {}
-    if dest.get("lat") is None:
+    if dest.get("lat") is None or not trip.get("from"):
         return appt
     public = {"lat": round(float(dest["lat"]) - 0.015, 5), "lng": float(dest["lng"])}
     return {**appt, "trip": {**trip, "from": public}}
@@ -415,9 +506,15 @@ def shape_settings(docs, role):
         shaped.append(view)
     flags = {
         "documentUploadsEnabled": document_uploads_enabled(),
+        "profilePhotosEnabled": profile_photos_enabled(),
         "cardCheckoutEnabled": stripe_card_checkout_enabled(),
         "invoiceEmailEnabled": invoice_email_enabled(),
         "giftCardsEnabled": giftcards_enabled(),
+        "securityShieldFleetEnabled": security_shield_fleet_enabled(),
+        "securityShieldDocsEnabled": security_shield_docs_enabled(),
+        "securityShieldArrivalCodeEnabled": security_shield_arrival_code_enabled(),
+        "securityShieldExpiryEnforcementEnabled": security_shield_expiry_enforcement_enabled(),
+        "securityShieldSafetySamplingEnabled": security_shield_safety_sampling_enabled(),
     }
     return [{**doc, **flags} for doc in shaped]
 
@@ -437,18 +534,81 @@ async def reception_perms():
     return settings.get("receptionPerms") or {}
 
 
+@api.get("/clients/search")
+async def search_clients(request: Request, q: str = "", limit: int = 20):
+    """Staff patient lookup by name, email, or phone. Does not return clinical notes."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    needle = str(q or "").strip().lower()
+    if len(needle) < 2:
+        return {"clients": [], "duplicates": []}
+    limit = max(1, min(int(limit or 20), 50))
+    rows = await coll("clients").find({}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1, "email": 1, "phone": 1, "preferredName": 1}).to_list(2000)
+    hits = []
+    for row in rows:
+        blob = " ".join(str(row.get(k) or "") for k in ("firstName", "lastName", "preferredName", "email", "phone")).lower()
+        digits = "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit())
+        q_digits = "".join(ch for ch in needle if ch.isdigit())
+        if needle in blob or (q_digits and q_digits in digits):
+            hits.append(row)
+        if len(hits) >= limit:
+            break
+    duplicates = []
+    for row in hits[:10]:
+        email = str(row.get("email") or "").lower()
+        phone = "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit())[-10:]
+        same = [other for other in rows if other["id"] != row["id"] and (
+            (email and str(other.get("email") or "").lower() == email) or
+            (len(phone) >= 10 and "".join(ch for ch in str(other.get("phone") or "") if ch.isdigit())[-10:] == phone)
+        )]
+        if same:
+            duplicates.append({"clientId": row["id"], "matches": [m["id"] for m in same[:5]]})
+    await add_audit(user.get("name") or "staff", f"Patient search ({len(hits)} hits)")
+    return {"clients": hits, "duplicates": duplicates}
+
+
+@api.post("/clients")
+async def create_client(request: Request, body: dict = Body(...)):
+    """Staff patient registration. Does not merge duplicates automatically."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    if has_role(user, "desk") and not has_role(user, "owner") and not (await reception_perms()).get("createBooking"):
+        raise HTTPException(403, "Not permitted")
+    first = str(body.get("firstName") or "").strip()
+    last = str(body.get("lastName") or "").strip()
+    email = str(body.get("email") or "").strip().lower()
+    phone = str(body.get("phone") or "").strip()
+    if not first or not last:
+        raise HTTPException(400, "First and last name are required")
+    if email and await coll("clients").find_one({"email": email}, {"_id": 1}):
+        raise HTTPException(409, "A patient with that email already exists")
+    client = {
+        "id": "c-" + uuid.uuid4().hex[:10], "firstName": first, "lastName": last, "preferredName": str(body.get("preferredName") or "").strip(),
+        "email": email, "phone": phone, "dob": str(body.get("dob") or "").strip(), "language": body.get("language") or "English",
+        "contactMethod": body.get("contactMethod") or "Text", "marketingConsent": bool(body.get("marketingConsent")),
+        "smsConsent": bool(body.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [],
+        "loyaltyPoints": 0, "onlineBookings": 0, "createdAt": now_iso(), "createdBy": user.get("id"),
+    }
+    await coll("clients").insert_one(dict(client))
+    await add_audit(user.get("name") or "staff", f"Patient created {first} {last}")
+    return client
+
+
 @api.get("/clients/{client_id}/workspace")
 async def client_workspace(client_id: str, request: Request):
     """Staff client record. Reception sees only what its permissions allow. Clinical notes are never included."""
+    from rbac import has_role
     user = await require(request, "owner", "desk")
-    perms = await reception_perms() if user["role"] == "desk" else {}
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    perms = await reception_perms() if desk_only else {}
     client = await coll("clients").find_one({"id": client_id}, NO_ID)
     if not client:
         raise HTTPException(404, "Client not found")
     if "insurance" in client:
         client = {**client, "insurance": open_insurance(client.get("insurance"))}
     appts = await coll("appointments").find({"clientId": client_id}, NO_ID).sort([("date", -1), ("time", -1)]).to_list(300)
-    if user["role"] == "desk":
+    appts = [present_trip(a) for a in appts]
+    if desk_only:
         appts = [hide_practitioner_home(a) for a in appts]
         if not perms.get("viewAddresses"):
             appts = [without_keys(a, {"address"}) for a in appts]
@@ -457,7 +617,7 @@ async def client_workspace(client_id: str, request: Request):
             client = without_keys(client, {"insurance"})
     consents = await db.nt_consents.find({"clientId": client_id}, NO_ID).sort("at", -1).to_list(100)
     consent_view = [{k: c.get(k) for k in ("id", "kind", "purpose", "version", "at", "withdrawnAt", "status")} for c in consents]
-    can_read_threads = user["role"] == "owner" or bool(perms.get("viewHistory") or perms.get("createBooking"))
+    can_read_threads = has_role(user, "owner") or bool(perms.get("viewHistory") or perms.get("createBooking"))
     threads = []
     if can_read_threads:
         for a in appts:
@@ -468,12 +628,15 @@ async def client_workspace(client_id: str, request: Request):
             last = await db.nt_messages.find({"appointmentId": a["id"]}, NO_ID).sort("createdAt", -1).to_list(1)
             threads.append({"appointmentId": a["id"], "ref": a.get("ref"), "date": a.get("date"), "time": a.get("time"), "messages": count, "notices": notices,
                             "last": {k: last[0].get(k) for k in ("body", "authorRole", "authorLabel", "createdAt")} if last else None})
-    plans = await coll("plans").find({"clientId": client_id}, NO_ID).to_list(50) if user["role"] == "owner" else []
+    plans = await coll("plans").find({"clientId": client_id}, NO_ID).to_list(50) if has_role(user, "owner") else []
+    invoices = []
+    if has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")):
+        invoices = await db.nt_invoices.find({"clientId": client_id}, {"_id": 0, "id": 1, "number": 1, "state": 1, "totalCents": 1, "serviceDate": 1, "origin": 1}).sort("serviceDate", -1).to_list(50)
     await add_audit(user.get("name") or "staff", f"Opened client record {client.get('firstName', '')} {client.get('lastName', '')}".strip())
-    return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans,
-            "access": {"role": user["role"], "threads": can_read_threads, "plans": user["role"] == "owner", "clinical": False,
-                       "invoices": user["role"] == "owner" or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
-                       "insurance": user["role"] == "owner" or bool(perms.get("viewInsuranceStatus"))}}
+    return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans, "invoices": invoices,
+            "access": {"role": user["role"], "threads": can_read_threads, "plans": has_role(user, "owner"), "clinical": False,
+                       "invoices": has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
+                       "insurance": has_role(user, "owner") or bool(perms.get("viewInsuranceStatus"))}}
 
 
 @api.get("/state")
@@ -489,6 +652,7 @@ async def get_state(request: Request):
             q = q.sort("at", -1).limit(80)
         out[name] = await q.to_list(1000)
     out["clients"] = [{**client, "insurance": open_insurance(client.get("insurance"))} if "insurance" in client else client for client in out["clients"]]
+    out["appointments"] = [present_shield_fields(present_trip(appt), role) for appt in out["appointments"]]
     out["soap"] = [open_tree(note) for note in out["soap"]]
     out["settings"] = shape_settings(out["settings"], role)
     out["practitioners"] = [present_practitioner(person, role) for person in out["practitioners"] if visible_profile(person, role, sub)]
@@ -515,7 +679,7 @@ async def get_state(request: Request):
         if role == "client":
             mine = [hide_practitioner_home(appt) for appt in mine]
         ids = {a["clientId"] for a in mine}
-        busy = [busy_slot(a) for a in appts if a not in mine]
+        busy = [slot for slot in (busy_slot(a) for a in appts if a not in mine) if slot]
         out["appointments"] = (mine if role == "practitioner" else mine + busy) if role else busy
         if role == "practitioner":
             out["clients"] = [without_keys(c, {"insurance"}) for c in out["clients"] if c["id"] in ids]
@@ -617,13 +781,15 @@ class TransitionIn(BaseModel):
     actor: str = "system"
     note: Optional[str] = None
     opId: Optional[str] = None
+    location: Optional[dict] = None
 
 
-async def apply_transition(appt, to, actor, note=None, op_id=None):
+async def apply_transition(appt, to, actor, note=None, op_id=None, location=None):
     cur = appt["status"]
     if to not in TRANSITIONS.get(cur, []):
         raise HTTPException(409, f"Cannot move from {cur} to {to}")
     if to == "in_session":
+        await assert_arrival_verified_for_treatment(appt)
         await assert_session_ready(db, appt)
         await assert_no_active_session(coll, appt)
     ts = now_iso()
@@ -643,7 +809,15 @@ async def apply_transition(appt, to, actor, note=None, op_id=None):
     if to == "session_ended" or (to == "leaving" and cur == "interrupted" and session.get("startedAt") and not session.get("endedAt")):
         upd.update(await session_end_update(coll, {**appt, "timer": upd.get("timer", appt.get("timer"))}, ts))
     if to == "en_route":
-        upd["trip"] = await start_trip(appt, ts)
+        await assert_driving_docs_ok(
+            db,
+            practitioner_id=appt.get("practitionerId"),
+            vehicle_id=appt.get("vehicleId"),
+            action="start On My Way",
+        )
+        upd["trip"] = await start_trip(appt, ts, location)
+        if upd["trip"].get("sharing"):
+            await open_sharing_session(appt["id"], appt.get("practitionerId"))
     elif appt.get("trip", {}).get("sharing"):
         upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": ts}  # stop client-visible tracking
     guard = {"id": appt["id"], "status": cur}
@@ -668,8 +842,10 @@ async def apply_transition(appt, to, actor, note=None, op_id=None):
         await record_trip_notice(db, saved, to)
     if to == "cancelled":
         await _maybe_lifecycle_mail(saved, "cancellation")
+        await _queue_practitioner_mail(saved, "practitioner_cancellation")
     if to == "assigned" and saved.get("practitionerId"):
         await _maybe_lifecycle_mail(saved, "assignment")
+        await _queue_practitioner_mail(saved, "practitioner_booking")
     if to in ("completed", "processing", "closed"):
         await settle_appointment_points(db, coll, saved)
     if to == "completed":
@@ -681,14 +857,29 @@ async def apply_transition(appt, to, actor, note=None, op_id=None):
         await consume_credit(db, appt["id"], actor)
     if to == "cancelled":
         await release_credit(db, appt["id"], actor, "Visit cancelled")
+        await release_campaign_for_appointment(db, appt["id"])
     if to in ("completed", "cancelled", "no_show"):
         await settle_invite(db, appt["id"], to)
+        await settle_followup(db, appt["id"], to)
+    if to == "completed":
+        try:
+            await issue_on_complete(db, saved, add_audit)
+        except Exception:
+            logging.getLogger(__name__).exception("Follow-up coupon not issued")
     if to == "cancelled":
         await push_notify(db, "visit_cancelled", appt["id"], appt)
     if to == "en_route":
-        await queue_sms(db, coll, "on_the_way", appt, appt["id"])
+        await queue_sms(db, coll, "on_the_way", saved, saved["id"])
+        await push_notify(db, "visit_on_the_way", saved["id"], saved)
+    if to == "arrived":
+        await queue_sms(db, coll, "arrived", saved, saved["id"])
+        await push_notify(db, "visit_arrived", saved["id"], saved)
     if to in ("confirmed", "assigned"):
         await queue_sms(db, coll, "booking_confirmed", appt, appt["id"])
+        try:
+            await ensure_arrival_code_on_booking(coll, saved)
+        except Exception:
+            logging.getLogger(__name__).exception("Arrival code not issued")
     if to == "assigned" and appt.get("practitionerId"):
         await push_notify(db, "visit_assigned", f"{appt['id']}:{appt['practitionerId']}", appt)
     if to in ("completed", "cancelled", "no_show", "closed"):
@@ -737,9 +928,9 @@ async def locate_visit(address, zones, settings):
     place_id = str(address.get("mapboxId") or "")
     try:
         if not line and not place_id and address.get("lat") is not None:
-            hit = await GEO.reverse(address.get("lat"), address.get("lng"))
+            hit = await GEO.reverse(address.get("lat"), address.get("lng"), persist=True)
         else:
-            hit = await GEO.resolve(line=line, mapbox_id=place_id, point=address if address.get("lat") is not None else None)
+            hit = await GEO.resolve(line=line, mapbox_id=place_id, point=address if address.get("lat") is not None else None, persist=True)
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -790,15 +981,38 @@ def _verdict(hit, zones, settings):
     }
 
 
+@api.post("/geo/clinic-confirm")
+async def geo_clinic_confirm(request: Request, body: dict = Body(...)):
+    """Confirm a selected clinic suggestion. Free text is not geocoded, and the service-area center is not a pin."""
+    await require(request, "owner")
+    if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
+        raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
+    if not str(body.get("mapboxId") or "").strip():
+        raise HTTPException(400, "Choose an address suggestion before confirming the clinic.")
+    try:
+        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None, persist=True)
+    except GeocodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    assessed = classify(hit, body.get("line") or "", body.get("postal") or "", None)
+    accepted = body.get("clientConfirmed") is True and assessed["confidence"] == "address" and not assessed["arrivalDiscrepancy"]
+    result = {"accepted": accepted, "line": hit.get("line") or "", "mapboxId": hit.get("id") or "", "confidence": assessed["confidence"], "navigation": "ready" if accepted else "unavailable"}
+    if accepted:
+        result["lat"] = hit["lat"]
+        result["lng"] = hit["lng"]
+    return result
+
+
 @api.post("/geo/confirm")
 async def geo_confirm(request: Request, body: dict = Body(...)):
-    """Classify a civic address. The arrival pin is returned separately and does not rewrite the street."""
+    """Classify a civic address for storage. Requires permanent geocoding when Mapbox is configured."""
     if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
         raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
     zones = await coll("zones").find({}, NO_ID).to_list(20)
     try:
-        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None)
+        hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=None, persist=True)
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -825,7 +1039,7 @@ async def geo_suggest(request: Request, q: str = ""):
     try:
         suggestions = await GEO.suggest(q, client_key(request))
     except RateLimit as exc:
-        raise HTTPException(429, str(exc)) from exc
+        raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"suggestions": [{"id": item["id"], "label": item["line"], "area": item.get("area") or ""} for item in suggestions]}
@@ -833,15 +1047,21 @@ async def geo_suggest(request: Request, q: str = ""):
 
 @api.post("/geo/check")
 async def geo_check(request: Request, body: dict = Body(...)):
+    """Ephemeral service-area check. Uses temporary geocoding; does not require storage permission."""
     if not allow(GEO.bucket, f"check:{client_key(request)}", CHECK_LIMIT):
         raise HTTPException(429, "Too many address lookups. Wait a moment and try again.")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
     zones = await coll("zones").find({}, NO_ID).to_list(20)
     try:
         if body.get("lat") is not None and body.get("lng") is not None and not (body.get("line") or body.get("mapboxId")):
-            hit = await GEO.reverse(body.get("lat"), body.get("lng"))
+            hit = await GEO.reverse(body.get("lat"), body.get("lng"), persist=False)
         else:
-            hit = await GEO.resolve(line=body.get("line") or "", mapbox_id=body.get("mapboxId") or "", point=body if body.get("lat") is not None else None)
+            hit = await GEO.resolve(
+                line=body.get("line") or "",
+                mapbox_id=body.get("mapboxId") or "",
+                point=body if body.get("lat") is not None else None,
+                persist=False,
+            )
     except GeocodeError as exc:
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
@@ -877,14 +1097,29 @@ def km_between(a, b):
     return 2 * 6371 * asin(sqrt(sin((la2 - la1) / 2) ** 2 + cos(la1) * cos(la2) * sin((lo2 - lo1) / 2) ** 2))
 
 
-async def start_trip(appt, ts):
-    p = await coll("practitioners").find_one({"id": appt.get("practitionerId")}, NO_ID) or {}
-    origin = p.get("base") or {"lat": 53.5461, "lng": -113.4938}
-    dest = {"lat": appt["address"]["lat"], "lng": appt["address"]["lng"]}
+async def start_trip(appt, ts, location=None):
+    """Record a trip from the practitioner's current GPS. On My Way starts sharing for mobile visits.
+
+    A missing GPS fix is not replaced with a base, clinic, or city center. Clinic visits never share location.
+    """
+    dest = visit_navigation_point((appt or {}).get("address"), (appt or {}).get("locationType"))
+    if not dest:
+        raise HTTPException(409, "This visit has no map coordinates yet.")
+    origin = gps_origin(location)
+    clinic = (appt or {}).get("locationType") == "clinic"
+    trip = {
+        "to": dest,
+        "startedAt": ts,
+        "sharing": not clinic,
+        "sharingSource": "practitioner" if not clinic else None,
+        "simulated": False,
+        "location": "gps" if origin else "unavailable",
+    }
+    if not origin:
+        return trip
     km = round(km_between(origin, dest) * 1.3 + 0.8, 1)
-    # Simulated GPS: the journey is replayed over ~2.5 real minutes; ETA shown in realistic drive minutes.
-    return {"from": origin, "to": dest, "startedAt": ts, "demoSec": 150, "km": km, "driveMin": round(6 + km * 1.9),
-            "sharing": False, "simulated": True}
+    trip.update({"from": origin, "km": km, "driveMin": round(6 + km * 1.9)})
+    return trip
 
 
 async def authorize_transition(user, appt, to):
@@ -992,10 +1227,12 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
             await queue_sms(db, coll, "running_late", saved, f"{appt_id}:{upd['delayMin']}", minutes=upd["delayMin"])
     if kind == "rescheduled":
         await _maybe_lifecycle_mail(saved, "reschedule")
+        await _queue_practitioner_mail(saved, "practitioner_reschedule")
         await push_notify(db, "visit_rescheduled", f"{appt_id}:{saved['date']}:{saved['time']}", saved)
         await queue_sms(db, coll, "booking_changed", saved, f"{appt_id}:{saved['date']}:{saved['time']}")
     if kind == "reassigned":
         await _maybe_lifecycle_mail(saved, "assignment")
+        await _queue_practitioner_mail(saved, "practitioner_reassignment")
         await push_notify(db, "visit_assigned", f"{appt_id}:{saved['practitionerId']}", saved)
     return saved
 
@@ -1016,7 +1253,7 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
     body.actor = u["name"]
     op_id = body.opId[:64] if body.opId else None
     try:
-        appt = await apply_transition(appt, body.to, body.actor, body.note, op_id)
+        appt = await apply_transition(appt, body.to, body.actor, body.note, op_id, body.location)
     except HTTPException:
         latest = await coll("appointments").find_one({"id": appt_id}, {"_id": 0})
         if op_id and latest and op_id in (latest.get("opIds") or []):
@@ -1315,20 +1552,42 @@ async def price_welcome(*, service, duration, addons, zone, client, incoming, pr
     return person, offers, quoted
 
 
+async def bind_trial_campaign(payload):
+    """Force standalone trial fields from the campaign. Never invent prices or flip practitioner availability."""
+    campaign_id = payload.get("campaignId")
+    if not campaign_id:
+        return payload, None
+    campaign = await db.nt_campaigns.find_one({"id": campaign_id}, NO_ID)
+    if not campaign or not is_trial_offer(campaign):
+        return payload, campaign
+    appointment = dict(payload.get("appointment") or {})
+    appointment["serviceSlug"] = campaign.get("serviceSlug") or TRIAL_SERVICE_SLUG
+    appointment["duration"] = int(campaign.get("durationMinutes") or campaign.get("complimentaryMinutes") or TRIAL_DURATION_MIN)
+    locations = campaign.get("locationTypes") or list(TRIAL_LOCATION_TYPES)
+    if appointment.get("locationType") not in locations:
+        # Prefer home for mobile Nabitouch trials; do not silently force clinic.
+        appointment["locationType"] = "home" if "home" in locations else locations[0]
+    appointment["addonIds"] = []
+    bound = {**payload, "appointment": appointment, "useCredit": False, "redeemPoints": None, "winbackCode": None, "followupCode": None}
+    if campaign.get("practitionerId"):
+        bound["practitionerId"] = campaign["practitionerId"]
+    return bound, campaign
+
+
 async def resolve_booking(payload, user):
     """Read the catalogue and appointment history and return a server quote. This does not reserve the offer."""
     incoming = payload.get("client") or {}
-    source = payload.get("source") or "online"
-    if source not in ("online", "reception"):
-        source = "online"
-    if user and user["role"] == "practitioner":
+    from rbac import normalize_booking_source, has_role
+    source = normalize_booking_source(payload.get("source"), default="online")
+    if user and has_role(user, "practitioner") and not has_role(user, "owner", "desk", "manager"):
         raise HTTPException(403, "Not permitted")
-    if user and user["role"] == "desk" and not (await reception_perms()).get("createBooking"):
+    if user and has_role(user, "desk") and not has_role(user, "owner", "manager") and not (await reception_perms()).get("createBooking"):
         raise HTTPException(403, "Not permitted")
-    if user and user["role"] == "client":
+    if user and user["role"] == "client" and not has_role(user, "owner", "manager", "desk"):
         incoming = {"id": user["subject"]}
     elif (not user) and incoming.get("id"):
         raise HTTPException(403, "Sign in to book for an existing profile")
+    payload, trial_campaign = await bind_trial_campaign(payload)
     fields = payload.get("appointment") or {}
     service = await coll("services").find_one({"slug": fields.get("serviceSlug")}, NO_ID)
     duration = fields.get("duration")
@@ -1336,6 +1595,11 @@ async def resolve_booking(payload, user):
     reason = booking_block_reason(service, duration, location)
     if reason:
         raise HTTPException(400, reason)
+    trial_visit = bool(trial_campaign) or is_trial_service(service)
+    if trial_visit and not trial_duration_ok(duration):
+        raise HTTPException(400, "The trial visit is exactly 10 minutes")
+    if trial_visit and location == "clinic":
+        raise HTTPException(400, "The free trial is a mobile visit. Choose a home, office, hotel, or event address.")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fields.get("date") or "")) or not re.fullmatch(r"\d{2}:\d{2}", str(fields.get("time") or "")):
         raise HTTPException(400, "Choose a date and time")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
@@ -1344,9 +1608,12 @@ async def resolve_booking(payload, user):
     zone, km = None, 0
     if location == "clinic":
         clinic = settings.get("clinic") or {}
-        if not clinic_is_bookable(clinic):
+        if clinic.get("enabled") is not True:
             raise HTTPException(400, "In-clinic booking is not available")
-        address = {"line": clinic.get("address") or "", "lat": 53.5461, "lng": -113.4938, "zoneId": None, "notes": (address.get("notes") or "")[:240]}
+        try:
+            address = clinic_visit_address(clinic, address.get("notes"), trial=False)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     else:
         address, zone, km = await locate_visit(address, zones, settings)
     if (settings.get("clinic") or {}).get("mobileEnabled") is False and location != "clinic":
@@ -1362,7 +1629,7 @@ async def resolve_booking(payload, user):
     await assert_public_slot(
         db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id or "",
         day=fields["date"], time=fields["time"], duration=int(duration), address=address,
-        location_type=location, service=service,
+        location_type=location, service=service, trial=trial_visit,
     )
     clients = coll("clients")
     client = await clients.find_one({"id": incoming.get("id")}, NO_ID) if incoming.get("id") else None
@@ -1374,6 +1641,13 @@ async def resolve_booking(payload, user):
     use_credit = bool(payload.get("useCredit"))
     credit = None
     invite = None
+    followup = None
+    if trial_visit:
+        if use_credit or payload.get("winbackCode") or payload.get("followupCode") or payload.get("redeemPoints"):
+            raise HTTPException(409, "The free trial does not combine with credits, rewards, or other offers")
+        promotions = []
+    if payload.get("winbackCode") and payload.get("followupCode"):
+        raise HTTPException(409, "Welcome-back and follow-up codes do not combine")
     if payload.get("winbackCode"):
         if use_credit:
             raise HTTPException(409, "A welcome-back code does not combine with a package credit")
@@ -1381,9 +1655,18 @@ async def resolve_booking(payload, user):
             raise HTTPException(400, "Sign in to use a welcome-back code")
         invite = await valid_invite(db, payload["winbackCode"], client["id"])
         promotions = []
+    if payload.get("followupCode"):
+        if use_credit:
+            raise HTTPException(409, "A follow-up code does not combine with a package credit")
+        if not client:
+            raise HTTPException(400, "Sign in to use a follow-up code")
+        followup = await valid_followup(db, payload["followupCode"], client["id"])
+        promotions = []
     if use_credit:
         if not client:
             raise HTTPException(400, "Sign in to use a package credit")
+        if is_trial_service(service):
+            raise HTTPException(409, "Package credits do not apply to the free trial")
         credit = await available_credit(db, client["id"], service["slug"], duration)
         if not credit:
             raise HTTPException(409, "No package credit is available for this treatment")
@@ -1392,26 +1675,48 @@ async def resolve_booking(payload, user):
         service=service, duration=duration, addons=fields.get("addonIds") or [], zone=zone, client=client,
         incoming=incoming, promotions=promotions, settings=settings, location=location, km=km, source=source,
     )
+    if trial_visit:
+        quoted = {
+            **quoted,
+            "discount": 0,
+            "appliedPromoIds": [],
+            "promoId": None,
+            "promoName": None,
+            "promoCode": None,
+            "welcomeOffer": False,
+            "addons": 0,
+            "addonList": [],
+            "travel": 0,
+            "tax": 0,
+            "total": 0,
+            "base": 0,
+            "treatmentAfterDiscount": 0,
+            "campaignOfferKind": "trial",
+            "complimentaryMinutes": TRIAL_DURATION_MIN,
+            "campaignTitle": (trial_campaign or {}).get("title") or "10 Minutes. On Us.",
+        }
     if invite:
         quoted = winback_quote(quoted, float(invite["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
+    if followup:
+        quoted = followup_quote(quoted, float(followup["percent"]), float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     if credit:
         quoted = credit_quote(quoted, credit["unitCents"], float(settings.get("gst") if settings.get("gst") is not None else 0.05), service)
     payment_policy = resolve_payment_policy(
         settings.get("paymentPolicy"), production=is_production(), explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
     )
-    due = None
-    if fields.get("paymentMethod") != "insurance":
-        choice = fields.get("payNow") if fields.get("payNow") in ("full", "deposit", "cash") else ("cash" if fields.get("selfMethod") == "cash" else None)
-        if choice:
-            try:
-                due = settlement(quoted["total"], payment_policy, choice)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+    try:
+        due = due_for_booking(quoted["total"], payment_policy, fields)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "incoming": incoming, "source": source, "fields": fields, "service": service, "duration": duration,
         "location": location, "address": address, "zone": zone, "km": km, "settings": settings,
         "practitioner_id": practitioner_id, "client": client, "person": person, "promotions": promotions, "quoted": quoted,
-        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit), "winbackCode": invite["code"] if invite else None,
+        "settlement": due, "paymentPolicy": payment_policy, "useCredit": bool(credit),
+        "winbackCode": invite["code"] if invite else None,
+        "followupCode": followup["code"] if followup else None,
+        "trialVisit": trial_visit,
+        "trialCampaign": trial_campaign,
     }
 
 
@@ -1419,10 +1724,33 @@ async def resolve_booking(payload, user):
 async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     """Provisional server price. It does not reserve the welcome benefit or create a visit."""
     ctx = await resolve_booking(payload, await user_from(request))
-    pricing = ctx["quoted"]
+    pricing = dict(ctx["quoted"])
+    if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not ctx.get("followupCode") and not pricing.get("welcomeOffer"):
+        offer = await campaign_quote(
+            db, payload["campaignId"], ctx["person"] or ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
+        )
+        if offer:
+            pricing["campaignTitle"] = offer["title"]
+            pricing["campaignId"] = payload["campaignId"]
+            if offer.get("complimentaryMinutes"):
+                pricing["complimentaryMinutes"] = offer["complimentaryMinutes"]
+            pricing = apply_campaign_price(pricing, offer, ctx["settings"].get("gst", 0.05), offer.get("stackable"))
+    if ctx.get("trialVisit"):
+        pricing = {
+            **pricing,
+            "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0, "discount": 0,
+            "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN,
+            "campaignTitle": pricing.get("campaignTitle") or "10 Minutes. On Us.",
+            "campaignId": payload.get("campaignId"),
+        }
+    try:
+        due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"]) if float(pricing.get("total") or 0) > 0 else None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return {
         "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")), "packageCredit": bool(pricing.get("packageCredit")),
-        "settlement": ctx.get("settlement"), "paymentPolicy": ctx.get("paymentPolicy"),
+        "settlement": due, "paymentPolicy": ctx.get("paymentPolicy"), "trialVisit": bool(ctx.get("trialVisit")),
+        "paymentRequired": False if ctx.get("trialVisit") else bool(due and due.get("dueNowCents")),
     }
 
 
@@ -1454,10 +1782,11 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     person = ctx["person"]
     promotions = ctx["promotions"]
     quoted = ctx["quoted"]
+    trial_visit = bool(ctx.get("trialVisit"))
     claimed_ids = []
     counted_online = False
     welcome_token = None
-    if quoted.get("welcomeOffer"):
+    if quoted.get("welcomeOffer") and not trial_visit:
         keys = identity_keys(person)
         token = uuid.uuid4().hex if keys else None
         if not keys or not await claim_welcome(keys, token):
@@ -1469,7 +1798,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             )
         else:
             welcome_token = token
-    if source == "online" and client:
+    if source == "online" and client and not trial_visit:
         await clients.update_one({"id": client["id"]}, {"$inc": {"onlineBookings": 1}})
         counted_online = True
     applied = promotion_rows(promotions, quoted["appliedPromoIds"])
@@ -1495,16 +1824,23 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         client = {"id": client_id, "firstName": incoming.get("firstName") or "Guest", "lastName": incoming.get("lastName") or "",
                   "email": str(incoming.get("email") or "").lower(), "phone": incoming.get("phone") or "", "dob": incoming.get("dob") or "",
                   "marketingConsent": bool(incoming.get("marketingConsent")), "smsConsent": bool(incoming.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [],
-                  "preferredPractitioners": [], "loyaltyPoints": 0, "onlineBookings": 1 if source == "online" else 0,
+                  "preferredPractitioners": [], "loyaltyPoints": 0, "onlineBookings": 0 if trial_visit else (1 if source == "online" else 0),
                   "hasProfile": False, "createdAt": now_iso()}
         await clients.insert_one(dict(client))
     else:
         client_id = client["id"]
     campaign_reservation = None
     if payload.get("campaignId"):
+        if ctx.get("followupCode") or ctx.get("winbackCode") or ctx.get("useCredit"):
+            await release_promotions(claimed_ids)
+            await release_welcome(welcome_token)
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise HTTPException(409, "Campaigns do not combine with package credits, welcome-back, or follow-up codes")
         try:
+            audience_client = {**(client or {}), "_welcomeHistory": (person or {}).get("_welcomeHistory")}
             campaign_reservation = await reserve_campaign(
-                db, payload["campaignId"], client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"],
+                db, payload["campaignId"], audience_client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"], location,
             )
         except HTTPException:
             await release_promotions(claimed_ids)
@@ -1512,7 +1848,8 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             if counted_online:
                 await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
             raise
-        if campaign_reservation and quoted.get("welcomeOffer"):
+        if campaign_reservation and quoted.get("welcomeOffer") and not trial_visit:
+            # Flash discounts yield to the first-booking welcome offer.
             await release_campaign(db, campaign_reservation)
             campaign_reservation = None
         elif campaign_reservation:
@@ -1521,14 +1858,22 @@ async def create_booking(request: Request, payload: dict = Body(...)):
                 claimed_ids = []
                 quoted = {**quoted, "discount": 0, "appliedPromoIds": [], "promoId": None, "promoName": None, "promoCode": None, "welcomeOffer": False}
             quoted["campaignTitle"] = campaign_reservation.get("title")
-            quoted = apply_campaign_price(quoted, campaign_reservation["percent"], settings.get("gst", 0.05), campaign_reservation.get("stackable"))
+            quoted["campaignId"] = payload["campaignId"]
+            if campaign_reservation.get("complimentaryMinutes"):
+                quoted["complimentaryMinutes"] = campaign_reservation["complimentaryMinutes"]
+            quoted = apply_campaign_price(quoted, campaign_reservation, settings.get("gst", 0.05), campaign_reservation.get("stackable"))
+            if trial_visit or is_trial_offer(campaign_reservation):
+                quoted = {
+                    **quoted, "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0,
+                    "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN,
+                }
     appt_id = f"a-{uuid.uuid4().hex[:8]}"
     loyalty_points = 0
-    if (ctx.get("useCredit") or ctx.get("winbackCode")) and (payload.get("redeemPoints") or campaign_reservation):
+    if (ctx.get("useCredit") or ctx.get("winbackCode") or ctx.get("followupCode")) and (payload.get("redeemPoints") or campaign_reservation):
         await release_campaign(db, campaign_reservation)
         if counted_online:
             await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
-        raise HTTPException(409, "Package credits and welcome-back codes do not combine with campaigns or rewards")
+        raise HTTPException(409, "Package credits, welcome-back, and follow-up codes do not combine with campaigns or rewards")
     if payload.get("redeemPoints") and quoted.get("welcomeOffer"):
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)
@@ -1569,20 +1914,43 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback") if k in quoted},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes", "campaignTitle") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
             ([{"status": "assigned", "at": ts, "actor": "system"}] if status == "assigned" else []),
             "timestamps": {"requested": ts, **({"assigned": ts} if status == "assigned" else {})},
             "soapStatus": "none", "timer": {"pausedMs": 0}, "source": source, "createdAt": ts, "payments": []}
+    if trial_visit:
+        appt["appointmentKind"] = "trial"
+        appt["treatmentScope"] = (service or {}).get("treatmentScope") or "neck_shoulders"
+        appt["countsAsRevenue"] = False
+        appt["paymentStatus"] = "waived"
+        quoted["total"] = 0
+        quoted["tax"] = 0
+        appt["pricing"] = {**appt["pricing"], "total": 0, "tax": 0, "travel": 0, "addons": 0, "base": 0,
+                           "welcomeOffer": False, "campaignOfferKind": "trial", "complimentaryMinutes": TRIAL_DURATION_MIN}
     if idem:
         appt["idempotencyKey"] = f"{client_id}:{idem}"
-    is_ins = appt["paymentMethod"] == "insurance"
+    is_ins = appt["paymentMethod"] == "insurance" and not trial_visit
+    if trial_visit:
+        appt["paymentMethod"] = "self"
+        appt["selfMethod"] = None
+        appt["payNow"] = None
     appt["claim"] = {"status": "verification_pending" if is_ins else "none",
                      "eligible": claim_eligible(appt["pricing"], settings.get("gst", 0.05)) if is_ins else 0,
                      "approved": 0, "insurerPayment": "none", "insurerPaid": 0, "history": []}
-    due = ctx.get("settlement")
+    try:
+        due = None if trial_visit or float(quoted.get("total") or 0) <= 0 else due_for_booking(quoted["total"], ctx["paymentPolicy"], fields)
+    except ValueError as exc:
+        await release_promotions(claimed_ids)
+        await release_campaign(db, campaign_reservation)
+        await release_redemption(db, coll, client_id, appt_id, loyalty_points)
+        await release_welcome(welcome_token)
+        await db.nt_slot_locks.delete_many({"appointmentId": appt_id})
+        if counted_online:
+            await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+        raise HTTPException(400, str(exc)) from exc
     if due:
         appt["payNow"] = due["choice"]
         appt["paymentDue"] = {
@@ -1612,6 +1980,15 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     if ctx.get("winbackCode"):
         try:
             await reserve_invite(db, ctx["winbackCode"], client_id, appt["id"])
+        except HTTPException:
+            await coll("appointments").delete_one({"id": appt["id"]})
+            await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
+            if counted_online:
+                await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
+            raise
+    if ctx.get("followupCode"):
+        try:
+            await reserve_followup(db, ctx["followupCode"], client_id, appt["id"])
         except HTTPException:
             await coll("appointments").delete_one({"id": appt["id"]})
             await db.nt_slot_locks.delete_many({"appointmentId": appt["id"]})
@@ -1648,6 +2025,9 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         await award_campaign(db, campaign_reservation, appt["id"], quoted.get("total") or 0, quoted.get("discount") or 0)
     await add_audit(user["name"] if user else (incoming.get("firstName") or "client"), f"{appt['ref']} booked ({appt['source']})", appt["id"])
     await _queue_booking_mail(appt, client_id)
+    if practitioner_id:
+        await _queue_practitioner_mail(appt, "practitioner_booking")
+        await push_notify(db, "visit_assigned", f"{appt['id']}:{practitioner_id}:create", appt)
     tracking = await issue_guest_capability(appt_id) if not user else None
     body = {"appointment": appt, "clientId": client_id}
     if tracking:
@@ -1661,6 +2041,15 @@ async def _queue_booking_mail(appt, client_id):
         await add_audit("system", f"{appt['ref']} confirmation email queued", appt["id"])
 
 
+async def _queue_practitioner_mail(appt, kind):
+    """Queue practitioner operational email when the feature flag is on."""
+    if not practitioner_booking_email_enabled() or not appt.get("practitionerId"):
+        return
+    _note, created = await enqueue_practitioner_notice(db, appt, kind)
+    if created:
+        await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
+
+
 async def _maybe_lifecycle_mail(appt, kind):
     """Queue cancellation, reschedule, or assignment mail only when that flag is on."""
     if not email_lifecycle_enabled() or not appt.get("clientId"):
@@ -1668,6 +2057,63 @@ async def _maybe_lifecycle_mail(appt, kind):
     _note, created = await enqueue_operational(db, appt, appt["clientId"], kind)
     if created:
         await add_audit("system", f"{appt.get('ref')} {kind} email queued", appt["id"])
+
+
+async def _deliver_practitioner_notice(note):
+    """Practitioner operational email. No clinical notes or health details."""
+    appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
+    if not appt:
+        raise PermanentDelivery("appointment_missing")
+    account = await resolve_practitioner_account(db, note.get("practitionerId") or appt.get("practitionerId"))
+    if not account:
+        raise CancelDelivery("no_recipient")
+    service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID) or {}
+    when = datetime.strptime(f"{appt['date']} {appt['time']}", "%Y-%m-%d %H:%M")
+    pretty = when.strftime("%A, %B %d, %Y at %I:%M %p")
+    brand = escape(os.environ["EMAIL_FROM_NAME"])
+    link = f"{os.environ['APP_URL'].rstrip('/')}/pro/visit/{appt['id']}"
+    location = "In clinic" if appt.get("locationType") == "clinic" else "Mobile / at client"
+    titles = {
+        "practitioner_booking": "New booking assigned to you",
+        "practitioner_cancellation": "A visit was cancelled",
+        "practitioner_reschedule": "A visit was rescheduled",
+        "practitioner_reassignment": "A visit was assigned to you",
+    }
+    title = titles.get(note.get("kind"), "Visit update")
+    rows = [
+        ("Service", f"{service.get('name') or appt.get('serviceSlug')} · {appt.get('duration')} min"),
+        ("When", pretty),
+        ("Where", location),
+        ("Booking ref", appt.get("ref") or ""),
+        ("Status", str(appt.get("status") or "").replace("_", " ")),
+    ]
+    table = "".join(
+        f'<tr><td style="padding:6px 12px 6px 0;color:#6B8296;font-size:13px">{escape(k)}</td>'
+        f'<td style="padding:6px 0;font-size:14px;font-weight:bold">{escape(str(v))}</td></tr>'
+        for k, v in rows
+    )
+    html = (
+        f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
+        f'<p style="font-size:20px;font-weight:bold;margin:0">{brand}</p>'
+        f'<p>Hi {escape(account.get("name") or "there")},</p>'
+        f'<p>{escape(title)}.</p>'
+        f'<table role="presentation" style="margin:12px 0 20px">{table}</table>'
+        f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#1565F0;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">Open visit</a></p>'
+        f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Times are America/Edmonton. Clinical notes are not included in this email.</p></td></tr></table>'
+    )
+    return await _send_note(note, to=account["email"], subject=f"{title} — {os.environ['EMAIL_FROM_NAME']}", html=html)
+
+
+async def _send_note(note, *, to, subject, html, idempotency_key=None):
+    await freeze_delivery(db, note, {"to": to, "subject": subject, "html": html,
+        "from": os.environ.get("EMAIL_FROM"), "reply": os.environ.get("EMAIL_REPLY_TO"),
+        "redirect": os.environ.get("EMAIL_TEST_RECIPIENT"), "app": os.environ.get("APP_URL")})
+    try:
+        return await send_email(to=to, subject=subject, html=html, idempotency_key=note["id"])
+    except HTTPException as exc:
+        if exc.status_code in (408, 429, 500, 503):
+            raise TransientDelivery("provider_unavailable") from None
+        raise PermanentDelivery("provider_rejected") from None
 
 
 async def _deliver_billing(note):
@@ -1683,10 +2129,10 @@ async def _deliver_billing(note):
     ledger = await db.nt_ledger.find({"invoiceId": invoice["id"]}, NO_ID).sort("at", 1).to_list(500)
     view = public_invoice(invoice, ledger)
     link = f"{os.environ['APP_URL'].rstrip('/')}/me/billing"
-    build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email}[note["kind"]]
+    build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email, "billing_update": billing_update_email}[note["kind"]]
     subject, html = build(os.environ["EMAIL_FROM_NAME"], client.get("preferredName") or client.get("firstName") or "there", view, link)
     try:
-        return await send_email(to=to, subject=subject, html=html, idempotency_key=note.get("id"))
+        return await _send_note(note, to=to, subject=subject, html=html)
     except HTTPException as exc:
         if exc.status_code in (408, 429, 500, 503):
             raise TransientDelivery("provider_unavailable") from exc
@@ -1695,19 +2141,24 @@ async def _deliver_billing(note):
 
 async def _deliver_booking(note):
     """Build a booking email from the appointment and client rows. Clinical fields stay out of the message."""
-    if note.get("kind") in ("invoice", "receipt", "payment_link"):
+    if note.get("kind") == "email_test":
+        subject, html = email_test_message()
+        return await _send_note(note, to=note["testRecipient"], subject=subject, html=html)
+    if note.get("kind") in ("invoice", "receipt", "payment_link", "billing_update"):
         return await _deliver_billing(note)
     if note.get("kind") == "statement":
         row = await db.nt_pay_statements.find_one({"id": note.get("statementId")}, NO_ID)
-        account = await db.nt_users.find_one({"role": "practitioner", "subject": (row or {}).get("practitionerId")}, NO_ID) if row else None
-        if not row or not account or not account.get("email") or account["email"].endswith("@example.com"):
+        account = await resolve_practitioner_account(db, (row or {}).get("practitionerId")) if row else None
+        if not row or not account:
             raise CancelDelivery("no_recipient")
         subject, html = statement_email(os.environ["EMAIL_FROM_NAME"], account.get("name") or "there", f"{row['start']} to {row['end']}", row["kpis"][0][1],
                                         f"{os.environ['APP_URL'].rstrip('/')}/pro/earnings")
         try:
-            return await send_email(to=account["email"], subject=subject, html=html, idempotency_key=note.get("id"))
+            return await _send_note(note, to=account["email"], subject=subject, html=html)
         except HTTPException as exc:
             raise (TransientDelivery("provider_unavailable") if exc.status_code in (408, 429, 500, 503) else PermanentDelivery("provider_rejected")) from exc
+    if note.get("kind") in ("practitioner_booking", "practitioner_cancellation", "practitioner_reschedule", "practitioner_reassignment"):
+        return await _deliver_practitioner_notice(note)
     appt = await coll("appointments").find_one({"id": note.get("appointmentId")}, NO_ID)
     if not appt:
         raise PermanentDelivery("appointment_missing")
@@ -1723,11 +2174,16 @@ async def _deliver_booking(note):
     brand = escape(os.environ["EMAIL_FROM_NAME"])
     link = f"{os.environ['APP_URL'].rstrip('/')}/me"
     kind = note.get("kind") or "booking_confirmation"
+    if kind == "review_invite":
+        subject, html = review_invitation_email(os.environ["EMAIL_FROM_NAME"], client.get("firstName") or "there", f"{os.environ['APP_URL'].rstrip('/')}/me/reviews?appt={appt['id']}")
+        return await _send_note(note, to=to, subject=subject, html=html)
     if kind != "booking_confirmation":
         titles = {
             "cancellation": "Your visit was cancelled",
             "reschedule": "Your visit was rescheduled",
             "assignment": "A therapist is assigned to your visit",
+            "reminder_24h": "Your visit is tomorrow",
+            "reminder_2h": "Your visit starts soon",
         }
         title = titles.get(kind, "Your visit was updated")
         html = (f'<table role="presentation" width="100%" style="background:#F4F9FC"><tr><td style="padding:32px 24px;font-family:Arial,sans-serif;color:#0F2A3D">'
@@ -1738,7 +2194,7 @@ async def _deliver_booking(note):
                 f'<p style="margin:24px 0"><a href="{escape(link)}" style="background:#1565F0;color:#ffffff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:bold">View your visit</a></p>'
                 f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
         try:
-            return await send_email(
+            return await _send_note(note,
                 to=to, subject=f"{title} — {os.environ['EMAIL_FROM_NAME']}", html=html, idempotency_key=note.get("id"),
             )
         except HTTPException as exc:
@@ -1765,7 +2221,7 @@ async def _deliver_booking(note):
             f'<p style="font-size:13px;color:#6B8296">Need to change something? Sign in to your account to view or manage this booking.</p>'
             f'<p style="font-size:12px;color:#6B8296;margin-top:24px">Sent by {brand}. We never ask for your password or card details by email.</p></td></tr></table>')
     try:
-        return await send_email(
+        return await _send_note(note,
             to=to, subject=f"Your {os.environ['EMAIL_FROM_NAME']} massage is booked — {short}", html=html,
             idempotency_key=note.get("id"),
         )
@@ -1779,7 +2235,8 @@ CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "do
                  "emergencyContact", "marketingConsent", "smsConsent", "photo", "addresses", "paymentPreference", "insurance",
                  "favorites", "preferredPractitioners"}
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
-                "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval"}
+                "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval",
+                "placements", "bannerHeadline", "bannerBody"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
 SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
@@ -1887,12 +2344,17 @@ async def promotion_create(request: Request, doc: dict = Body(...)):
         raise HTTPException(400, "The discount must be a number")
     if value <= 0 or (kind == "percent" and value > 100):
         raise HTTPException(400, "Enter a discount greater than zero, up to 100 percent")
+    placements = doc.get("placements") if isinstance(doc.get("placements"), list) else ["home", "account"]
+    placements = [str(p) for p in placements if isinstance(p, str)][:12] or ["home", "account"]
     stored = {
         "id": f"promo-{uuid.uuid4().hex[:8]}", "name": name, "code": code, "type": kind, "value": value,
         "maxDiscount": doc.get("maxDiscount"), "eligibility": eligibility, "start": start, "end": end,
         "services": doc.get("services") if doc.get("services") not in (None, "") else "all",
         "stackable": False, "redemptionLimit": doc.get("redemptionLimit"),
         "enabled": False, "approval": "pending", "redemptions": 0,
+        "placements": placements,
+        "bannerHeadline": (str(doc.get("bannerHeadline") or "")[:120] or None),
+        "bannerBody": (str(doc.get("bannerBody") or "")[:300] or None),
     }
     await coll("promotions").insert_one(dict(stored))
     stored.pop("_id", None)
@@ -1961,6 +2423,18 @@ async def report_pdf(report_id: str, request: Request):
     if not owner and not own:
         raise HTTPException(403, "Not permitted")
     snap = row.get("snapshot") or {}
+    from pdfbrand import report_pdf as branded_report
+    kpis = [("Invoiced", snap.get("invoiced")), ("Visits", snap.get("count", 0)), ("Gross treatment", snap.get("grossTreatment")), ("Discounts", snap.get("discounts")),
+            ("Travel", snap.get("travel")), ("GST", snap.get("gst")), ("Collected", snap.get("collected")), ("Insurance received", snap.get("insuranceReceived")),
+            ("Insurance pending", snap.get("insurancePending")), ("Outstanding", snap.get("outstanding")), ("Status", str(row.get("status") or "").title())]
+    money = lambda v: f"${float(v or 0):,.2f}"
+    names = {s.get("slug"): s.get("name") for s in await coll("services").find({}, {"_id": 0, "slug": 1, "name": 1}).to_list(200)}
+    detail = [[str(x.get("date") or ""), str(x.get("ref") or ""), str(names.get(x.get("serviceSlug")) or x.get("serviceSlug") or ""), money(x.get("invoiced")), money(x.get("collected")), money(x.get("outstanding"))] for x in (snap.get("rows") or [])[:1000] if isinstance(x, dict)]
+    sections = [("Visits in this period", ["Date", "Reference", "Service", "Invoiced", "Collected", "Outstanding"], detail, [2, 2, 3, 2, 2, 2])]
+    title = "Period report" + (f" · {row.get('practitionerName')}" if row.get("practitionerName") else "")
+    shown = [(k, v if k in ("Visits", "Status") else money(v)) for k, v in kpis]
+    pdf = branded_report(title, f"{snap.get('start')} to {snap.get('end')}", [(k, str(v)) for k, v in shown], sections, await coll("settings").find_one({"id": "app"}, NO_ID))
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="nabitouch-report-{snap.get("start")}-{snap.get("end")}.pdf"'})
     lines = [
         f"{snap.get('start')} to {snap.get('end')}",
         snap.get("basis") or "",
@@ -2053,9 +2527,10 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
                 raise HTTPException(400, "No permitted fields")
             if "insurance" in doc:
                 doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
-            if "photo" in doc and doc.get("photo") not in (None, "") and not document_uploads_enabled():
-                raise HTTPException(403, "Document uploads are turned off")
-            if "photo" in doc and isinstance(doc["photo"], str) and len(doc["photo"]) > 200000:
+            # Profile avatars are separate from clinical document uploads.
+            if "photo" in doc and not profile_photos_enabled():
+                doc.pop("photo", None)
+            elif "photo" in doc and isinstance(doc.get("photo"), str) and len(doc["photo"]) > 200000:
                 raise HTTPException(400, "Photo is too large")
         elif role == "desk" and perms.get("viewInsuranceStatus"):
             doc = only_fields(doc, {"insurance"})
@@ -2079,6 +2554,13 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             raise HTTPException(409, "Approve this offer before it can be turned on")
         if (target.get("eligibility") == "first_online" or doc.get("eligibility") == "first_online") and doc.get("stackable") is True:
             raise HTTPException(409, "The first-booking welcome offer cannot be combined with other discounts")
+        if "placements" in doc:
+            places = doc["placements"] if isinstance(doc["placements"], list) else []
+            doc["placements"] = [str(p) for p in places if isinstance(p, str)][:12] or ["home", "account"]
+        if "bannerHeadline" in doc and doc["bannerHeadline"] is not None:
+            doc["bannerHeadline"] = str(doc["bannerHeadline"])[:120] or None
+        if "bannerBody" in doc and doc["bannerBody"] is not None:
+            doc["bannerBody"] = str(doc["bannerBody"])[:300] or None
         parts = []
         for key in sorted(doc):
             value = doc[key]
@@ -2109,8 +2591,22 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             phone = "".join(ch for ch in str(wa.get("phone") or "") if ch.isdigit() or ch == "+")[:16]
             doc["whatsapp"] = {"pages": pages, "phone": phone or "+17802356508"}
         if "clinic" in doc:
+            incoming = doc["clinic"] if isinstance(doc["clinic"], dict) else {}
+            confirmation = incoming.get("confirmation") if isinstance(incoming.get("confirmation"), dict) else {}
+            resolved = None
+            provider_down = False
+            if confirmation.get("clientConfirmed") is True and confirmation.get("mapboxId"):
+                try:
+                    hit = await GEO.resolve(line=confirmation.get("line") or incoming.get("address") or "", mapbox_id=confirmation.get("mapboxId"), point=None, persist=True)
+                except GeocodeError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                except ProviderError:
+                    provider_down = True
+                else:
+                    assessed = classify(hit, confirmation.get("line") or "", confirmation.get("postal") or "", None)
+                    resolved = {"line": hit.get("line") or "", "lat": hit.get("lat"), "lng": hit.get("lng"), "mapboxId": hit.get("id") or "", "confidence": assessed["confidence"]}
             try:
-                doc["clinic"] = validate_clinic({**(target.get("clinic") or {}), **doc["clinic"]})
+                doc["clinic"] = validate_clinic(merge_clinic(target.get("clinic"), incoming, resolved, provider_down))
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         if "paymentPolicy" in doc:
@@ -2177,7 +2673,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
             has_session = request.cookies.get("access_token") or request.cookies.get("refresh_token")
-            if has_session and not request.headers.get("authorization", "").lower().startswith("bearer ") and request.url.path not in self.EXEMPT:
+            challenge_authenticated = False
+            challenge_types = {"/api/auth/mfa/enroll": "mfa-enroll", "/api/auth/mfa/confirm": "mfa-enroll", "/api/auth/mfa/verify": "mfa"}
+            if request.url.path in challenge_types:
+                try:
+                    body = await request.json()
+                    claim = jwt.decode(str(body.get("challenge") or ""), os.environ["JWT_SECRET"], algorithms=[ALG])
+                    challenge_authenticated = claim.get("type") == challenge_types[request.url.path] and bool(claim.get("sub"))
+                except (ValueError, AttributeError, jwt.InvalidTokenError):
+                    pass
+            # A signed, short-lived login challenge authenticates this request independently
+            # of any stale browser cookie. Cookie-authenticated enrollment still needs CSRF.
+            if has_session and not challenge_authenticated and not request.headers.get("authorization", "").lower().startswith("bearer ") and request.url.path not in self.EXEMPT:
                 header = request.headers.get("x-csrf-token")
                 cookie = request.cookies.get("csrf_token")
                 if not header or not cookie or not _same(header, cookie):
@@ -2230,6 +2737,8 @@ class TrackingPrivacy:
 
 
 logging.getLogger().addFilter(RedactLogFilter())
+for _provider_logger in ("httpx", "httpcore", "geo", "tracking"):
+    logging.getLogger(_provider_logger).addFilter(RedactLogFilter())
 logging.getLogger("uvicorn.access").addFilter(AccessPathRedact())
 app.include_router(auth_router)
 app.include_router(build_router(coll, add_audit, user_from))
@@ -2249,11 +2758,25 @@ app.include_router(build_giftcard_router(db, coll, add_audit, user_from, recepti
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
 app.include_router(build_plans_router(db, coll, add_audit, user_from))
 app.include_router(build_safety_router(db, coll, add_audit, user_from, apply_transition))
+app.include_router(build_fleet_router(db, coll, add_audit, user_from))
+
+
+async def _shield_step_up(user):
+    settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
+    if not settings.get("requireMfaForPrivileged") and not settings.get("mfaEnforcePrivileged"):
+        return
+    session = await db.nt_sessions.find_one({"sid": user.get("sid")}) if user.get("sid") else None
+    if not session or not session.get("mfaAt"):
+        raise HTTPException(403, "Confirm your authenticator before this action")
+
+
+app.include_router(build_shield_router(db, coll, add_audit, user_from, _shield_step_up))
 app.include_router(build_session_care_router(db, coll, add_audit, user_from, apply_transition))
 app.include_router(build_reviews_router(db, coll, add_audit, user_from))
 app.include_router(build_turnaround_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))
+app.include_router(build_followup_router(db, coll, add_audit, user_from))
 app.include_router(build_sms_router(db, coll, add_audit, user_from))
 
 

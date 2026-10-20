@@ -195,7 +195,7 @@ def build_finance_router(db, user_from, settings_doc):
                 continue
             key = v["practitionerName"] or "Unassigned"
             net = sum(int(l.get("netCents") or 0) for l in v["lines"])
-            collected = v["received"]["cents"] - v["refunded"]["cents"]
+            collected = v["received"]["cents"]  # Ledger projection already deducts refunds.
             rule = rule_for(pay_rules, v.get("practitionerId") or "")
             pay = visit_pay(v, rule, pay_rules.get("includeTravel"))
             p = per.setdefault(key, {"visits": 0, "net": 0, "total": 0, "collected": 0, "outstanding": 0, "insPending": 0, "pay": 0, "rule": rule_label(rule)})
@@ -333,7 +333,7 @@ def build_finance_router(db, user_from, settings_doc):
             w.writerows(rows)
             return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
         if format == "pdf":
-            widths = [2] * len(headers)
+            widths = [max(4, min(22, max([len(str(h)), *(len(str(r[i])) for r in rows[:300])]))) for i, h in enumerate(headers)]
             sections = [*groups, ("Detail", headers, rows, widths)]
             pdf = report_pdf(title, stamp, kpis, sections, await settings_doc())
             return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})

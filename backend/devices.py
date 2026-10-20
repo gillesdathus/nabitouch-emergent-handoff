@@ -34,6 +34,19 @@ KINDS = {
     "visit_rescheduled": {"audience": "practitioner", "title": "Visit rescheduled", "body": "{ref} moved to {date} at {time}.", "path": "/pro/visit/{aid}"},
     "visit_cancelled": {"audience": "practitioner", "title": "Visit cancelled", "body": "{ref} on {date} was cancelled.", "path": "/pro"},
     "client_message": {"audience": "practitioner", "title": "New message", "body": "Your client sent a message about {ref}.", "path": "/pro/visit/{aid}/messages"},
+    # Client trip alerts — no clinical detail; deep link to Track Visit.
+    "visit_on_the_way": {
+        "audience": "client",
+        "title": "Therapist on the way",
+        "body": "Your Nabitouch therapist is on the way. Track your visit for an estimated arrival time.",
+        "path": "/me/visit/{aid}/track",
+    },
+    "visit_arrived": {
+        "audience": "client",
+        "title": "Therapist arrived",
+        "body": "Your Nabitouch therapist has arrived.",
+        "path": "/me/visit/{aid}/track",
+    },
 }
 
 
@@ -162,10 +175,30 @@ async def _audience(db, kind, appt):
         settings = await db.nt_settings.find_one({"id": "app"}, {"_id": 0, "safetyManagers": 1}) or {}
         owners = [u["id"] for u in await db.nt_users.find({"role": "owner"}, {"_id": 0, "id": 1}).to_list(10)]
         return set(owners) | set(settings.get("safetyManagers") or [])
+    if who == "client":
+        cid = (appt or {}).get("clientId")
+        if not cid:
+            return set()
+        rows = await db.nt_users.find(
+            {"subject": cid, "$or": [{"role": "client"}, {"roles": "client"}]},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        return {u["id"] for u in rows}
     pid = (appt or {}).get("practitionerId")
     if not pid:
         return set()
-    return {u["id"] for u in await db.nt_users.find({"role": {"$in": ["practitioner", "owner"]}, "subject": pid}, {"_id": 0, "id": 1}).to_list(5)}
+    # Dual Owner+Practitioner accounts (e.g. Nabitu) may store practitioner only in roles[].
+    rows = await db.nt_users.find(
+        {
+            "subject": pid,
+            "$or": [
+                {"role": {"$in": ["practitioner", "owner"]}},
+                {"roles": {"$in": ["practitioner", "owner"]}},
+            ],
+        },
+        {"_id": 0, "id": 1},
+    ).to_list(10)
+    return {u["id"] for u in rows}
 
 
 async def notify(db, kind, dedupe, appt=None, **fields):

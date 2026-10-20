@@ -6,10 +6,11 @@ import { CatalogueImage } from "@/components/ui-kit";
 import { EmptyState, TideAvatar } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 import { money, publiclyBookable, quote, welcomeOfferListed, bookableCatalogueService, clinicBookable } from "@/lib/domain";
+import { bookingPathForService, serviceSelectionPatch } from "@/lib/booking-selection";
 
 export default function ServiceDetail() {
   const { slug } = useParams();
-  const { idx, state, me, patchDraft, user } = useDemo();
+  const { idx, state, me, patchDraft, user, draft } = useDemo();
   const nav = useNavigate();
   const service = idx.services[slug];
   const durations = service ? Object.keys(service.prices || {}) : [];
@@ -20,9 +21,12 @@ export default function ServiceDetail() {
   }
   const priced = quote({ service, duration, client: me, promotions: state.promotions, settings: idx.settings });
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome);
+  const eligible = welcomeOfferListed(welcome, "services");
   const practitioners = state.practitioners.filter((person) => publiclyBookable(person) && (person.specialties || []).includes(slug));
-  const book = (practitionerId) => { patchDraft({ serviceSlug: slug, duration: Number(duration), practitionerId: practitionerId || "", step: 0 }); nav("/book"); };
+  const book = (practitionerId) => {
+    patchDraft({ ...serviceSelectionPatch(service, draft), duration: Number(duration), practitionerId: practitionerId || "", step: 0 });
+    nav(bookingPathForService(service));
+  };
 
   return (
     <div className="mx-auto max-w-5xl px-5 pt-5">

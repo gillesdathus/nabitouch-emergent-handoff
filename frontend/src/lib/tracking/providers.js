@@ -1,26 +1,10 @@
 import { isNative } from '@/lib/native';
 import { nativeLocationProvider } from '@/lib/nativeShell';
-// Phone GPS publishes only for the owner-selected trial practitioner, or when REACT_APP_TRACKING_MODE=live.
-// The simulated adapter remains for tests. Operational visits do not publish it.
-import { tripState } from '@/lib/domain';
-
+// Phone GPS publishes while an authorised en-route trip is sharing (Visit page open).
 export const TRACKING_CONFIG = {
   mode: process.env.REACT_APP_TRACKING_MODE || 'simulated',
   mapboxPublicToken: process.env.REACT_APP_MAPBOX_PUBLIC_TOKEN || null, // URL-restricted public token only; secret tokens stay server-side
 };
-
-/** @returns {import('./contracts').LocationProvider} */
-export function simulatedLocationProvider(getAppt) {
-  return {
-    kind: 'simulated',
-    start(onFix) {
-      const tick = () => { const ts = tripState(getAppt()); if (ts) onFix({ lat: ts.pos.lat, lng: ts.pos.lng, accuracy: 8, recordedAt: new Date().toISOString(), approximate: false, source: 'simulated' }); };
-      tick();
-      const t = setInterval(tick, 5000);
-      return () => clearInterval(t);
-    },
-  };
-}
 
 /** Foreground browser GPS. Background tracking requires the Capacitor native app (Phase 3). */
 export function browserLocationProvider() {
@@ -37,7 +21,7 @@ export function browserLocationProvider() {
   };
 }
 
-/** Operational trips never publish a simulated path. Phone GPS is used only for the approved live visit. */
+/** Idle provider kept for tests and explicit opt-out. Operational trips publish phone GPS while sharing. */
 export function idleLocationProvider() {
   return {
     kind: 'idle',
@@ -48,10 +32,10 @@ export function idleLocationProvider() {
   };
 }
 
-export const locationProviderFor = (_getAppt, live) => {
-  if (!(live || TRACKING_CONFIG.mode === 'live')) return idleLocationProvider();
-  return isNative() ? nativeLocationProvider() : browserLocationProvider();
-};
+/** Phone GPS while an authorised trip is sharing. Simulated paths are never published. */
+export const locationProviderFor = () => (
+  isNative() ? nativeLocationProvider() : browserLocationProvider()
+);
 
 /** Road ETAs are calculated on the server. The browser never calls Mapbox Directions. */
 export function etaCopy(provider) {

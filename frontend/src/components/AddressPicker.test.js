@@ -12,6 +12,12 @@ vi.mock("@/lib/api", () => ({
   apiError: (err) => err?.message || "Address search failed",
 }));
 
+beforeEach(() => {
+  api.geoSuggest.mockReset();
+  api.geoCheck.mockReset();
+  api.geoConfirm.mockReset();
+});
+
 function Harness() {
   const [query, setQuery] = useState("");
   const [value, setValue] = useState(null);
@@ -92,6 +98,44 @@ test("shows a configuration error when address search is unavailable", async () 
   expect((await view.find("address-error")).textContent).toMatch(/Mapbox token/);
   expect(view.host.querySelector("[data-testid=address-option-0]")).toBeNull();
   view.cleanup();
+});
+
+test("coverage check can succeed while confirm still surfaces storage configuration failures", async () => {
+  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "mbx-1", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
+  api.geoCheck.mockResolvedValue({
+    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
+    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "mbx-1",
+  });
+  api.geoConfirm.mockRejectedValue(new Error("Address confirmation requires Mapbox storage configuration. Contact Nabitouch."));
+  const view = mount(<Harness />);
+  await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
+  const option = await view.find("address-option-0");
+  await act(async () => { option.click(); });
+  expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
+  const confirm = await view.find("address-confirm");
+  await act(async () => { confirm.click(); });
+  expect((await view.find("address-error")).textContent).toMatch(/storage configuration/);
+  view.cleanup();
+});
+
+test("GPS coverage uses geoCheck with coordinates only", async () => {
+  const position = { coords: { latitude: 53.54, longitude: -113.49 } };
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    geolocation: {
+      getCurrentPosition: (ok) => ok(position),
+    },
+  });
+  api.geoCheck.mockResolvedValue({
+    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
+    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "mbx-gps",
+  });
+  const view = mount(<Harness />);
+  await act(async () => { view.host.querySelector("[data-testid=address-geolocate-btn]").click(); });
+  expect(api.geoCheck).toHaveBeenCalledWith({ lat: 53.54, lng: -113.49 });
+  expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
+  view.cleanup();
+  vi.unstubAllGlobals();
 });
 
 test("requires an explicit confirm and does not treat an approximate match as verified", async () => {

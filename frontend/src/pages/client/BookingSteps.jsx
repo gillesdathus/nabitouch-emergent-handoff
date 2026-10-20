@@ -5,8 +5,9 @@ import { Avatar } from "@/components/ui-kit";
 import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
-import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice } from "@/lib/domain";
+import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
+import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
 const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
@@ -14,27 +15,53 @@ const H = ({ t, s }) => <div className="mb-6"><h2 className="text-2xl font-semib
 const toggle = (arr, v) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
 export function StepWhere() {
-  const { draft, patchDraft, idx, me } = useDemo();
+  const { draft, patchDraft, idx, me, state } = useDemo();
   const clinic = idx.settings.clinic;
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
+  // Clinic tiles stay off while in-clinic booking is disabled. Trial is always mobile-only.
+  const clinicShown = !trialFlow && clinicBookable(clinic);
+  const selectSaved = (a) => {
+    const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
+    patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
+  };
+  const useDifferentAddress = () => {
+    patchDraft(addressSelectionPatch(null, { query: "", forceWhere: true }));
+  };
   return (
     <div>
-      <H t="Where should we meet you?" s={clinicBookable(clinic) ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton. In-clinic booking is turned off."} />
+      <H
+        t="Where should we meet you?"
+        s={trialFlow
+          ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
+          : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")}
+      />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicBookable(clinic)).map((l) => { const I = LOC_ICON[l.id]; return (
+        {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
           <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
             <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
           </Tile>); })}
       </div>
-      {draft.locationType === "clinic" ? (
-        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address} · no travel fee</p></div>
+      {draft.locationType === "clinic" && clinicShown ? (
+        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (
-            <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
-              <button key={a.id} onClick={() => patchDraft({ address: { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" }, addressQuery: a.line })} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
+                <button key={a.id} type="button" onClick={() => selectSaved(a)} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
+              </div>
+              <button type="button" onClick={useDifferentAddress} data-testid="step-where-different-address" className="text-xs font-semibold text-nb-blue underline-offset-2 hover:underline">Different address</button>
+              <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>
             </div>
           )}
-          <AddressPicker testid="step-where-address" query={draft.addressQuery} onQuery={(v) => patchDraft({ addressQuery: v })} value={draft.address} onChange={(a) => patchDraft({ address: a })} />
+          <AddressPicker
+            testid="step-where-address"
+            query={draft.addressQuery}
+            onQuery={(v) => patchDraft({ addressQuery: v })}
+            value={draft.address}
+            onChange={(a) => patchDraft(addressSelectionPatch(a, { query: a?.line || draft.addressQuery, forceWhere: true }))}
+          />
           <label className="block"><span className="nb-label">Access notes <span className="font-normal text-nb-mute">(optional)</span></span>
             <input className="nb-input" placeholder="Buzzer, parking, pets, stairs…" value={draft.addressNotes} onChange={(e) => patchDraft({ addressNotes: e.target.value })} data-testid="step-where-notes-input" /></label>
         </div>
@@ -46,23 +73,29 @@ export function StepWhere() {
 export function StepService() {
   const { draft, patchDraft, state, idx } = useDemo();
   const s = idx.services[draft.serviceSlug];
+  const trialFlow = Boolean(draft.campaignId && isTrialService(s));
+  const visible = state.services.filter((x) => {
+    if (trialFlow && x.slug === draft.serviceSlug) return true;
+    if (isTrialService(x)) return false;
+    return bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile);
+  });
   return (
     <div>
-      <H t="Choose your treatment" s="The total is confirmed before you book." />
+      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "The total is confirmed before you book."} />
       <div className="grid gap-3 sm:grid-cols-2">
-        {state.services.filter((x) => bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile)).map((x) => (
-          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} onClick={() => patchDraft({ serviceSlug: x.slug, duration: x.prices[String(draft.duration)] ? draft.duration : Number(Object.keys(x.prices)[0]) })}>
+        {visible.map((x) => (
+          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => !trialFlow && patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }))}>
             <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" loading="lazy" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{x.name}</p><p className="line-clamp-2 text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="h-5 w-5 shrink-0 text-nb-blue" />}</div>
           </Tile>))}
       </div>
       {s && (
         <div className="mt-8 space-y-6">
           <div><p className="nb-label">Duration</p><div className="grid grid-cols-3 gap-2">
-            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => patchDraft({ duration: Number(d) })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{money(p)}</span></Tile>)}
+            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => !trialFlow && patchDraft({ duration: Number(d), time: null, idempotencyKey: undefined, checkoutSessionId: null, checkoutAmountCents: null, depositCents: null, invoiceId: null })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span></Tile>)}
           </div></div>
-          <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
+          {!trialFlow && <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
             {idx.settings.addons.map((a) => <button key={a.id} onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>{a.name} · +{money(a.price)}</button>)}
-          </div></div>
+          </div></div>}
         </div>
       )}
     </div>
@@ -72,7 +105,12 @@ export function StepService() {
 export function StepWhen() {
   const { draft, patchDraft, state, api } = useDemo();
   const days = Array.from({ length: 10 }, (_, i) => addDays(todayISO(), i));
-  const pros = state.practitioners.filter((person) => publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug)));
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
+  const pros = state.practitioners.filter((person) => {
+    if (draft.practitionerId && person.id === draft.practitionerId) return true;
+    return publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug) || trialFlow);
+  });
   const held = state.practitioners.find((person) => person.id === draft.practitionerId);
   const date = draft.date || days[0];
   const [slots, setSlots] = useState([]);
@@ -96,6 +134,7 @@ export function StepWhen() {
           practitionerId: draft.practitionerId || "",
           locationType: draft.locationType,
           address: draft.address || {},
+          ...(draft.campaignId ? { campaignId: draft.campaignId } : {}),
         });
         if (cancel) return;
         setRecommended(body.recommendations || []);
@@ -111,7 +150,7 @@ export function StepWhen() {
     };
     load();
     return () => { cancel = true; };
-  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address]);
+  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address, draft.campaignId]);
   const visible = showAll ? slots : recommended;
   return (
     <div>
@@ -144,37 +183,85 @@ export function StepWhen() {
 }
 
 export function StepYou() {
-  const { draft, patchDraft, me } = useDemo();
+  const { draft, patchDraft, me, state } = useDemo();
   const g = draft.guest;
   const setG = (k, v) => patchDraft({ guest: { ...g, [k]: v } });
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
+  const insuranceChoices = [
+    { id: "yes", label: "Yes" },
+    { id: "no", label: "No" },
+    { id: "unsure", label: "Not sure" },
+  ];
   return (
     <div>
-      <H t="Make it yours" s="Share what you’d like from this session — your practitioner will tailor the treatment." />
-      <p className="nb-label">Treatment goals</p>
-      <div className="flex flex-wrap gap-2">{GOALS.map((x) => <button key={x} onClick={() => patchDraft({ goals: toggle(draft.goals, x) })} data-testid={`step-goal-${x.toLowerCase().replace(/\s/g, "-")}`} className={draft.goals.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
-      <p className="mt-6 rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy" data-testid="step-pressure-note">The service you select is the treatment you purchase. Notes below can mention comfort preferences. They do not change the service or its price. A different treatment needs its own booking.</p>
-      <p className="nb-label mt-6">Focus areas</p>
-      <div className="flex flex-wrap gap-2">{FOCUS.map((x) => <button key={x} onClick={() => patchDraft({ focus: toggle(draft.focus, x) })} data-testid={`step-focus-${x.toLowerCase().replace(/\W+/g, "-")}`} className={draft.focus.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
-      <label className="mt-6 block"><span className="nb-label">Anything else? <span className="font-normal text-nb-mute">(optional)</span></span><textarea rows={2} className="nb-input h-auto py-3" value={draft.notes} onChange={(e) => patchDraft({ notes: e.target.value })} placeholder="Areas to avoid, music preference…" data-testid="step-notes-input" /></label>
+      {!trialFlow && (
+        <>
+          <H t="Make it yours" s="Share what you’d like from this session — your practitioner will tailor the treatment." />
+          <p className="nb-label">Treatment goals</p>
+          <div className="flex flex-wrap gap-2">{GOALS.map((x) => <button key={x} onClick={() => patchDraft({ goals: toggle(draft.goals, x) })} data-testid={`step-goal-${x.toLowerCase().replace(/\s/g, "-")}`} className={draft.goals.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
+          <p className="mt-6 rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy" data-testid="step-pressure-note">The service you select is the treatment you purchase. Notes below can mention comfort preferences. They do not change the service or its price. A different treatment needs its own booking.</p>
+          <p className="nb-label mt-6">Focus areas</p>
+          <div className="flex flex-wrap gap-2">{FOCUS.map((x) => <button key={x} onClick={() => patchDraft({ focus: toggle(draft.focus, x) })} data-testid={`step-focus-${x.toLowerCase().replace(/\W+/g, "-")}`} className={draft.focus.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
+          <label className="mt-6 block"><span className="nb-label">Anything else? <span className="font-normal text-nb-mute">(optional)</span></span><textarea rows={2} className="nb-input h-auto py-3" value={draft.notes} onChange={(e) => patchDraft({ notes: e.target.value })} placeholder="Areas to avoid, music preference…" data-testid="step-notes-input" /></label>
+        </>
+      )}
+      {trialFlow && <H t="Your contact details" s="We only need what is required to reserve your free 10-minute trial. Clinical intake and consent happen before treatment." />}
 
-      <div className="nb-card mt-8 p-5" data-testid="step-you-contact">
-        {me ? <p className="text-sm">Booking as <b>{me.firstName} {me.lastName}</b> · {me.email}</p> : (
+      <div className={`nb-card p-5 ${trialFlow ? "" : "mt-8"}`} data-testid="step-you-contact">
+        {me ? (
+          <div className="space-y-3">
+            <p className="text-sm">Booking as <b>{me.firstName} {me.lastName}</b> · {me.email}{me.phone ? ` · ${me.phone}` : ""}</p>
+            {trialFlow && !me.dob && (
+              <label className="block"><span className="nb-label">Date of birth</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
+            )}
+            {trialFlow && (
+              <div data-testid="trial-insurance-status">
+                <p className="nb-label">Do you have insurance coverage for massage?</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {insuranceChoices.map((choice) => (
+                    <button key={choice.id} type="button" onClick={() => setG("insuranceStatus", choice.id)} className={g.insuranceStatus === choice.id ? "nb-chip-on" : "nb-chip-off"} data-testid={`trial-insurance-${choice.id}`}>{choice.label}</button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-nb-mute">No policy details or proof are required for this free trial.</p>
+              </div>
+            )}
+          </div>
+        ) : (
           <>
             <p className="font-semibold">Your details</p>
-            <p className="mb-4 text-xs text-nb-mute">Guest booking is fine. Create a profile if you want to rebook faster.</p>
+            <p className="mb-4 text-xs text-nb-mute">{trialFlow ? "Required for your free trial reservation." : "Guest booking is fine. Create a profile if you want to rebook faster."}</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {[["firstName", "First name"], ["lastName", "Last name"], ["email", "Email"], ["phone", "Phone"]].map(([k, l]) => (
                 <label key={k}><span className="nb-label">{l}</span><input className="nb-input" value={g[k]} onChange={(e) => setG(k, e.target.value)} type={k === "email" ? "email" : k === "phone" ? "tel" : "text"} data-testid={`guest-${k}-input`} /></label>))}
             </div>
-            <label className="mt-4 flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.createProfile} onChange={(e) => setG("createProfile", e.target.checked)} data-testid="guest-create-profile-checkbox" /><span><b>Create my Nabitouch profile</b> — rebook faster, track visits and keep your preferences.</span></label>
-            {g.createProfile && (
-              <div className="mt-4 space-y-3 rounded-2xl bg-sky-50/60 p-4">
-                <label className="block"><span className="nb-label">Create a password (min. 8 characters)</span><input type="password" autoComplete="new-password" className="nb-input" value={g.password || ""} onChange={(e) => setG("password", e.target.value)} data-testid="guest-password-input" /></label>
-                <label className="block"><span className="nb-label">When is your birthday? We’d love to send you a little birthday wish!</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
-                <p className="text-xs text-nb-mute">Your birthdate also helps us identify you and complete care or insurance records where applicable.</p>
-                <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!g.smsConsent} onChange={(e) => setG("smsConsent", e.target.checked)} data-testid="guest-sms-consent-checkbox" /><span>Text me visit reminders and on-the-way updates. <span className="text-nb-mute">(Optional. Reply STOP anytime.)</span></span></label>
-                <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.marketingConsent} onChange={(e) => setG("marketingConsent", e.target.checked)} data-testid="guest-marketing-consent-checkbox" /><span>Yes, send me birthday wishes, offers and wellness tips. <span className="text-nb-mute">(Optional — not required to book. Appointment messages are sent separately.)</span></span></label>
+            {trialFlow && (
+              <div className="mt-4 space-y-3">
+                <label className="block"><span className="nb-label">Date of birth</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
+                <div data-testid="trial-insurance-status">
+                  <p className="nb-label">Do you have insurance coverage for massage?</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {insuranceChoices.map((choice) => (
+                      <button key={choice.id} type="button" onClick={() => setG("insuranceStatus", choice.id)} className={g.insuranceStatus === choice.id ? "nb-chip-on" : "nb-chip-off"} data-testid={`trial-insurance-${choice.id}`}>{choice.label}</button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-nb-mute">No policy details or proof are required for this free trial.</p>
+                </div>
               </div>
+            )}
+            {!trialFlow && (
+              <>
+                <label className="mt-4 flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.createProfile} onChange={(e) => setG("createProfile", e.target.checked)} data-testid="guest-create-profile-checkbox" /><span><b>Create my Nabitouch profile</b> — rebook faster, track visits and keep your preferences.</span></label>
+                {g.createProfile && (
+                  <div className="mt-4 space-y-3 rounded-2xl bg-sky-50/60 p-4">
+                    <label className="block"><span className="nb-label">Create a password (min. 8 characters)</span><input type="password" autoComplete="new-password" className="nb-input" value={g.password || ""} onChange={(e) => setG("password", e.target.value)} data-testid="guest-password-input" /></label>
+                    <label className="block"><span className="nb-label">When is your birthday? We’d love to send you a little birthday wish!</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
+                    <p className="text-xs text-nb-mute">Your birthdate also helps us identify you and complete care or insurance records where applicable.</p>
+                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!g.smsConsent} onChange={(e) => setG("smsConsent", e.target.checked)} data-testid="guest-sms-consent-checkbox" /><span>Text me visit reminders and on-the-way updates. <span className="text-nb-mute">(Optional. Reply STOP anytime.)</span></span></label>
+                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.marketingConsent} onChange={(e) => setG("marketingConsent", e.target.checked)} data-testid="guest-marketing-consent-checkbox" /><span>Yes, send me birthday wishes, offers and wellness tips. <span className="text-nb-mute">(Optional — not required to book. Appointment messages are sent separately.)</span></span></label>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -184,11 +271,21 @@ export function StepYou() {
 }
 
 export function StepPay() {
-  const { draft, patchDraft, idx } = useDemo();
+  const { draft, patchDraft, idx, state } = useDemo();
+  const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
+  const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   const policy = idx.settings.paymentPolicy || {};
   const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
   const selected = paymentChoice(draft, idx.settings);
   const choose = (payNow) => patchDraft({ paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card" });
+  if (trialFlow) {
+    return (
+      <div data-testid="step-pay-trial">
+        <H t="No payment for this trial" s="10 Minutes. On Us. is free. Neck and shoulders only." />
+        <p className="rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy">$0 due now. After your trial you can book a regular massage — any eligible first-booking welcome offer is preserved.</p>
+      </div>
+    );
+  }
   return (
     <div>
       <H t="How would you like to pay?" s="The appointment total is calculated first. What you pay now depends on the payment policy." />

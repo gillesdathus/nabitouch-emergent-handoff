@@ -62,7 +62,7 @@ MongoDB was a throwaway `mongo:7` container with **no authentication**, bound to
 | 1 skipped | `test_live_gps_and_email.py` | Real-email case skips when `delivered@resend.dev` is not already registered. The other tests in that module were not in the failure list. |
 | 27 passed | Remaining cases | Includes unauthenticated rejection, wrong-practitioner tracking rejection, public `/api/state` hiding clients and SOAP, receptionist SOAP denial, payment ownership checks, and the live-GPS trial file except the skipped email case. |
 
-These tests were **not** run against `https://nabitouch-preview.preview.emergentagent.com`. `backend_test.py`, `test_client_registration.py`, and `test_live_gps_and_email.py` default to that host, and `backend_test.py` calls `POST /api/demo/reset` on it. Running the suite with an unset `REACT_APP_BACKEND_URL` would reset that environment.
+These tests were **not** run against `https://lagoon-ui-refresh.preview.emergentagent.com`. `backend_test.py`, `test_client_registration.py`, and `test_live_gps_and_email.py` default to that host, and `backend_test.py` calls `POST /api/demo/reset` on it. Running the suite with an unset `REACT_APP_BACKEND_URL` would reset that environment.
 
 ### Local probes (throwaway data only)
 

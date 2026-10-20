@@ -7,7 +7,7 @@ import { CatalogueImage } from "@/components/ui-kit";
 import { IconTile, Notice, PageHeader, Reveal, TideAvatar } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
 import { api } from "@/lib/api";
-import { bookableCatalogueService, clinicBookable, money, publiclyBookable, welcomeOfferListed } from "@/lib/domain";
+import { bookableCatalogueService, clinicBookable, money, promoBannerCopy, publiclyBookable, trialCampaignListed, welcomeOfferListed } from "@/lib/domain";
 
 const GROUPS = [
   ["Relax", Leaf, "tint-mint", "text-nb-teal", (service) => /relax/i.test(service.category || service.name || "") || ["swedish", "hot-stone", "scalp", "foot-reflexology"].includes(service.slug)],
@@ -33,11 +33,14 @@ export default function Home() {
   const [query, setQuery] = useState(draft.addressQuery || "");
   const [campaigns, setCampaigns] = useState([]);
   const welcome = state.promotions.find((promo) => promo.id === "promo-welcome");
-  const eligible = welcomeOfferListed(welcome);
+  const eligible = welcomeOfferListed(welcome, "home");
+  const welcomeCopy = promoBannerCopy(welcome);
+  const welcomeBadge = welcome?.type === "percent" ? `${Number(welcome.value) || 0}%` : (welcome ? money(welcome.value) : "");
   const services = state.services.filter(bookableCatalogueService);
   const people = state.practitioners.filter(publiclyBookable);
   const clinicOpen = clinicBookable(idx.settings?.clinic);
-  const flash = campaigns[0];
+  const trial = campaigns.find((row) => trialCampaignListed(row, "home"));
+  const flash = campaigns.find((row) => row.offerKind !== "trial" && row.showHome !== false);
   const resume = draft.serviceSlug && draft.step > 0;
 
   useEffect(() => {
@@ -48,16 +51,45 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-9 px-5 pt-5">
-      {eligible && (
-        <Link to="/book" data-testid="hero-promo-chip" className="flex items-center gap-4 rounded-[28px] px-4 py-4 text-white shadow-[0_18px_40px_-16px_rgba(11,46,138,0.75)] nb-lagoon sm:px-6">
-          <span className="grid h-[4.5rem] w-[4.5rem] shrink-0 place-items-center rounded-2xl bg-nb-lime text-2xl font-bold leading-none text-nb-ink">20%</span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-bold uppercase tracking-[0.16em] text-nb-lime">Welcome offer</span>
-            <span className="mt-1 block text-lg font-semibold leading-tight sm:text-2xl">20% off a qualifying first treatment</span>
-            <span className="mt-1 block text-sm font-medium text-white/80">Confirmed when you book</span>
-          </span>
-          <ArrowRight className="h-5 w-5 shrink-0 text-nb-lime" />
-        </Link>
+      {(trial || eligible) && (
+        <section className="grid gap-3 sm:grid-cols-2" data-testid="home-featured-offers">
+          {trial && (
+            <Link
+              to="/book"
+              data-testid="home-trial-card"
+              className="flex items-center gap-4 rounded-[28px] px-4 py-4 text-white shadow-[0_18px_40px_-16px_rgba(11,46,138,0.55)] nb-tide sm:px-5"
+              onClick={() => patchDraft({
+                campaignId: trial.id,
+                serviceSlug: trial.serviceSlug || "ten-minutes-on-us",
+                duration: trial.durationMinutes || trial.complimentaryMinutes || 10,
+                locationType: (trial.locationTypes || []).includes("home") ? "home" : ((trial.locationTypes || ["home"])[0] || "home"),
+                practitionerId: trial.practitionerId || undefined,
+                date: trial.bookingStart,
+                step: 0,
+                idempotencyKey: `cmp-${trial.id}-${Date.now()}`,
+              })}
+            >
+              <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-white/15 text-lg font-bold leading-none">FREE</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[11px] font-bold uppercase tracking-[0.16em] text-nb-turq">Free trial</span>
+                <span className="mt-1 block text-base font-semibold leading-tight sm:text-lg">{trial.headline || "Try Nabitouch. 10 Minutes. On Us."}</span>
+                <span className="mt-1 block text-sm text-white/75">{trial.ctaLabel || "Claim my free 10 minutes"}</span>
+              </span>
+              <ArrowRight className="h-5 w-5 shrink-0 text-nb-turq" />
+            </Link>
+          )}
+          {eligible && (
+            <Link to="/book" data-testid="hero-promo-chip" className="flex items-center gap-4 rounded-[28px] px-4 py-4 text-white shadow-[0_18px_40px_-16px_rgba(11,46,138,0.75)] nb-lagoon sm:px-5">
+              <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-nb-lime text-xl font-bold leading-none text-nb-ink">{welcomeBadge}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[11px] font-bold uppercase tracking-[0.16em] text-nb-lime">20% off</span>
+                <span className="mt-1 block text-base font-semibold leading-tight sm:text-lg">{welcomeCopy.headline}</span>
+                <span className="mt-1 block text-sm font-medium text-white/80">{welcomeCopy.cta}</span>
+              </span>
+              <ArrowRight className="h-5 w-5 shrink-0 text-nb-lime" />
+            </Link>
+          )}
+        </section>
       )}
       <section className="grid items-stretch gap-6 lg:grid-cols-[1.1fr_1fr]">
         <Reveal className="order-2 flex flex-col justify-center lg:order-1">
@@ -140,7 +172,7 @@ export default function Home() {
         ))}
       </section>
 
-      {eligible && <PromoBanner eligible={eligible} testid="home-promo-banner" />}
+      {eligible && <PromoBanner eligible={eligible} promo={welcome} testid="home-promo-banner" />}
 
       <section className={`grid gap-3 pb-6 ${clinicOpen ? "sm:grid-cols-2" : ""}`}>
         <Link to="/practitioners" data-testid="home-practitioners" className="nb-card flex items-center gap-4 p-5 transition-transform hover:-translate-y-0.5">

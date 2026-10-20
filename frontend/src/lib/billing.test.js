@@ -1,4 +1,4 @@
-import { billingBars, dollarsToCents, formatCents, invoiceFacts } from "./billing";
+import { billingBars, dollarsToCents, formatCents, invoiceFacts, payableNowCents } from "./billing";
 
 test("cents format without treating dollars as the source of truth", () => {
   expect(formatCents(12000)).toBe("$120.00");
@@ -24,6 +24,15 @@ test("expected coverage is drawn apart from money received", () => {
     expectedInsurance: { cents: 3000 },
   })).toEqual({ received: 50, expected: 75 });
   expect(billingBars({ total: { cents: 12000 }, received: { cents: 0 }, expectedInsurance: { cents: 9000 } }).received).toBe(0);
+});
+
+test("the displayed card amount is the saved deposit, then the remaining balance", () => {
+  const invoice = { balance: { cents: 10080 }, received: { cents: 0 }, payableNow: { cents: 2520 } };
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, invoice)).toBe(2520);
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, { balance: { cents: 9080 }, received: { cents: 1000 } })).toBe(1520);
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, { balance: { cents: 7560 }, received: { cents: 2520 } })).toBe(7560);
+  expect(payableNowCents({ payNow: "full", paymentDue: { dueNowCents: 10080 } }, { balance: { cents: 10080 }, received: { cents: 0 } })).toBe(10080);
+  expect(payableNowCents({ payNow: "deposit", paymentDue: { dueNowCents: 2520 } }, { balance: { cents: 10080 }, received: { cents: 0 }, payableNow: { cents: 2520 } })).not.toBe(10080);
 });
 
 test("invoice facts come from the server view", () => {

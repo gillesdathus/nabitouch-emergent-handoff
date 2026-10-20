@@ -19,7 +19,7 @@ function TipPicker({ invoice, tip, setTip }) {
   );
 }
 
-export const payableCents = (invoice) => (invoice.expectedInsurance?.cents > 0 ? invoice.estimatedClientShare.cents : invoice.balance.cents);
+export const payableCents = (invoice) => (Number.isInteger(invoice?.payableNow?.cents) ? invoice.payableNow.cents : (invoice.expectedInsurance?.cents > 0 ? invoice.estimatedClientShare.cents : invoice.balance.cents));
 
 function CardPay({ invoice, enabled }) {
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,7 @@ function CardPay({ invoice, enabled }) {
   const start = async () => {
     setBusy(true);
     try {
-      const started = await api.invoiceCheckout(invoice.id, { amountCents: payableCents(invoice), tipCents: tip });
+      const started = await api.invoiceCheckout(invoice.id, tip ? { tipCents: tip } : {});
       if (started.url) window.location.assign(started.url);
       else setNote(`Checkout started for ${started.amount?.display}. Nothing is paid until Stripe confirms it.`);
     } catch (e) { setNote(apiError(e)); }

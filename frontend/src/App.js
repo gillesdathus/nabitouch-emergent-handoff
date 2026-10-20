@@ -6,17 +6,25 @@ import { DemoProvider, useDemo } from "@/store/DemoStore";
 import { OfflineNotice } from "@/components/RoleBar";
 import { Splash } from "@/components/Splash";
 import { ClientShell, StaffShell } from "@/components/shells";
+import { PractitionerErrorBoundary } from "@/components/PractitionerRouteGuard";
 import { PageSkeleton } from "@/components/ui-kit";
+import { AppErrorBoundary, installChunkRecovery } from "@/components/AppErrorBoundary";
+import { PwaUpdateBanner } from "@/components/PwaUpdateBanner";
+
+installChunkRecovery();
 
 const Login = lazy(() => import("@/pages/Login"));
+const PaymentResult = lazy(() => import("@/pages/client/PaymentResult"));
 const Join = lazy(() => import("@/pages/Join"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/ResetPassword"));
+const AccountSecurity = lazy(() => import("@/pages/AccountSecurity"));
 const Home = lazy(() => import("@/pages/client/Home"));
 const Services = lazy(() => import("@/pages/client/Services"));
 const Practitioners = lazy(() => import("@/pages/client/Practitioners"));
 const PractitionerProfile = lazy(() => import("@/pages/client/PractitionerProfile"));
-const ProProfile = lazy(() => import("@/pages/practitioner/Profile"));
+const StaffPractitionerProfile = lazy(() => import("@/pages/staff/PractitionerProfile"));
+const OwnerPractitioners = lazy(() => import("@/pages/owner/Practitioners"));
 const Contact = lazy(() => import("@/pages/client/Contact"));
 const GuestTrack = lazy(() => import("@/pages/client/GuestTrack"));
 const Welcome = lazy(() => import("@/pages/client/Welcome"));
@@ -27,6 +35,7 @@ const ProfileForm = lazy(() => import("@/pages/client/ProfileForm"));
 const InsurancePage = lazy(() => import("@/pages/client/InsurancePage"));
 const Intake = lazy(() => import("@/pages/client/Intake"));
 const SessionPrep = lazy(() => import("@/pages/client/SessionPrep"));
+const TrackVisit = lazy(() => import("@/pages/client/TrackVisit"));
 const OwnerTurnaround = lazy(() => import("@/pages/owner/Turnaround"));
 const ClientReviews = lazy(() => import("@/pages/client/Reviews"));
 const OwnerFeedback = lazy(() => import("@/pages/owner/Feedback"));
@@ -38,6 +47,11 @@ const OwnerPlans = lazy(() => import("@/pages/owner/Plans"));
 const OwnerChannels = lazy(() => import("@/pages/owner/Channels"));
 const OwnerWinback = lazy(() => import("@/pages/owner/Winback"));
 const SafetyAlerts = lazy(() => import("@/pages/owner/Safety"));
+const OwnerFleet = lazy(() => import("@/pages/owner/Fleet"));
+const OwnerSecurityShield = lazy(() => import("@/pages/owner/SecurityShield"));
+const OwnerVisitTimeline = lazy(() => import("@/pages/owner/VisitTimeline"));
+const ProMyVehicle = lazy(() => import("@/pages/practitioner/MyVehicle"));
+const ProShieldDocs = lazy(() => import("@/pages/practitioner/ShieldDocs"));
 const GiftCardsAdmin = lazy(() => import("@/pages/owner/GiftCards"));
 const ClientWorkspace = lazy(() => import("@/pages/staff/ClientWorkspace"));
 const OwnerReports = lazy(() => import("@/pages/owner/Reports"));
@@ -49,6 +63,7 @@ const ProSoap = lazy(() => import("@/pages/practitioner/Soap"));
 const ProPlans = lazy(() => import("@/pages/practitioner/Plans"));
 const ProAvailability = lazy(() => import("@/pages/practitioner/Availability"));
 const ProRoute = lazy(() => import("@/pages/practitioner/DailyRoute"));
+const ProMessages = lazy(() => import("@/pages/practitioner/Messages"));
 const ProRecovery = lazy(() => import("@/pages/practitioner/Recovery"));
 const OwnerCampaigns = lazy(() => import("@/pages/owner/Campaigns"));
 const TrainingCenter = lazy(() => import("@/pages/owner/TrainingCenter"));
@@ -61,6 +76,7 @@ const OwnerSchedule = lazy(() => import("@/pages/owner/Schedule"));
 const Dispatch = lazy(() => import("@/pages/ops/Dispatch"));
 const Manage = lazy(() => import("@/pages/owner/Manage"));
 const Promos = lazy(() => import("@/pages/owner/Promos"));
+const OwnerMarketing = lazy(() => import("@/pages/owner/Marketing"));
 const Zones = lazy(() => import("@/pages/owner/Zones"));
 const Insights = lazy(() => import("@/pages/owner/Insights"));
 const Permissions = lazy(() => import("@/pages/owner/Permissions"));
@@ -68,7 +84,7 @@ const Payments = lazy(() => import("@/pages/owner/Payments"));
 const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
-const DeskClients = lazy(() => import("@/pages/reception/Clients"));
+const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
 const Messages = lazy(() => import("@/pages/reception/Messages"));
 const Thread = lazy(() => import("@/pages/messages/Thread"));
@@ -87,6 +103,7 @@ export default function App() {
           <Splash />
           <OfflineNotice />
           <Gate>
+            <AppErrorBoundary>
             <Suspense fallback={<PageSkeleton />}>
               <Routes>
                 <Route element={<ClientShell />}>
@@ -95,6 +112,7 @@ export default function App() {
                   <Route path="/join" element={<Join />} />
                   <Route path="/forgot-password" element={<ForgotPassword />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/account/security" element={<AccountSecurity />} />
                   <Route path="/services" element={<Services />} />
                   <Route path="/practitioners" element={<Practitioners />} />
                   <Route path="/practitioners/:slug" element={<PractitionerProfile />} />
@@ -110,26 +128,35 @@ export default function App() {
                   <Route path="/me/profile" element={<ProfileForm />} />
                   <Route path="/me/intake" element={<Intake />} />
                   <Route path="/me/visit/:id/prepare" element={<SessionPrep />} />
+                  <Route path="/me/visit/:id/track" element={<TrackVisit />} />
                   <Route path="/me/reviews" element={<ClientReviews />} />
                   <Route path="/me/insurance" element={<InsurancePage />} />
                   <Route path="/me/billing" element={<ClientBilling />} />
+                  <Route path="/me/billing/payment-result" element={<PaymentResult />} />
                   <Route path="/me/gifts" element={<ClientGiftCards />} />
                   <Route path="/me/plans" element={<ClientPlans />} />
                   <Route path="/me/messages/:id" element={<Thread viewerRole="client" backTo="/me" />} />
                 </Route>
                 <Route element={<StaffShell role="pro" />}>
-                  <Route path="/pro" element={<ProToday />} />
-                  <Route path="/pro/profile" element={<ProProfile />} />
-                  <Route path="/pro/visit/:id" element={<ProVisit />} />
-                  <Route path="/pro/visit/:id/messages" element={<Thread viewerRole="practitioner" />} />
-                  <Route path="/pro/visit/:id/native" element={<NativeNav />} />
-                  <Route path="/pro/soap/:id" element={<ProSoap />} />
-                  <Route path="/pro/plans" element={<ProPlans />} />
-                  <Route path="/pro/earnings" element={<ProEarnings />} />
-                  <Route path="/pro/ratings" element={<ProClientRatings />} />
-                  <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
-                  <Route path="/pro/route" element={<ProRoute mode="pro" />} />
-                  <Route path="/pro/recovery" element={<ProRecovery />} />
+                  <Route element={<PractitionerErrorBoundary />}>
+                    <Route path="/pro" element={<ProToday />} />
+                    <Route path="/pro/profile" element={<StaffPractitionerProfile self />} />
+                    <Route path="/pro/visit/:id" element={<ProVisit />} />
+                    <Route path="/pro/visit/:id/messages" element={<Thread viewerRole="practitioner" />} />
+                    <Route path="/pro/visit/:id/native" element={<NativeNav />} />
+                    <Route path="/pro/soap/:id" element={<ProSoap />} />
+                    <Route path="/pro/plans" element={<ProPlans />} />
+                    <Route path="/pro/earnings" element={<ProEarnings />} />
+                    <Route path="/pro/ratings" element={<ProClientRatings />} />
+                    <Route path="/pro/availability" element={<ProAvailability mode="pro" />} />
+                    <Route path="/pro/schedule" element={<Navigate to="/pro/availability" replace />} />
+                    <Route path="/pro/hours" element={<Navigate to="/pro/availability" replace />} />
+                    <Route path="/pro/messages" element={<ProMessages />} />
+                    <Route path="/pro/route" element={<ProRoute mode="pro" />} />
+                    <Route path="/pro/recovery" element={<ProRecovery />} />
+                    <Route path="/pro/vehicle" element={<ProMyVehicle />} />
+                    <Route path="/pro/shield" element={<ProShieldDocs />} />
+                  </Route>
                 </Route>
                 <Route element={<StaffShell role="owner" />}>
                   <Route path="/owner" element={<OwnerDash />} />
@@ -140,11 +167,18 @@ export default function App() {
                   <Route path="/owner/messages" element={<Messages />} />
                   <Route path="/owner/manage" element={<Manage />} />
                   <Route path="/owner/promos" element={<Promos />} />
+                  <Route path="/owner/marketing" element={<OwnerMarketing />} />
                   <Route path="/owner/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/owner/plans" element={<OwnerPlans />} />
                   <Route path="/owner/safety" element={<SafetyAlerts />} />
+                  <Route path="/owner/fleet" element={<OwnerFleet />} />
+                  <Route path="/owner/shield" element={<OwnerSecurityShield />} />
+                  <Route path="/owner/shield/timeline/:id" element={<OwnerVisitTimeline />} />
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
+                  <Route path="/owner/clients" element={<StaffClients role="owner" />} />
+                  <Route path="/owner/practitioners" element={<OwnerPractitioners />} />
+                  <Route path="/owner/practitioners/:id" element={<StaffPractitionerProfile />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />
@@ -163,7 +197,7 @@ export default function App() {
                 <Route element={<StaffShell role="desk" />}>
                   <Route path="/desk" element={<Desk />} />
                   <Route path="/desk/dispatch" element={<Dispatch role="desk" />} />
-                  <Route path="/desk/clients" element={<DeskClients />} />
+                  <Route path="/desk/clients" element={<StaffClients role="desk" />} />
                   <Route path="/desk/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/desk/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/desk/verify" element={<Verify />} />
@@ -174,8 +208,10 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Suspense>
+            </AppErrorBoundary>
           </Gate>
-          <Toaster position="bottom-right" richColors closeButton />
+          <PwaUpdateBanner />
+          <Toaster position="bottom-right" richColors closeButton offset={{ bottom: "var(--nb-toast-offset)", right: "1.5rem" }} mobileOffset={{ bottom: "var(--nb-toast-offset)" }} />
         </BrowserRouter>
       </DemoProvider>
     </MotionConfig>

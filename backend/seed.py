@@ -7,6 +7,7 @@ from pricing import launch_welcome_offer
 from rewards import launch_rewards
 from config import is_production
 from payments import with_settle, claim_eligible
+from trial import launch_trial_service
 
 TZ = ZoneInfo("America/Edmonton")
 
@@ -63,6 +64,8 @@ SERVICES = [
       "Lighter pressure, flexible positioning (including seated) and unhurried pacing for older adults — in the comfort of their own home or residence.",
       ["May support comfort and circulation", "Can ease stiffness gently", "Seated or bed-side options"],
       ["Gentle comfort", "Mobility", "Companionship & calm"], {"30": 65, "60": 115}, "/img/senior.jpg"),
+    # Standalone acquisition trial — not a flash discount, add-on, or paid regular service.
+    launch_trial_service(),
 ]
 
 PRACTITIONERS = [
@@ -247,8 +250,8 @@ def build_seed():
     by["a-111"]["address"] = {"line": "[Clinic address — to be supplied]", "lat": 53.5461, "lng": -113.4938, "zoneId": None, "notes": ""}
     by["a-111"]["pricing"] = {**by["a-111"]["pricing"], "travel": 0, "tax": 6.0, "total": 126.0}
     by["a-111"]["claim"]["eligible"] = 126.0
-    by["a-106"]["trip"] = {"from": PRACTITIONERS[1]["base"], "to": {"lat": ADDR["noah"]["lat"], "lng": ADDR["noah"]["lng"]}, "startedAt": ago(0.5),
-                           "demoSec": 240, "km": 9.4, "driveMin": 24, "sharing": True, "simulated": True}
+    by["a-106"]["trip"] = {"to": {"lat": ADDR["noah"]["lat"], "lng": ADDR["noah"]["lng"]}, "startedAt": ago(0.5),
+                           "sharing": False, "simulated": True, "location": "sample"}
     appointments = [with_settle(a) for a in appointments]
     for a in appointments:
         if a["id"] == "a-106":
@@ -296,9 +299,9 @@ def build_seed():
         {"id": "z-outer", "name": "Outer ring & suburbs", "radiusKm": 25, "fee": 30, "color": "#1565F0", "enabled": True},
     ]
     giftcards = [
-        {"id": "gc-1", "code": "NABI-GIFT-4821", "amount": 120, "balance": 120, "purchaser": "Sarah Thompson",
+        {"id": "gc-1", "code": "NABI-GIFT-4821", "amount": 120, "balance": 120, "amountCents": 12000, "balanceCents": 12000, "version": 1, "purchaser": "Sarah Thompson",
          "recipient": "Emma T.", "status": "active", "issued": d(-5)},
-        {"id": "gc-2", "code": "NABI-GIFT-1177", "amount": 75, "balance": 0, "purchaser": "Walk-in (demo)",
+        {"id": "gc-2", "code": "NABI-GIFT-1177", "amount": 75, "balance": 0, "amountCents": 7500, "balanceCents": 0, "version": 1, "purchaser": "Walk-in (demo)",
          "recipient": "Sarah Thompson", "status": "redeemed", "issued": d(-70)},
     ]
     templates = [

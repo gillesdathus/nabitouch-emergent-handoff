@@ -241,6 +241,11 @@ def practitioner_bookable(person, schedule):
 
 
 def qualified(person, service):
+    from trial import is_trial_service
+
+    # Trial is bound to a campaign practitioner; legacy specialty lists often omit the trial slug.
+    if is_trial_service(service):
+        return True
     specialties = person.get("specialties")
     if specialties is None:
         return True
@@ -254,6 +259,67 @@ def point_of(address):
     if not address or address.get("lat") is None or address.get("lng") is None:
         return None
     return {"lat": float(address["lat"]), "lng": float(address["lng"])}
+
+
+def _finite_point(lat, lng):
+    try:
+        lat, lng = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if lat != lat or lng != lng or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    return {"lat": lat, "lng": lng}
+
+
+GPS_STALE_SEC = 30
+GPS_MAX_SKEW_SEC = 120
+GPS_MAX_ACCURACY_M = 150
+
+
+def gps_origin(fix, now=None):
+    """A recorded trip origin is a current device fix. Missing, denied, invalid, and stale fixes are not a location."""
+    if not isinstance(fix, dict):
+        return None
+    point = _finite_point(fix.get("lat"), fix.get("lng"))
+    if not point:
+        return None
+    accuracy = fix.get("accuracy")
+    if accuracy is not None:
+        try:
+            accuracy = float(accuracy)
+        except (TypeError, ValueError):
+            return None
+        if accuracy < 0 or (accuracy > GPS_MAX_ACCURACY_M and not fix.get("approximate")):
+            return None
+    recorded = fix.get("recordedAt")
+    if not recorded:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(recorded).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    skew = (now - stamp).total_seconds()
+    if skew < -GPS_MAX_SKEW_SEC or skew > GPS_STALE_SEC:
+        return None
+    return point
+
+
+def visit_navigation_point(address, location_type="home"):
+    """Coordinates for an external maps handoff. A clinic pin is used only after that address was verified."""
+    address = address or {}
+    if location_type == "clinic":
+        if address.get("navigation") != "ready":
+            return None
+        return _finite_point(address.get("lat"), address.get("lng"))
+    arrival = address.get("arrival") if isinstance(address.get("arrival"), dict) else None
+    if arrival:
+        point = _finite_point(arrival.get("lat"), arrival.get("lng"))
+        if point:
+            return point
+    return _finite_point(address.get("lat"), address.get("lng"))
 
 
 def conservative_drive(origin, dest):
@@ -571,18 +637,21 @@ def draft_schedule(practitioner_id):
 
 
 def launch_practitioner():
+    from trial import TRIAL_SERVICE_SLUG
+
     return {
         "id": "p-nabitu-kahindo",
         "name": "Nabitu Kahindo",
         "initials": "NK",
         "color": "#1565F0",
         "isOwner": False,
-        "specialties": [],
+        # Trial specialty is catalogued only — available/bookable stay false until owner authorizes.
+        "specialties": [TRIAL_SERVICE_SLUG],
         "available": False,
         "onboardingStatus": "draft",
         "bookable": False,
         "mobile": True,
-        "clinic": False,
+        "clinic": True,
         "directBilling": False,
         "bio": "",
     }
@@ -629,16 +698,102 @@ def clinic_is_bookable(clinic):
     return True
 
 
+def clinic_has_address(clinic):
+    """Street address present and valid — used for campaign-scoped clinic trials without enabling general in-clinic booking."""
+    try:
+        validate_clinic(clinic)
+    except ValueError:
+        return False
+    return bool(str((clinic or {}).get("address") or "").strip())
+
+
+def clinic_visit_address(clinic, notes="", *, trial=False):
+    """Keep the clinic street address. Coordinates are used only after that same address was confirmed.
+
+    Trial campaigns may reserve clinic time when a street address exists even if general
+    in-clinic booking stays disabled for the catalogue.
+    """
+    if trial:
+        if not clinic_has_address(clinic):
+            raise ValueError("The clinic address is not ready for trial booking")
+    elif not clinic_is_bookable(clinic):
+        raise ValueError("In-clinic booking is not available")
+    address = {"line": str((clinic or {}).get("address") or "").strip(), "zoneId": None, "notes": str(notes or "")[:240], "navigation": "unavailable"}
+    if (clinic or {}).get("coordinatesVerified") is not True:
+        return address
+    lat, lng = (clinic or {}).get("lat"), (clinic or {}).get("lng")
+    try:
+        if lat is not None and lng is not None and str(lat) != "" and str(lng) != "":
+            address["lat"] = float(lat)
+            address["lng"] = float(lng)
+            address["navigation"] = "ready"
+    except (TypeError, ValueError):
+        pass
+    return address
+
+
+def _clinic_line(value):
+    return " ".join(str(value or "").split())
+
+
+def merge_clinic(current, incoming, resolved=None, provider_down=False):
+    """Apply an owner clinic edit. Client coordinates are ignored. A new street drops the old pin."""
+    current = dict(current or {})
+    incoming = dict(incoming or {})
+    confirmation = incoming.get("confirmation") if isinstance(incoming.get("confirmation"), dict) else {}
+    line = _clinic_line(incoming.get("address", current.get("address")))
+    previous = _clinic_line(current.get("address"))
+    kept = {key: value for key, value in incoming.items() if key not in ("lat", "lng", "mapboxId", "coordinatesVerified", "navigation", "confirmation")}
+    clinic = {**current, **kept, "address": line}
+    clinic.pop("lat", None)
+    clinic.pop("lng", None)
+    clinic.pop("mapboxId", None)
+    clinic["coordinatesVerified"] = False
+    clinic["navigation"] = "unavailable"
+    same_street = line == previous and current.get("coordinatesVerified") is True
+    if same_street and not confirmation and not provider_down:
+        if current.get("lat") is not None and current.get("lng") is not None:
+            clinic["lat"] = float(current["lat"])
+            clinic["lng"] = float(current["lng"])
+            clinic["mapboxId"] = current.get("mapboxId") or ""
+            clinic["coordinatesVerified"] = True
+            clinic["navigation"] = "ready"
+        return clinic
+    if provider_down or not resolved or confirmation.get("clientConfirmed") is not True:
+        return clinic
+    if resolved.get("confidence") != "address":
+        raise ValueError("This address needs review before the clinic location can be saved.")
+    clinic["address"] = _clinic_line(resolved.get("line") or line)
+    clinic["lat"] = float(resolved["lat"])
+    clinic["lng"] = float(resolved["lng"])
+    clinic["mapboxId"] = resolved.get("mapboxId") or ""
+    clinic["coordinatesVerified"] = True
+    clinic["navigation"] = "ready"
+    return clinic
+
+
 def public_clinic(clinic):
-    """Public pages never receive a placeholder clinic address."""
+    """Public pages never receive a placeholder clinic address.
+
+    When general in-clinic booking is off, the street line stays hidden, but
+    addressReady tells trial campaigns the clinic can still host a reserved visit.
+    """
     clinic = clinic if isinstance(clinic, dict) else {}
     mobile = clinic.get("mobileEnabled") is not False
+    ready = clinic_has_address(clinic)
     if not clinic_is_bookable(clinic):
-        return {"enabled": False, "mobileEnabled": mobile, "address": "", "name": clinic.get("name") or "Nabitouch"}
+        return {
+            "enabled": False,
+            "mobileEnabled": mobile,
+            "address": "",
+            "addressReady": ready,
+            "name": clinic.get("name") or "Nabitouch",
+        }
     return {
         "enabled": True,
         "mobileEnabled": mobile,
         "address": clinic.get("address") or "",
+        "addressReady": ready,
         "name": clinic.get("name") or "Nabitouch",
         "phoneDisplay": clinic.get("phoneDisplay") or "",
         "hours": clinic.get("hours") or "",
@@ -841,10 +996,14 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "onboardingStatus": 1}) or {}
         schedule["acceptingBookings"] = bool(payload.get("acceptingBookings"))
         await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, schedule, upsert=True)
-        bookable = schedule["acceptingBookings"] and schedule.get("status") == "approved" and person.get("onboardingStatus") in (None, "approved")
-        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {"available": bookable}})
+        bookable = (
+            schedule["acceptingBookings"]
+            and schedule.get("status") == "approved"
+            and person.get("onboardingStatus") in (None, "approved")
+        )
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {"available": bookable, "bookable": bookable}})
         await add_audit(user["name"], f"New bookings {'opened' if schedule['acceptingBookings'] else 'paused'} for {practitioner_id}", None)
-        return {"acceptingBookings": schedule["acceptingBookings"]}
+        return {"acceptingBookings": schedule["acceptingBookings"], "bookable": bookable}
 
     @router.get("/onboarding")
     async def onboarding_board(request: Request):
@@ -867,7 +1026,10 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
                 "bookable": profile.get("bookable") is True,
                 "gaps": gaps,
                 "specialties": profile.get("specialties") or [],
-                "activationReady": profile.get("onboardingStatus") in ("draft", "pending") and not activation_blockers(gaps),
+                "activationReady": profile.get("onboardingStatus") in ("invited", "draft", "pending") and not activation_blockers(gaps),
+                "accountStatus": (loaded.get("account") or {}).get("status"),
+                "activatedAt": profile.get("activatedAt") or "",
+                "credentialAttestations": profile.get("credentialAttestations") or {},
             })
         return {"practitioners": rows, "launch": launch_readiness(settings), "mfaEnforced": bool(settings.get("mfaEnforcePrivileged"))}
 
@@ -893,44 +1055,122 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
 
     @router.post("/practitioners/{practitioner_id}/onboarding/approve")
     async def approve_onboarding(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Activate the practitioner profile and open new bookings by default when hours exist."""
         user = await require(request, "owner")
         if payload.get("confirm") is not True:
             raise HTTPException(400, "Confirm that you are approving this practitioner")
-        return await _activate(user, practitioner_id)
+        return await _activate_profile(user, practitioner_id)
+
+    @router.post("/practitioners/{practitioner_id}/credential-attestation")
+    async def attest_credential(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Owner note that a credential was seen. Does not open booking; the 14-day grace after approval does."""
+        from onboarding import ATTESTABLE_KINDS
+        user = await require(request, "owner")
+        kind = payload.get("kind")
+        if kind not in ATTESTABLE_KINDS:
+            raise HTTPException(400, "Choose registration or liability insurance")
+        if payload.get("confirm") is not True:
+            raise HTTPException(400, "Confirm that you have seen this credential")
+        note = " ".join(str(payload.get("note") or "").split())[:300]
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
+        row = {"by": user["name"], "byId": user.get("id"), "at": datetime.now(timezone.utc).isoformat(), "note": note}
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": {f"credentialAttestations.{kind}": row}})
+        await add_audit(user["name"], f"Owner attested {kind} for {practitioner_id} (document not on file)", None)
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})
+        return {"credentialAttestations": (saved or {}).get("credentialAttestations") or {}}
+
+    @router.delete("/practitioners/{practitioner_id}/credential-attestation/{kind}")
+    async def revoke_attestation(practitioner_id: str, kind: str, request: Request):
+        from onboarding import ATTESTABLE_KINDS
+        user = await require(request, "owner")
+        if kind not in ATTESTABLE_KINDS:
+            raise HTTPException(400, "Choose registration or liability insurance")
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$unset": {f"credentialAttestations.{kind}": ""}})
+        await add_audit(user["name"], f"Owner attestation removed: {kind} for {practitioner_id}", None)
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})
+        return {"credentialAttestations": (saved or {}).get("credentialAttestations") or {}}
 
     @router.post("/schedules/{practitioner_id}/approve")
     async def approve(practitioner_id: str, request: Request):
+        """Approve weekly hours and open new bookings by default. Owner can pause later."""
         user = await require(request, "owner")
-        return await _activate(user, practitioner_id)
+        return await _approve_schedule(user, practitioner_id)
 
-    async def _activate(user, practitioner_id):
+    async def _activate_profile(user, practitioner_id):
         from onboarding import activation_blockers, load_practitioner_onboarding
+        loaded = await load_practitioner_onboarding(db, coll, practitioner_id)
+        if not loaded:
+            raise HTTPException(404, "Practitioner not found")
+        person = loaded["person"]
+        status = person.get("onboardingStatus")
+        if status in ("invited", "draft", "pending"):
+            blockers = activation_blockers(loaded["gaps"])
+            if blockers:
+                raise HTTPException(409, {"message": "Link a staff login before activating this profile", "gaps": blockers})
+        elif status not in (None, "approved"):
+            raise HTTPException(409, "This practitioner cannot be activated from its current status")
+        updates = {
+            "onboardingStatus": "approved",
+            # Owner approval opens booking by default; pause endpoint can close it later.
+            "available": True,
+            "bookable": True,
+        }
+        if not person.get("activatedAt"):
+            updates["activatedAt"] = datetime.now(timezone.utc).isoformat()
+        schedule = dict(loaded.get("schedule") or draft_schedule(practitioner_id))
+        opened_bookings = False
+        if schedule.get("weekly"):
+            schedule["status"] = "approved"
+            schedule["acceptingBookings"] = True
+            await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, schedule, upsert=True)
+            opened_bookings = True
+        else:
+            # No hours yet — keep acceptingBookings false until schedule approve opens it.
+            updates["bookable"] = False
+            updates["available"] = False
+        await coll("practitioners").update_one({"id": practitioner_id}, {"$set": updates})
+        saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0})
+        from media import sync_practitioner_visibility
+        from profiles import profile_media_public
+        await sync_practitioner_visibility(db, practitioner_id, profile_media_public({**(saved or person), "onboardingStatus": "approved"}))
+        await add_audit(
+            user["name"],
+            f"Practitioner profile activated: {practitioner_id}" + (" · bookings opened" if opened_bookings else " · bookings wait for weekly hours"),
+            None,
+        )
+        return {
+            "onboardingStatus": "approved",
+            "available": bool((saved or {}).get("available")),
+            "bookable": bool((saved or {}).get("bookable")),
+            "acceptingBookings": bool(schedule.get("acceptingBookings")),
+            "schedule": schedule,
+        }
+
+    async def _approve_schedule(user, practitioner_id):
+        from onboarding import load_practitioner_onboarding
         loaded = await load_practitioner_onboarding(db, coll, practitioner_id)
         if not loaded or not loaded.get("schedule"):
             raise HTTPException(404, "Practitioner schedule not found")
         person = loaded["person"]
-        schedule = loaded["schedule"]
-        if person.get("onboardingStatus") in ("draft", "pending"):
-            blockers = activation_blockers(loaded["gaps"])
-            if blockers:
-                raise HTTPException(409, {"message": "Finish practitioner onboarding before approving the schedule", "gaps": blockers})
-            person["onboardingStatus"] = "approved"
-        elif person.get("onboardingStatus") not in (None, "approved"):
-            raise HTTPException(409, "Finish practitioner onboarding before approving the schedule")
+        schedule = dict(loaded["schedule"])
+        if person.get("onboardingStatus") not in (None, "approved"):
+            raise HTTPException(409, "Activate the practitioner profile before approving the schedule")
         if not schedule.get("weekly"):
             raise HTTPException(409, "Add weekly hours before approving the schedule")
         schedule["status"] = "approved"
+        # Open new bookings by default; owner pauses with /schedules/{id}/pause.
         schedule["acceptingBookings"] = True
         await db.nt_schedules.replace_one({"practitionerId": practitioner_id}, schedule, upsert=True)
+        bookable = person.get("onboardingStatus") in (None, "approved")
         await coll("practitioners").update_one(
             {"id": practitioner_id},
-            {"$set": {"onboardingStatus": person.get("onboardingStatus") or "approved", "available": True, "bookable": True}},
+            {"$set": {"available": bookable, "bookable": bookable}},
         )
-        from media import sync_practitioner_visibility
-        from profiles import profile_media_public
-        await sync_practitioner_visibility(db, practitioner_id, profile_media_public({**person, "onboardingStatus": person.get("onboardingStatus") or "approved"}))
-        await add_audit(user["name"], f"Schedule approved for {practitioner_id}", None)
-        return {"schedule": schedule, "onboardingStatus": person.get("onboardingStatus") or "approved", "available": True}
+        await add_audit(user["name"], f"Schedule approved for {practitioner_id} · bookings opened", None)
+        return {"schedule": schedule, "onboardingStatus": person.get("onboardingStatus") or "approved", "available": bookable, "bookable": bookable, "acceptingBookings": True}
 
     @router.get("/schedules/{practitioner_id}/route")
     async def daily_route(practitioner_id: str, request: Request, date: str):
@@ -1023,14 +1263,21 @@ def _table_drive(table):
 async def recommend_slots(db, coll, locate_visit, payload, production):
     from pricing import money, zone_travel
 
+    from trial import is_trial_service
+
     settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
     clinic = settings.get("clinic") or {}
     location = payload.get("locationType") or "home"
-    if location == "clinic" and clinic.get("enabled") is not True:
-        raise HTTPException(400, "In-clinic booking is not available")
+    service = await coll("services").find_one({"slug": payload.get("serviceSlug")}, {"_id": 0})
+    trial_visit = is_trial_service(service) or bool(payload.get("campaignId"))
+    if location == "clinic":
+        if trial_visit:
+            if not clinic_has_address(clinic):
+                raise HTTPException(400, "The clinic address is not ready for trial booking")
+        elif clinic.get("enabled") is not True:
+            raise HTTPException(400, "In-clinic booking is not available")
     if clinic.get("mobileEnabled") is False and location != "clinic":
         raise HTTPException(400, "Mobile booking is not available")
-    service = await coll("services").find_one({"slug": payload.get("serviceSlug")}, {"_id": 0})
     duration = payload.get("duration")
     blocked = booking_block_reason(service, duration, location)
     if blocked:
@@ -1070,7 +1317,9 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
         if not practitioner_bookable(person, schedule):
             continue
         appointments = await coll("appointments").find({"practitionerId": person["id"], "date": day}, {"_id": 0}).to_list(100)
-        for start in candidate_starts(None if location == "clinic" and schedule is None else schedule, day, duration, service.get("slug")):
+        # Trial hours follow the practitioner's open week; do not require the trial slug on each weekly row.
+        hours_slug = None if trial_visit else service.get("slug")
+        for start in candidate_starts(None if location == "clinic" and schedule is None else schedule, day, duration, hours_slug):
             if location != "clinic":
                 previous, following = neighbors(appointments, day, start, duration)
                 if previous:
@@ -1085,7 +1334,7 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
                 appointments=appointments, rules=rules, drives=_table_drive(table) if location != "clinic" else (lambda _a, _b: (0, "clinic")),
                 location_type="home" if location != "clinic" else "home", now=now, production=production if location != "clinic" else False,
             )
-            if location == "clinic" and schedule is not None and not interval_open(schedule, day, start, duration, service.get("slug")):
+            if location == "clinic" and schedule is not None and not interval_open(schedule, day, start, duration, hours_slug):
                 continue
             if probe["ok"]:
                 checked.append({**probe, "time": hhmm(start), "practitionerId": person["id"]})
@@ -1109,14 +1358,35 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
     }
 
 
-async def assert_public_slot(db, coll, *, settings, production, practitioner_id, day, time, duration, address, location_type, service, exclude_id=None):
+async def assert_public_slot(db, coll, *, settings, production, practitioner_id, day, time, duration, address, location_type, service, exclude_id=None, trial=False):
     """Reject a booking that is outside a real opening. Legacy demo data with no schedules is unchanged."""
+    from trial import is_trial_service
+
     clinic = (settings or {}).get("clinic") or {}
-    if location_type == "clinic" and not clinic_is_bookable(clinic):
-        raise HTTPException(400, "In-clinic booking is not available")
+    trial_visit = trial or is_trial_service(service)
+    if location_type == "clinic":
+        if trial_visit:
+            if not clinic_has_address(clinic):
+                raise HTTPException(400, "The clinic address is not ready for trial booking")
+        elif not clinic_is_bookable(clinic):
+            raise HTTPException(400, "In-clinic booking is not available")
     if location_type != "clinic" and clinic.get("mobileEnabled") is False:
         raise HTTPException(400, "Mobile booking is not available")
     if location_type == "clinic":
+        # Clinic visits still need an open schedule window for the assigned practitioner.
+        if not practitioner_id:
+            return
+        schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
+        person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0})
+        if not practitioner_bookable(person, schedule):
+            raise HTTPException(409, "That practitioner is not available")
+        start = minutes(time)
+        hours_slug = None if trial_visit else (service or {}).get("slug")
+        if schedule is not None and not interval_open(schedule, day, start, int(duration), hours_slug):
+            raise HTTPException(409, "That time is not open")
+        appointments = await coll("appointments").find({"practitionerId": practitioner_id, "date": day}, {"_id": 0}).to_list(100)
+        if overlaps_appointment(appointments, day, start, int(duration), exclude_id):
+            raise HTTPException(409, "That time was just booked")
         return
     schedule_count = await db.nt_schedules.count_documents({})
     enforced = adjacent_travel_enforced(settings, production)
@@ -1176,7 +1446,11 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
     for index, row in enumerate(appointments):
         leg = None
         if index:
-            drive, provider = await mapbox_drive(point_of(appointments[index - 1].get("address")), point_of(row.get("address")))
+            previous = appointments[index - 1]
+            drive, provider = await mapbox_drive(
+                visit_navigation_point(previous.get("address"), previous.get("locationType") or "home"),
+                visit_navigation_point(row.get("address"), row.get("locationType") or "home"),
+            )
             travel_total += drive
             prev_end = minutes(appointments[index - 1]["time"]) + int(appointments[index - 1]["duration"])
             depart = prev_end + int(rules["cleanupMin"])
@@ -1186,9 +1460,10 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
             leg = {"minutes": drive, "provider": provider, "depart": hhmm(depart), "arrive": hhmm(arrive)}
         address = row.get("address") or {}
         stop = {"id": row["id"], "ref": row.get("ref"), "time": row["time"], "duration": int(row["duration"]), "area": address.get("zoneName") or ""}
-        if show_address and address.get("lat") is not None:
-            stop["position"] = {"lat": address["lat"], "lng": address["lng"]}
-            stop["maps"] = f"https://www.google.com/maps/dir/?api=1&destination={address['lat']},{address['lng']}"
+        point = visit_navigation_point(address, row.get("locationType") or "home") if show_address else None
+        if point:
+            stop["position"] = point
+            stop["maps"] = f"https://www.google.com/maps/dir/?api=1&destination={point['lat']},{point['lng']}"
         stops.append({"stop": stop, "leg": leg})
     gaps = gap_suggestions(schedule, person, day, appointments, rules, conservative_drive)
     proposal = propose_order(appointments, conservative_drive)

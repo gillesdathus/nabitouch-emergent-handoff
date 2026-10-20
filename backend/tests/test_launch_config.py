@@ -76,7 +76,8 @@ def test_launch_seed_has_catalogue_and_no_patients():
     assert fee["published"] is False and fee["effectiveOn"] is None
     assert seed["settings"][0]["recovery"]["exclusiveMinutes"] == 20
     assert "revenueTrend" not in seed["settings"][0]
-    assert len(seed["services"]) == 10
+    assert len(seed["services"]) == 11
+    assert any(row.get("slug") == "ten-minutes-on-us" and row.get("kind") == "trial" for row in seed["services"])
     assert [zone["fee"] for zone in seed["zones"]] == [0, 15, 30]
     swedish = next(service for service in seed["services"] if service["slug"] == "swedish")
     assert swedish["prices"]["60"] == 120
@@ -244,32 +245,8 @@ def test_resend_webhook_signature_and_receipt():
     headers["svix-signature"] = "v1,not-the-digest"
     assert not resend_webhook_authentic(body, headers, secret, now=1710000000)
 
-    class Result:
-        modified_count = 1
-
-    class Coll:
-        def __init__(self):
-            self.updates = []
-
-        async def update_one(self, query, update):
-            self.updates.append((query, update))
-            return Result()
-
-    class DB:
-        nt_notifications = Coll()
-
-    import asyncio
-    db = DB()
-
-    async def _run():
-        return await apply_delivery_receipt(db, {"type": "email.delivered", "data": {"email_id": "email_test_1"}})
-
-    assert asyncio.run(_run()) is True
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    query, update = db.nt_notifications.updates[0]
-    assert query["providerId"] == "email_test_1"
-    assert query["deliveredAt"] is None
-    assert update["$set"]["deliveryStatus"] == "delivered"
+    # Durable receipt/replay/race behavior is covered against isolated Mongo in
+    # test_resend_acceptance.py; a one-method collection fake cannot verify it.
 
 
 def _wait(url, proc):
@@ -289,7 +266,7 @@ def test_production_process_refuses_uploads_cards_and_import():
     env = os.environ.copy()
     env.update({
         "APP_ENV": "production", "DEMO_MODE": "false", "COOKIE_SECURE": "true", "EMAIL_PROVIDER": "disabled",
-        "DB_NAME": "nabitouch_launch_check",
+        "DB_NAME": os.environ["DB_NAME"] + "_launch",
         "REDIS_URL": "rediss://:test-password@127.0.0.1:6390/0",
         "DOCUMENT_UPLOADS_ENABLED": "false", "STRIPE_CARD_CHECKOUT_ENABLED": "false",
         "LEGACY_PATIENT_IMPORT_ENABLED": "false", "HOSTING_STRATEGY": "shared-vps",
@@ -307,6 +284,9 @@ def test_production_process_refuses_uploads_cards_and_import():
         assert state["clients"] == []
         assert state["appointments"] == []
         assert state["services"]
+        # Full launch seed must run before trial upsert; a lone trial row skips reset_data.
+        assert any(row.get("slug") == "swedish" for row in state["services"])
+        assert state["settings"], "launch seed must include settings (trial upsert must not precede reset_data)"
         assert state["settings"][0]["documentUploadsEnabled"] is False
         assert state["settings"][0]["cardCheckoutEnabled"] is False
         checkout = requests.post(API + "/invoices/none/checkout", json={}, timeout=10)

@@ -1,22 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, AlertTriangle, Check } from "lucide-react";
+import { Activity, AlertTriangle, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar } from "@/components/ui-kit";
-import { api } from "@/lib/api";
+import { api, apiError } from "@/lib/api";
 import { NEXT_STATE, OPS_STATE, fmtClockTime, fmtSpan } from "@/lib/turnaround";
 
 const ALERT_LABEL = { at_risk: "Next booking at risk", running_late: "Running late for next booking", adjustment: "Schedule adjustment requested", reception: "Practitioner asked reception for help" };
 
 function useBoard() {
   const [board, setBoard] = useState(null);
-  const load = useCallback(() => api.turnaroundBoard().then(setBoard).catch(() => {}), []);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [message, setMessage] = useState("");
+  const load = useCallback(() => {
+    setStatus((prev) => (prev === "ready" ? "ready" : "loading"));
+    return api.turnaroundBoard()
+      .then((data) => {
+        setBoard(data);
+        setStatus("ready");
+        setMessage("");
+      })
+      .catch((err) => {
+        setBoard(null);
+        setStatus("error");
+        setMessage(apiError(err) || "Live practitioner status could not be loaded.");
+      });
+  }, []);
   useEffect(() => {
     load();
     const timer = setInterval(() => { if (!document.hidden) load(); }, 20000);
     return () => clearInterval(timer);
   }, [load]);
-  return { board, load };
+  return { board, status, message, load };
 }
 
 function PersonRow({ row, person }) {
@@ -33,8 +48,33 @@ function PersonRow({ row, person }) {
 }
 
 export function TurnaroundBoard({ people = {}, compact = false }) {
-  const { board, load } = useBoard();
-  if (!board) return <div className="nb-card h-24 animate-pulse" data-testid="turnaround-board-loading" />;
+  const { board, status, message, load } = useBoard();
+
+  if (status === "loading" && !board) {
+    return (
+      <section className="nb-card space-y-2 rounded-[28px] p-5" data-testid="turnaround-board-loading" aria-busy="true">
+        <p className="nb-eyebrow flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" />Practitioner status · live</p>
+        <p className="text-sm text-nb-mute">Loading live session timing…</p>
+        <div className="h-10 animate-pulse rounded-2xl bg-sky-50" />
+      </section>
+    );
+  }
+
+  if (status === "error" || !board) {
+    return (
+      <section className="nb-card space-y-3 rounded-[28px] p-5" data-testid="turnaround-board-error">
+        <p className="nb-eyebrow flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" />Practitioner status · live</p>
+        <p className="text-sm text-nb-mute" data-testid="turnaround-board-error-message">{message || "Live practitioner status is unavailable."}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={() => load()} className="nb-btn-ghost h-10 px-4 text-sm" data-testid="turnaround-board-retry">
+            <RefreshCw className="h-3.5 w-3.5" />Try again
+          </button>
+          {compact && <Link to="/owner/turnaround" className="text-sm font-semibold text-nb-blue" data-testid="turnaround-board-more">Turnaround settings & report</Link>}
+        </div>
+      </section>
+    );
+  }
+
   const rows = compact ? board.practitioners.filter((row) => row.state !== "idle") : board.practitioners;
   const ack = async (id) => { try { await api.ackTurnaroundAlert(id); toast.success("Alert acknowledged"); load(); } catch (err) { toast.error(err?.response?.data?.detail || "Not saved"); } };
   return (

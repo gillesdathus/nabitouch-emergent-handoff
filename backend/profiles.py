@@ -11,8 +11,8 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 &/',.\-]{1,79}$")
 VISIBILITY = ("draft", "published", "hidden")
 OWNER_FIELDS = {"name", "designation", "bio", "experience", "qualifications", "specialties", "profileVisibility", "displayOrder", "slug"}
-SELF_FIELDS = {"name", "designation", "bio", "experience", "qualifications"}
-HIDDEN = {"base", "licenseExpiry", "insuranceExpiry", "photoMediaId"}
+SELF_FIELDS = {"name", "designation", "bio", "experience", "qualifications", "specialties"}
+HIDDEN = {"base", "licenseExpiry", "insuranceExpiry", "photoMediaId", "credentialAttestations"}
 
 
 def profile_visibility(person):

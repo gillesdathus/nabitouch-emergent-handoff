@@ -216,7 +216,7 @@ def campaign_live(campaign, at):
     return True
 
 
-def campaign_fits(campaign, day, start, duration, service_slug=None):
+def campaign_fits(campaign, day, start, duration, service_slug=None, location_type=None):
     if day < campaign.get("bookingStart") or day > campaign.get("bookingEnd"):
         return False
     if start < campaign.get("windowStart") or start >= campaign.get("windowEnd"):
@@ -226,11 +226,41 @@ def campaign_fits(campaign, day, start, duration, service_slug=None):
     slug = campaign.get("serviceSlug") or "all"
     if service_slug and slug not in ("all", service_slug):
         return False
+    locations = campaign.get("locationTypes") or []
+    if locations and location_type and location_type not in locations:
+        return False
+    kind = campaign.get("offerKind") or "percent"
+    if kind in ("complimentary", "trial"):
+        minutes = int(campaign.get("complimentaryMinutes") or campaign.get("durationMinutes") or 10)
+        if int(duration) != minutes:
+            return False
     return True
+
+
+def has_regular_treatment_history(appointments):
+    """True when the person already had a non-trial visit that counts as a regular treatment client."""
+    from trial import is_trial_appointment
+
+    for appt in appointments or []:
+        if is_trial_appointment(appt):
+            continue
+        status = str((appt or {}).get("status") or "")
+        if not status or status in {"cancelled", "refunded"}:
+            continue
+        return True
+    return False
 
 
 def audience_ok(campaign, client):
     mode = campaign.get("audience") or "all"
+    kind = campaign.get("offerKind") or "percent"
+    # Introductory trial: prior regular treatments (not account registration, not prior trial) block.
+    if mode == "new" and kind in ("trial", "complimentary") and (campaign.get("code") or "").upper() == "TENMIN":
+        history = (client or {}).get("_welcomeHistory")
+        if history is not None:
+            return not has_regular_treatment_history(history)
+        visits = int((client or {}).get("onlineBookings") or 0)
+        return visits <= 0
     visits = int((client or {}).get("onlineBookings") or 0)
     if mode == "new":
         return visits <= 0
@@ -249,16 +279,218 @@ def reserve_decision(campaign, client, at, already):
     return "reserved"
 
 
-def apply_campaign_price(quoted, percent, gst, stackable=False):
+def normalize_follow_up(raw, *, complimentary=False):
+    raw = raw if isinstance(raw, dict) else {}
+    enabled = bool(raw.get("enabled")) if "enabled" in raw else bool(complimentary)
+    percent = float(raw.get("percent") if raw.get("percent") is not None else 20)
+    valid_days = int(raw.get("validDays") if raw.get("validDays") is not None else 14)
+    auto_issue = bool(raw.get("autoIssueOnComplete")) if "autoIssueOnComplete" in raw else True
+    if percent < 1 or percent > 80:
+        raise ValueError("Follow-up percent must be between 1 and 80")
+    if valid_days < 1 or valid_days > 90:
+        raise ValueError("Follow-up validity must be between 1 and 90 days")
+    return {
+        "enabled": enabled,
+        "percent": percent,
+        "validDays": valid_days,
+        "autoIssueOnComplete": auto_issue,
+    }
+
+
+def launch_ten_minutes_on_us():
+    """Draft standalone trial campaign. Never auto-live; never flips practitioner availability.
+
+    Limits (maxRedemptions, perClientLimit, audience, locationTypes, channels) stay
+    owner-configurable. Draft defaults match the prior template so go-live still
+    requires an explicit owner decision — they are not invented eligibility rules.
+    """
+    from trial import DEFAULT_TRIAL_PRACTITIONER_ID, TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG
+
+    opening = now()
+    return {
+        "id": "cmp-ten-minutes-on-us",
+        "title": "10 Minutes. On Us.",
+        "description": "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch.",
+        "status": "draft",
+        "offerKind": "trial",
+        "complimentaryMinutes": TRIAL_DURATION_MIN,
+        "durationMinutes": TRIAL_DURATION_MIN,
+        "locationTypes": list(TRIAL_LOCATION_TYPES),
+        "serviceSlug": TRIAL_SERVICE_SLUG,
+        "practitionerId": DEFAULT_TRIAL_PRACTITIONER_ID,
+        "bookingChannels": ["app"],
+        "treatmentScope": "neck_shoulders",
+        "bookingStart": opening.date().isoformat(),
+        "bookingEnd": (opening + timedelta(days=365)).date().isoformat(),
+        "windowStart": "09:00",
+        "windowEnd": "20:00",
+        "publishAt": iso(opening),
+        "expiresAt": iso(opening + timedelta(days=365)),
+        "discountPercent": 0,
+        "discountFixed": 0,
+        # Owner-editable capacity fields (existing template defaults; not hard eligibility policy).
+        "maxRedemptions": 30,
+        "redemptions": 0,
+        "perClientLimit": 1,
+        "audience": "new",
+        "minDuration": TRIAL_DURATION_MIN,
+        "public": True,
+        "stackable": False,
+        "code": "TENMIN",
+        "showHome": True,
+        "showOffers": True,
+        # First-regular-booking welcome offer is preserved; do not auto-issue a competing coupon.
+        "followUp": normalize_follow_up({"enabled": False, "percent": 20, "validDays": 14, "autoIssueOnComplete": False}),
+        "sendingEnabled": False,
+        "createdAt": iso(opening),
+    }
+
+
+def parse_campaign_fields(payload, *, current=None):
+    """Validate create/update payload. Create always stays draft."""
+    from trial import TRIAL_DURATION_MIN, TRIAL_SERVICE_SLUG
+
+    current = current or {}
+    kind = payload.get("offerKind") or current.get("offerKind") or "percent"
+    if kind not in ("percent", "fixed", "complimentary", "trial"):
+        raise ValueError("Offer kind must be percent, fixed, complimentary, or trial")
+    follow_up = normalize_follow_up(
+        payload.get("followUp") if "followUp" in payload else current.get("followUp"),
+        complimentary=kind in ("complimentary", "trial"),
+    )
+    if kind == "trial":
+        # Trial CTA is the regular booking flow + preserved welcome offer; do not force a coupon.
+        if "followUp" not in payload and "followUp" not in current:
+            follow_up = normalize_follow_up({"enabled": False, "percent": 20, "validDays": 14, "autoIssueOnComplete": False})
+    percent = float(payload.get("discountPercent") if payload.get("discountPercent") is not None else current.get("discountPercent") or 0)
+    fixed = float(payload.get("discountFixed") if payload.get("discountFixed") is not None else current.get("discountFixed") or 0)
+    minutes = int(payload.get("complimentaryMinutes") if payload.get("complimentaryMinutes") is not None else current.get("complimentaryMinutes") or 10)
+    if kind == "percent":
+        if percent <= 0 or percent > 80:
+            raise ValueError("Discount percent must be between 1 and 80")
+        fixed = 0
+        minutes = 0
+    elif kind == "fixed":
+        if fixed <= 0:
+            raise ValueError("Fixed discount must be greater than zero")
+        percent = 0
+        minutes = 0
+    elif kind == "trial":
+        minutes = TRIAL_DURATION_MIN
+        percent = 0
+        fixed = 0
+    else:
+        if minutes < 5 or minutes > 120:
+            raise ValueError("Complimentary minutes must be between 5 and 120")
+        percent = 0
+        fixed = 0
+    from trial import TRIAL_LOCATION_TYPES
+
+    locations = payload.get("locationTypes") if "locationTypes" in payload else current.get("locationTypes")
+    if kind == "complimentary":
+        locations = locations if isinstance(locations, list) and locations else ["clinic"]
+    elif kind == "trial":
+        from trial import normalize_trial_locations
+        # Trial campaigns are mobile-only; never persist clinic as a venue.
+        locations = normalize_trial_locations(locations if isinstance(locations, list) else None)
+    elif not isinstance(locations, list):
+        locations = []
+    expiry = stamp(payload.get("expiresAt") or current.get("expiresAt"))
+    opening = stamp(payload.get("publishAt") or current.get("publishAt") or now())
+    booking_start = payload.get("bookingStart") or current.get("bookingStart")
+    window_start = payload.get("windowStart") or current.get("windowStart")
+    if not expiry or not opening or not booking_start or not window_start:
+        raise ValueError("A campaign needs an expiry, a booking date, and a time window")
+    service_slug = payload.get("serviceSlug") if "serviceSlug" in payload else (current.get("serviceSlug") or "all")
+    if kind == "trial":
+        service_slug = TRIAL_SERVICE_SLUG
+    channels = payload.get("bookingChannels") if "bookingChannels" in payload else current.get("bookingChannels")
+    if not isinstance(channels, list):
+        channels = ["app"] if kind == "trial" else []
+    practitioner_id = payload.get("practitionerId") if "practitionerId" in payload else current.get("practitionerId")
+    return {
+        "title": str(payload.get("title") or current.get("title") or ("10 Minutes. On Us." if kind == "trial" else "Flash booking"))[:120],
+        "description": str(payload.get("description") or current.get("description") or "")[:500],
+        "offerKind": kind,
+        "complimentaryMinutes": minutes,
+        "durationMinutes": minutes if kind == "trial" else (current.get("durationMinutes") or minutes),
+        "locationTypes": locations,
+        "serviceSlug": service_slug,
+        "practitionerId": practitioner_id,
+        "bookingChannels": [str(c)[:40] for c in channels][:8],
+        "treatmentScope": "neck_shoulders" if kind == "trial" else (payload.get("treatmentScope") if "treatmentScope" in payload else current.get("treatmentScope")),
+        "bookingStart": booking_start,
+        "bookingEnd": payload.get("bookingEnd") or current.get("bookingEnd") or booking_start,
+        "windowStart": window_start,
+        "windowEnd": payload.get("windowEnd") or current.get("windowEnd") or window_start,
+        "publishAt": iso(opening),
+        "expiresAt": iso(expiry),
+        "discountPercent": percent,
+        "discountFixed": fixed,
+        "maxRedemptions": int(payload.get("maxRedemptions") if payload.get("maxRedemptions") is not None else current.get("maxRedemptions") or 1),
+        "perClientLimit": int(payload.get("perClientLimit") if payload.get("perClientLimit") is not None else current.get("perClientLimit") or 1),
+        "audience": payload.get("audience") if payload.get("audience") in ("new", "returning", "all") else (current.get("audience") or "all"),
+        "minDuration": int(payload.get("minDuration") if payload.get("minDuration") is not None else (minutes if kind in ("complimentary", "trial") else current.get("minDuration") or 0)),
+        "public": bool(payload.get("public")) if "public" in payload else bool(current.get("public", True)),
+        "stackable": False if kind in ("complimentary", "trial") else bool(payload.get("stackable") if "stackable" in payload else current.get("stackable")),
+        "code": str(payload.get("code") if "code" in payload else current.get("code") or "")[:40],
+        "followUp": follow_up,
+        "sendingEnabled": False,
+        # Placement toggles are independent of live/draft status (hide banner ≠ disable campaign).
+        "showHome": bool(payload.get("showHome")) if "showHome" in payload else bool(current.get("showHome", True)),
+        "showOffers": bool(payload.get("showOffers")) if "showOffers" in payload else bool(current.get("showOffers", True)),
+    }
+
+
+def apply_campaign_price(quoted, percent_or_offer, gst, stackable=False):
+    """Apply a campaign discount. Accepts a legacy percent number or an offer/reservation dict."""
     base = float(quoted.get("base") or 0)
-    extra = money(base * float(percent) / 100)
     existing = float(quoted.get("discount") or 0)
+    offer = percent_or_offer
+    if isinstance(offer, dict):
+        kind = offer.get("offerKind") or "percent"
+        stackable = bool(offer.get("stackable")) if "stackable" in offer else stackable
+        if kind in ("complimentary", "trial"):
+            extra = base
+            title = quoted.get("campaignTitle") or offer.get("title") or ("10 Minutes. On Us." if kind == "trial" else "Complimentary session")
+            priced = {
+                **quoted,
+                "discount": min(base, extra) if base else 0,
+                "promoName": title,
+                "campaignOfferKind": kind,
+                "complimentaryMinutes": int(offer.get("complimentaryMinutes") or quoted.get("complimentaryMinutes") or 10),
+                "addons": 0,
+                "travel": 0,
+                "welcomeOffer": False,
+                "promoId": None,
+                "promoCode": None,
+                "appliedPromoIds": [],
+            }
+            priced["tax"] = 0
+            priced["total"] = 0
+            priced["treatmentAfterDiscount"] = 0
+            return priced
+        if kind == "fixed":
+            extra = money(float(offer.get("discountFixed") or offer.get("fixed") or 0))
+        else:
+            extra = money(base * float(offer.get("percent") or offer.get("discountPercent") or 0) / 100)
+        title = quoted.get("campaignTitle") or offer.get("title") or "Flash booking"
+    else:
+        extra = money(base * float(percent_or_offer) / 100)
+        title = quoted.get("campaignTitle") or "Flash booking"
     discount = min(base, existing + extra) if stackable else min(base, extra)
     subtotal = base - discount + float(quoted.get("addons") or 0) + float(quoted.get("travel") or 0)
     tax = money(subtotal * float(gst if gst is not None else 0.05))
     total = money(subtotal + tax)
-    return {**quoted, "discount": discount, "promoName": quoted.get("campaignTitle") or "Flash booking", "tax": tax, "total": total, "treatmentAfterDiscount": money(base - discount)}
-
+    return {
+        **quoted,
+        "discount": discount,
+        "promoName": title,
+        "tax": tax,
+        "total": total,
+        "treatmentAfterDiscount": money(base - discount),
+        "campaignOfferKind": (offer.get("offerKind") if isinstance(offer, dict) else "percent"),
+    }
 
 def release_count(redemptions):
     return max(0, int(redemptions) - 1)
@@ -295,11 +527,17 @@ def public_campaign(campaign, at):
     if not campaign or not campaign.get("public") or not campaign_live(campaign, at):
         return None
     remaining = max(0, int(campaign.get("maxRedemptions") or 0) - int(campaign.get("redemptions") or 0))
+    kind = campaign.get("offerKind") or "percent"
     return {
         "id": campaign["id"],
         "title": campaign.get("title") or "",
         "description": campaign.get("description") or "",
+        "offerKind": kind,
         "discountPercent": campaign.get("discountPercent"),
+        "discountFixed": campaign.get("discountFixed"),
+        "complimentaryMinutes": campaign.get("complimentaryMinutes"),
+        "durationMinutes": campaign.get("durationMinutes") or campaign.get("complimentaryMinutes"),
+        "locationTypes": campaign.get("locationTypes") or [],
         "expiresAt": campaign.get("expiresAt"),
         "bookingStart": campaign.get("bookingStart"),
         "bookingEnd": campaign.get("bookingEnd"),
@@ -307,17 +545,47 @@ def public_campaign(campaign, at):
         "windowEnd": campaign.get("windowEnd"),
         "remaining": remaining,
         "serviceSlug": campaign.get("serviceSlug") or "",
+        "practitionerId": campaign.get("practitionerId"),
+        "bookingChannels": campaign.get("bookingChannels") or [],
+        "treatmentScope": campaign.get("treatmentScope"),
         "minDuration": campaign.get("minDuration") or 0,
         "soldOut": remaining == 0,
+        "followUp": campaign.get("followUp") or {"enabled": False},
+        "headline": ("Try Nabitouch. 10 Minutes. On Us." if kind == "trial" else None),
+        "subhead": ("Experience a free 10-minute neck-and-shoulder massage." if kind == "trial" else None),
+        "body": (
+            "Experience a free 10-minute neck-and-shoulder massage. Meet your therapist, feel the difference, and discover Nabitouch."
+            if kind == "trial" else None
+        ),
+        "ctaLabel": ("Claim my free 10 minutes" if kind == "trial" else None),
+        "showHome": campaign.get("showHome") is not False,
+        "showOffers": campaign.get("showOffers") is not False,
     }
 
 
-def analytics(cases, campaigns):
+def analytics(cases, campaigns, followups=None):
     offered = [case for case in cases or [] if case.get("offers")]
     filled = [case for case in cases or [] if case.get("status") == "filled"]
     times = [case.get("minutesToFill") for case in filled if case.get("minutesToFill") is not None]
     gross = sum(float(item.get("gross") or 0) for item in campaigns or [])
     discount = sum(float(item.get("discountCost") or 0) for item in campaigns or [])
+    rows = []
+    for item in campaigns or []:
+        capacity = int(item.get("maxRedemptions") or 0)
+        used = int(item.get("redemptions") or 0)
+        rows.append({
+            "id": item.get("id"),
+            "title": item.get("title") or "",
+            "status": item.get("status"),
+            "offerKind": item.get("offerKind") or "percent",
+            "redemptions": used,
+            "remaining": max(0, capacity - used),
+            "maxRedemptions": capacity,
+            "bookings": int(item.get("bookings") or 0),
+            "gross": money(float(item.get("gross") or 0)),
+            "discountCost": money(float(item.get("discountCost") or 0)),
+        })
+    coupons = followups or []
     return {
         "recovered": len(filled),
         "offered": len(offered),
@@ -330,6 +598,9 @@ def analytics(cases, campaigns):
         "discountCost": money(discount),
         "estimatedIncrementalRevenue": None,
         "incrementalNote": "Promotional bookings are not assumed to be additional revenue.",
+        "campaigns": rows,
+        "followUpIssued": sum(1 for row in coupons if row.get("status") in ("issued", "reserved", "redeemed")),
+        "followUpRedeemed": sum(1 for row in coupons if row.get("status") == "redeemed"),
     }
 
 
@@ -549,36 +820,23 @@ def build_recovery_router(db, coll, add_audit, require, user_from, ensure_slot, 
             raise HTTPException(403, "Only the owner can change campaigns")
         if payload.get("sendNow"):
             raise HTTPException(403, "Promotional sending is off")
-        percent = float(payload.get("discountPercent") or 0)
-        if percent <= 0 or percent > 80:
-            raise HTTPException(400, "Discount percent must be between 1 and 80")
-        expiry = stamp(payload.get("expiresAt"))
-        opening = stamp(payload.get("publishAt") or now())
-        if not expiry or not opening or not payload.get("bookingStart") or not payload.get("windowStart"):
-            raise HTTPException(400, "A campaign needs an expiry, a booking date, and a time window")
+        if payload.get("template") == "ten_minutes_on_us":
+            row = launch_ten_minutes_on_us()
+            row["id"] = "cmp-" + uuid.uuid4().hex[:8]
+            await db.nt_campaigns.insert_one(dict(row))
+            row.pop("_id", None)
+            await add_audit(user["name"], f"Acquisition campaign drafted: {row['title']}", None)
+            return row
+        try:
+            fields = parse_campaign_fields(payload)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         row = {
             "id": "cmp-" + uuid.uuid4().hex[:8],
-            "title": str(payload.get("title") or "Flash booking")[:120],
-            "description": str(payload.get("description") or "")[:500],
             "status": "draft",
-            "serviceSlug": payload.get("serviceSlug") or "all",
-            "bookingStart": payload["bookingStart"],
-            "bookingEnd": payload.get("bookingEnd") or payload["bookingStart"],
-            "windowStart": payload["windowStart"],
-            "windowEnd": payload.get("windowEnd") or payload["windowStart"],
-            "publishAt": iso(opening),
-            "expiresAt": iso(expiry),
-            "discountPercent": percent,
-            "maxRedemptions": int(payload.get("maxRedemptions") or 1),
             "redemptions": 0,
-            "perClientLimit": int(payload.get("perClientLimit") or 1),
-            "audience": payload.get("audience") if payload.get("audience") in ("new", "returning", "all") else "all",
-            "minDuration": int(payload.get("minDuration") or 0),
-            "public": bool(payload.get("public")),
-            "stackable": bool(payload.get("stackable")),
-            "code": str(payload.get("code") or "")[:40],
-            "sendingEnabled": False,
             "createdAt": iso(now()),
+            **fields,
         }
         await db.nt_campaigns.insert_one(dict(row))
         row.pop("_id", None)
@@ -595,31 +853,10 @@ def build_recovery_router(db, coll, add_audit, require, user_from, ensure_slot, 
             raise HTTPException(404, "Campaign not found")
         if current.get("status") == "live":
             raise HTTPException(409, "Pause the campaign before editing it")
-        percent = float(payload.get("discountPercent") or 0)
-        if percent <= 0 or percent > 80:
-            raise HTTPException(400, "Discount percent must be between 1 and 80")
-        expiry = stamp(payload.get("expiresAt"))
-        if not expiry or not payload.get("bookingStart") or not payload.get("windowStart"):
-            raise HTTPException(400, "A campaign needs an expiry, a booking date, and a time window")
-        changes = {
-            "title": str(payload.get("title") or current.get("title") or "Flash booking")[:120],
-            "description": str(payload.get("description") or "")[:500],
-            "serviceSlug": payload.get("serviceSlug") or "all",
-            "bookingStart": payload["bookingStart"],
-            "bookingEnd": payload.get("bookingEnd") or payload["bookingStart"],
-            "windowStart": payload["windowStart"],
-            "windowEnd": payload.get("windowEnd") or payload["windowStart"],
-            "expiresAt": iso(expiry),
-            "discountPercent": percent,
-            "maxRedemptions": int(payload.get("maxRedemptions") or 1),
-            "perClientLimit": int(payload.get("perClientLimit") or 1),
-            "audience": payload.get("audience") if payload.get("audience") in ("new", "returning", "all") else "all",
-            "minDuration": int(payload.get("minDuration") or 0),
-            "public": bool(payload.get("public", True)),
-            "stackable": bool(payload.get("stackable")),
-            "code": str(payload.get("code") or "")[:40],
-            "sendingEnabled": False,
-        }
+        try:
+            changes = parse_campaign_fields(payload, current=current)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         saved = await db.nt_campaigns.find_one_and_update({"id": campaign_id}, {"$set": changes}, return_document=ReturnDocument.AFTER, projection={"_id": 0})
         await add_audit(user["name"], f"Flash campaign updated: {saved['title']}", None)
         return saved
@@ -681,20 +918,66 @@ def build_recovery_router(db, coll, add_audit, require, user_from, ensure_slot, 
     async def marketing_analytics(request: Request):
         await require(request, "owner")
         cases = await db.nt_recovery_cases.find({}, {"_id": 0, "status": 1, "offers": 1, "minutesToFill": 1, "travelSaved": 1}).to_list(500)
-        campaigns = await db.nt_campaigns.find({}, {"_id": 0, "redemptions": 1, "gross": 1, "discountCost": 1, "bookings": 1}).to_list(100)
-        return analytics(cases, campaigns)
+        campaigns = await db.nt_campaigns.find({}, {"_id": 0}).to_list(100)
+        followups = await db.nt_followup_coupons.find({}, {"_id": 0, "status": 1}).to_list(5000)
+        return analytics(cases, campaigns, followups)
+
+    @router.post("/campaigns/templates/ten-minutes")
+    async def template_ten_minutes(request: Request):
+        user = await require(request, "owner")
+        row = launch_ten_minutes_on_us()
+        row["id"] = "cmp-" + uuid.uuid4().hex[:8]
+        await db.nt_campaigns.insert_one(dict(row))
+        row.pop("_id", None)
+        await add_audit(user["name"], f"Acquisition campaign drafted: {row['title']}", None)
+        return row
 
     return router
 
 
-async def reserve_campaign(db, campaign_id, client, idempotency, day, start, duration, service_slug):
+def _offer_payload(campaign):
+    return {
+        "percent": campaign.get("discountPercent"),
+        "discountPercent": campaign.get("discountPercent"),
+        "discountFixed": campaign.get("discountFixed"),
+        "offerKind": campaign.get("offerKind") or "percent",
+        "complimentaryMinutes": campaign.get("complimentaryMinutes"),
+        "durationMinutes": campaign.get("durationMinutes") or campaign.get("complimentaryMinutes"),
+        "practitionerId": campaign.get("practitionerId"),
+        "treatmentScope": campaign.get("treatmentScope"),
+        "stackable": bool(campaign.get("stackable")),
+        "title": campaign.get("title"),
+        "code": campaign.get("code"),
+        "id": campaign.get("id"),
+        "followUp": campaign.get("followUp") or {"enabled": False},
+    }
+
+
+async def campaign_quote(db, campaign_id, client, day, start, duration, service_slug, location_type=None):
+    """Read-only price preview. It does not reserve or increment a redemption."""
+    if not campaign_id:
+        return None
+    campaign = await db.nt_campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not campaign or not campaign_fits(campaign, day, start, duration, service_slug, location_type):
+        return None
+    if campaign.get("serviceSlug") not in (None, "", "all", service_slug):
+        return None
+    if not audience_ok(campaign, client):
+        return None
+    already = await db.nt_campaign_redemptions.count_documents({"campaignId": campaign_id, "clientId": (client or {}).get("id"), "status": {"$in": ["reserved", "awarded"]}})
+    if reserve_decision(campaign, client, now(), already) != "reserved":
+        return None
+    return _offer_payload(campaign)
+
+
+async def reserve_campaign(db, campaign_id, client, idempotency, day, start, duration, service_slug, location_type=None):
     if not campaign_id:
         return None
     existing = await db.nt_campaign_redemptions.find_one({"idempotencyKey": idempotency}, {"_id": 0}) if idempotency else None
     if existing:
         return existing
     campaign = await db.nt_campaigns.find_one({"id": campaign_id}, {"_id": 0})
-    if not campaign or not campaign_fits(campaign, day, start, duration, service_slug):
+    if not campaign or not campaign_fits(campaign, day, start, duration, service_slug, location_type):
         raise HTTPException(409, "That promotion does not apply to this visit")
     if campaign.get("serviceSlug") not in (None, "", "all", service_slug):
         raise HTTPException(409, "That promotion does not apply to this service")
@@ -710,7 +993,22 @@ async def reserve_campaign(db, campaign_id, client, idempotency, day, start, dur
     )
     if not saved:
         raise HTTPException(409, "That promotion is no longer available")
-    row = {"id": "rdm-" + uuid.uuid4().hex[:10], "campaignId": campaign_id, "clientId": (client or {}).get("id"), "status": "reserved", "idempotencyKey": idempotency, "percent": saved.get("discountPercent"), "stackable": bool(saved.get("stackable")), "title": saved.get("title"), "at": iso(now())}
+    offer = _offer_payload(saved)
+    row = {
+        "id": "rdm-" + uuid.uuid4().hex[:10],
+        "campaignId": campaign_id,
+        "clientId": (client or {}).get("id"),
+        "status": "reserved",
+        "idempotencyKey": idempotency,
+        "percent": offer.get("percent"),
+        "discountFixed": offer.get("discountFixed"),
+        "offerKind": offer.get("offerKind"),
+        "complimentaryMinutes": offer.get("complimentaryMinutes"),
+        "stackable": bool(offer.get("stackable")),
+        "title": offer.get("title"),
+        "discountCents": None,
+        "at": iso(now()),
+    }
     try:
         await db.nt_campaign_redemptions.insert_one(dict(row))
     except Exception:
@@ -728,10 +1026,37 @@ async def release_campaign(db, reservation):
         await db.nt_campaigns.update_one({"id": reservation["campaignId"], "redemptions": {"$gt": 0}}, {"$inc": {"redemptions": -1}})
 
 
+async def release_campaign_for_appointment(db, appointment_id):
+    """Return a reserved/awarded campaign seat when a visit is cancelled before completion."""
+    if not appointment_id:
+        return
+    row = await db.nt_campaign_redemptions.find_one(
+        {"appointmentId": appointment_id, "status": {"$in": ["reserved", "awarded"]}},
+        {"_id": 0},
+    )
+    if not row:
+        return
+    result = await db.nt_campaign_redemptions.update_one(
+        {"id": row["id"], "status": {"$in": ["reserved", "awarded"]}},
+        {"$set": {"status": "released"}},
+    )
+    if result.modified_count:
+        await db.nt_campaigns.update_one({"id": row["campaignId"], "redemptions": {"$gt": 0}}, {"$inc": {"redemptions": -1}})
+
+
 async def award_campaign(db, reservation, appointment_id, gross, discount):
     if not reservation:
         return
-    await db.nt_campaign_redemptions.update_one({"id": reservation["id"], "status": "reserved"}, {"$set": {"status": "awarded", "appointmentId": appointment_id}})
+    discount_cents = int(round(float(discount or 0) * 100))
+    await db.nt_campaign_redemptions.update_one(
+        {"id": reservation["id"], "status": "reserved"},
+        {"$set": {
+            "status": "awarded",
+            "appointmentId": appointment_id,
+            "discountCents": discount_cents,
+            "offerKind": reservation.get("offerKind") or "percent",
+        }},
+    )
     await db.nt_campaigns.update_one({"id": reservation["campaignId"]}, {"$inc": {"bookings": 1, "gross": float(gross), "discountCost": float(discount)}})
 
 

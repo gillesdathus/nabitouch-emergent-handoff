@@ -29,7 +29,8 @@ FOOTER = " Reply STOP to opt out."
 TEMPLATES = {
     "reminder_24h": "Nabitouch: reminder, your visit {ref} is tomorrow at {time}. Details in the app.",
     "reminder_2h": "Nabitouch: your visit {ref} starts at {time} today. Please have the space ready.",
-    "on_the_way": "Nabitouch: your practitioner is on the way for visit {ref}. Track the trip in the app.",
+    "on_the_way": "Nabitouch: your therapist is on the way for visit {ref}. Track your visit in the app for an estimated arrival time.",
+    "arrived": "Nabitouch: your therapist has arrived for visit {ref}.",
     "running_late": "Nabitouch: your practitioner is running about {minutes} min late for visit {ref}. Sorry for the wait.",
     "booking_confirmed": "Nabitouch: visit {ref} is confirmed for {date} at {time}. Manage it in the app.",
     "booking_changed": "Nabitouch: visit {ref} is now {date} at {time}. Manage it in the app.",

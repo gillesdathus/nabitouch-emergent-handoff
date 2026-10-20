@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { animate, motion } from "framer-motion";
 import { Check, FlaskConical, WifiOff } from "lucide-react";
-import { STATUS, PAYMENT_STATUS, fmtStamp, CLIENT_STAGES, zoneFor, managedMediaPath } from "@/lib/domain";
+import { STATUS, PAYMENT_STATUS, fmtStamp, clientVisitProgress, zoneFor, managedMediaPath } from "@/lib/domain";
 import { api } from "@/lib/api";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
@@ -74,36 +74,52 @@ export function PageSkeleton({ error }) {
   );
 }
 
-// Operational timeline (staff). Shows every recorded lifecycle event.
+// Operational timeline (staff). Lifecycle statuses and Security Shield event types.
 export function OpsTimeline({ appt, compact }) {
   const events = appt.events || [];
+  const labelOf = (e) => {
+    if (e.type && e.type !== e.status) return String(e.type).replace(/_/g, " ");
+    return STATUS[e.status]?.label || e.status || e.type || "event";
+  };
   return (
     <ol className="relative space-y-3 pl-5 before:absolute before:left-[7px] before:top-1 before:bottom-1 before:w-px before:bg-sky-200" data-testid="ops-timeline">
       {events.map((e, i) => (
-        <motion.li key={`${e.status}-${i}`} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: compact ? 0 : i * 0.04 }} className="relative">
+        <motion.li key={`${e.type || e.status}-${e.at}-${i}`} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: compact ? 0 : i * 0.04 }} className="relative">
           <span className={`absolute -left-5 top-1 h-3.5 w-3.5 rounded-full border-2 border-white ${i === events.length - 1 ? "nb-gradient" : "bg-sky-300"}`} />
-          <div className="flex items-baseline justify-between gap-3 text-sm"><span className="font-medium text-nb-ink">{STATUS[e.status]?.label || e.status}</span><span className="text-xs tabular-nums text-nb-mute">{fmtStamp(e.at)}</span></div>
-          {!compact && e.actor && <p className="text-[11px] text-slate-500">{e.actor}{e.note ? ` · ${e.note}` : ""}</p>}
+          <div className="flex items-baseline justify-between gap-3 text-sm"><span className="font-medium text-nb-ink">{labelOf(e)}</span><span className="text-xs tabular-nums text-nb-mute">{fmtStamp(e.at)}</span></div>
+          {!compact && (e.actor || e.note || e.label) && <p className="text-[11px] text-slate-500">{e.actor}{(e.note || e.label) ? ` · ${e.note || e.label}` : ""}</p>}
         </motion.li>
       ))}
     </ol>
   );
 }
 
-// Client-safe progress tracker: never shows SOAP / clinical states.
+// Client-safe visit status: operational appointment phases only (not intake/consent/prep).
 export function ClientTracker({ appt }) {
-  const label = STATUS[appt.status]?.client;
-  const idx = Math.max(0, CLIENT_STAGES.indexOf(label));
+  const progress = clientVisitProgress(appt);
   return (
     <div data-testid="client-tracker">
-      <div className="flex items-center gap-1.5">
-        {CLIENT_STAGES.map((s, i) => (
-          <div key={s} className="h-1.5 flex-1 overflow-hidden rounded-full bg-sky-100">
-            <motion.div className="nb-gradient h-full" initial={{ width: 0 }} animate={{ width: i <= idx ? "100%" : "0%" }} transition={{ duration: 0.6, delay: i * 0.05 }} />
-          </div>
-        ))}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-nb-mute">Visit status</p>
+          <p className="mt-1 text-sm font-semibold text-nb-navy" data-testid="client-tracker-label">{progress.headline}</p>
+        </div>
+        {progress.showBar && (
+          <p className="shrink-0 text-[11px] text-nb-mute" data-testid="client-tracker-phase">
+            {progress.stageIndex + 1}/{progress.stageCount} · practitioner updates
+          </p>
+        )}
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs"><span className="font-semibold text-nb-navy" data-testid="client-tracker-label">{label}</span><span className="text-nb-mute">Step {idx + 1} of {CLIENT_STAGES.length}</span></div>
+      {progress.showBar && (
+        <div className="mt-2.5 flex items-center gap-1" data-testid="client-tracker-bar" aria-hidden>
+          {Array.from({ length: progress.stageCount }, (_, i) => (
+            <div key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-sky-100">
+              <motion.div className="nb-gradient h-full" initial={{ width: 0 }} animate={{ width: i <= progress.stageIndex ? "100%" : "0%" }} transition={{ duration: 0.45, delay: i * 0.04 }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] leading-snug text-nb-mute" data-testid="client-tracker-detail">{progress.detail}</p>
     </div>
   );
 }
@@ -122,7 +138,7 @@ export function ZoneMap({ zones, point, pins = [], center, height = 220 }) {
           <circle key={z.id} cx="50" cy="50" r={(z.radiusKm / maxR) * 46} fill={z.color} fillOpacity={z.enabled ? 0.12 : 0.03} stroke={z.color} strokeOpacity=".5" strokeDasharray={z.enabled ? "0" : "2 2"} strokeWidth=".4" />
         ))}
         <circle cx="50" cy="50" r="1.4" fill="#0B2E8A" />
-        {pins.map((p, i) => { const q = toXY(p); return <circle key={i} cx={q.x} cy={q.y} r="1.6" fill={p.color || "#1565F0"} stroke="white" strokeWidth=".5" />; })}
+        {pins.filter((p) => p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng))).map((p, i) => { const q = toXY(p); return <circle key={i} cx={q.x} cy={q.y} r="1.6" fill={p.color || "#1565F0"} stroke="white" strokeWidth=".5" />; })}
         {point && (() => { const q = toXY(point); return <g><circle cx={q.x} cy={q.y} r="3.5" fill="#1565F0" opacity=".25" /><circle cx={q.x} cy={q.y} r="1.8" fill="#1565F0" stroke="white" strokeWidth=".6" /></g>; })()}
       </svg>
       <div className="absolute left-3 top-3 flex flex-wrap gap-1.5"><span className="rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-nb-ink">Zone diagram, not a street map</span></div>

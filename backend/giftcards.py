@@ -329,20 +329,17 @@ def build_giftcard_router(db, coll, add_audit, user_from, reception_perms):
             raise HTTPException(409, "This gift card is not awaiting payment")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
         url = None
-        if key.startswith("sk_live"):
-            raise HTTPException(503, "Live card checkout is not enabled")
-        if key.startswith("sk_test_"):
-            import httpx
+        if key.startswith(("sk_test_", "sk_live_")):
+            from stripe_gateway import stripe_request
             from config import public_base_url
             app_url = public_base_url(request)
             form = {"mode": "payment", "success_url": app_url + "/me/gifts?card=return&session_id={CHECKOUT_SESSION_ID}", "cancel_url": app_url + "/me/gifts?card=cancel",
                     "line_items[0][quantity]": "1", "line_items[0][price_data][currency]": "cad", "line_items[0][price_data][unit_amount]": str(card["amountCents"]),
                     "line_items[0][price_data][product_data][name]": f"Nabitouch gift card ••{card['code'][-4:]}", "metadata[giftCardId]": cid}
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post("https://api.stripe.com/v1/checkout/sessions", auth=(key, ""), data=form)
-            if resp.status_code >= 400 or not resp.json().get("id"):
+            created = await stripe_request("POST", "checkout/sessions", data=form, idempotency_key=f"gc-{cid}")
+            session_id, url = created.get("id"), created.get("url")
+            if not session_id:
                 raise HTTPException(502, "Card checkout could not be started")
-            session_id, url = resp.json()["id"], resp.json().get("url")
         elif payments_simulated():
             session_id = "cs_test_" + uuid.uuid4().hex[:16]
         else:

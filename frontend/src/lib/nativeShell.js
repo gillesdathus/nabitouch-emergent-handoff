@@ -44,17 +44,26 @@ export function nativeLocationProvider() {
   };
 }
 
+function coordinatePair(lat, lng) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return "";
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return "";
+  return `${latitude},${longitude}`;
+}
+
 const SCHEMES = {
-  google: (lat, lng, line) => `comgooglemaps://?daddr=${lat ? `${lat},${lng}` : encodeURIComponent(line)}&directionsmode=driving`,
-  apple: (lat, lng, line) => `maps://?daddr=${lat ? `${lat},${lng}` : encodeURIComponent(line)}`,
-  waze: (lat, lng, line) => (lat ? `waze://?ll=${lat},${lng}&navigate=yes` : `waze://?q=${encodeURIComponent(line)}&navigate=yes`),
+  google: (lat, lng) => { const pair = coordinatePair(lat, lng); return pair ? `comgooglemaps://?daddr=${pair}&directionsmode=driving` : ""; },
+  apple: (lat, lng) => { const pair = coordinatePair(lat, lng); return pair ? `maps://?daddr=${pair}` : ""; },
+  waze: (lat, lng) => { const pair = coordinatePair(lat, lng); return pair ? `waze://?ll=${pair}&navigate=yes` : ""; },
 };
 
 // Opens the installed app when it exists, otherwise the web link. Opening an app does not mean navigation has started.
-export async function openNavigation(app, lat, lng, line, webHref) {
+export async function openNavigation(app, lat, lng, webHref) {
+  if (!coordinatePair(lat, lng) || !webHref) return false;
   if (!isNative()) return false;
   const { AppLauncher } = await import('@capacitor/app-launcher');
-  const url = SCHEMES[app]?.(lat, lng, line);
+  const url = SCHEMES[app]?.(lat, lng);
   const ios = Capacitor.getPlatform() === 'ios';
   try {
     if (url && (app !== 'apple' || ios) && (await AppLauncher.canOpenUrl({ url })).value) { await AppLauncher.openUrl({ url }); return true; }

@@ -15,6 +15,7 @@ import httpx
 
 from emailtpl import TEMPLATE_VERSION, wrap
 from html.parser import HTMLParser
+from email.utils import parseaddr
 from urllib.parse import urlparse
 from fastapi import HTTPException
 
@@ -116,8 +117,10 @@ def resend_webhook_authentic(body: bytes, headers, secret: str, now=None) -> boo
         return False
     raw_secret = secret[6:] if secret.startswith("whsec_") else secret
     try:
-        key = base64.b64decode(raw_secret)
+        key = base64.b64decode(raw_secret, validate=True)
     except Exception:
+        return False
+    if not key:
         return False
     digest = base64.b64encode(hmac.new(key, f"{msg_id}.{timestamp}.".encode() + body, hashlib.sha256).digest()).decode()
     for part in signature.split():
@@ -127,16 +130,102 @@ def resend_webhook_authentic(body: bytes, headers, secret: str, now=None) -> boo
     return False
 
 
+class _PlainEmail(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.parts = []; self.hidden = 0; self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("head", "style", "script"): self.hidden += 1
+        if tag == "a": self.links.append(dict(attrs).get("href", ""))
+        if tag in ("p", "tr", "br", "div"): self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden: self.parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in ("head", "style", "script"): self.hidden = max(0, self.hidden - 1)
+        if tag == "a" and self.links:
+            link = self.links.pop()
+            if link.startswith(("https://", "mailto:")): self.parts.append(" (" + link + ")")
+        if tag in ("p", "tr", "div"): self.parts.append("\n")
+        if tag in ("td", "th"): self.parts.append(" ")
+
+
+def plain_email(html):
+    parser = _PlainEmail(); parser.feed(html)
+    return "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
+
+
+def assert_complete_email_body(html: str) -> None:
+    """Refuse incomplete or client-hostile payloads before they reach the provider."""
+    stripped = (html or "").lstrip().lower()
+    if not stripped.startswith("<!doctype html"):
+        raise ValueError("Email HTML must start with <!doctype html> for Apple Mail compatibility")
+    if "<script" in stripped or "<iframe" in stripped or "<object" in stripped or "<embed" in stripped:
+        raise ValueError("Email HTML must not include script, iframe, object, or embed tags")
+    if "src=\"http://" in stripped or "src='http://" in stripped:
+        raise ValueError("Email HTML must not load remote http assets")
+    # background-image (including gradients) often stalls Apple Mail rendering.
+    if "background-image:" in stripped:
+        raise ValueError("Email HTML must not use CSS background-image")
+    text = plain_email(html)
+    if len(text) < 40:
+        raise ValueError("Email plain-text body is empty or too short")
+    if "https://" not in text and "https://" not in stripped:
+        raise ValueError("Email body must include an https link")
+
+
+def acceptance_guard(to):
+    """Exact approved inbox/sender only; no wildcard or redirect bypass."""
+    if os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() != "true":
+        return
+    allowed = {x.strip().lower() for x in os.environ.get("EMAIL_ALLOWED_RECIPIENTS", "").split(",") if x.strip()}
+    approved = {x.strip().lower() for x in os.environ.get("EMAIL_APPROVED_SENDERS", "").split(",") if x.strip()}
+    sender = parseaddr(os.environ.get("EMAIL_FROM", ""))[1].lower()
+    if to.strip().lower() not in allowed or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+", to):
+        raise HTTPException(409, "Recipient is not approved for email acceptance")
+    if not sender or sender not in approved:
+        raise HTTPException(409, "Sender is not approved for email acceptance")
+    if os.environ.get("NOTIFICATION_WORKER_ENABLED", "true").lower() != "false":
+        raise HTTPException(409, "Automatic notification worker must remain disabled during acceptance")
+
+
+def acceptance_message_guard(subject, html):
+    """Pin the approved fixed test message. Configuration attests approval, not provider evidence."""
+    if os.environ.get("EMAIL_ACCEPTANCE_MODE", "false").lower() != "true":
+        return
+    if os.environ.get("EMAIL_PROVIDER_ISOLATION_CONFIRMED", "false").lower() != "true":
+        raise HTTPException(409, "Provider-level staging isolation must be verified before email acceptance")
+    approved = os.environ.get("EMAIL_APPROVED_PREVIEW_SHA256", "")
+    digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    from email_templates import email_test_message
+    expected_subject, expected_html = email_test_message()
+    if (subject != expected_subject or html != expected_html or
+            not re.fullmatch(r"[0-9a-f]{64}", approved) or not hmac.compare_digest(approved, digest)):
+        raise HTTPException(409, "Exact email preview requires owner approval")
+
+
 async def send_email(*, to: str, subject: str, html: str, idempotency_key: str | None = None) -> str | None:
     from config import email_provider
     _assert_safe_email(subject, html)
     html = wrap(html, subject)
+    try:
+        assert_complete_email_body(html)
+        _assert_safe_email(subject, html)
+    except ValueError as exc:
+        logger.error("Email body rejected before send: %s", type(exc).__name__)
+        raise HTTPException(500, "Failed to send email") from exc
     provider = email_provider()
+    if provider in ("resend", "emergent"):
+        acceptance_guard(to)
     redirect = (os.environ.get("EMAIL_TEST_RECIPIENT") or "").strip()
     if redirect and provider in ("resend", "emergent") and to.lower() != redirect.lower():
         # Test mode: every message goes only to the owner's test inbox.
-        subject = f"[Test for {to.split('@')[0][:2]}…@{to.split('@')[-1]}] {subject}"
+        subject = f"[Test] {subject}"
         to = redirect
+        acceptance_guard(to)
+    if provider in ("resend", "emergent"):
+        acceptance_message_guard(subject, html)
     if provider == "mock":
         message_id = f"mock-{len(OUTBOX) + 1}"
         OUTBOX.append({"id": message_id, "to": to, "subject": subject})
@@ -162,9 +251,9 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
         except ValueError:
             code = ""
         if code in ("insufficient_credits", "integration_disabled", "daily_limit_reached"):
-            logger.warning(f"Email paused: {code} ({e.response.status_code}): {e.response.text}")
+            logger.warning("Email paused: provider status %s", e.response.status_code)
             raise HTTPException(503, "Email is temporarily unavailable")
-        logger.error(f"Email send failed: {e.response.status_code} {e.response.text}")
+        logger.error("Email send failed: provider status %s", e.response.status_code)
         raise HTTPException(502, "Failed to send email")
     except HTTPException:
         raise
@@ -174,11 +263,23 @@ async def send_email(*, to: str, subject: str, html: str, idempotency_key: str |
 
 
 async def _send_resend(*, to: str, subject: str, html: str, idempotency_key: str | None):
+    acceptance_guard(to)
+    acceptance_message_guard(subject, html)
     key = (os.environ.get("RESEND_API_KEY") or "").strip()
     sender = (os.environ.get("EMAIL_FROM") or "").strip()
     if not key or not sender:
         raise HTTPException(503, "Email is not configured")
-    payload = {"from": sender, "to": [to], "subject": subject, "html": html, "tags": [{"name": "template", "value": TEMPLATE_VERSION.replace(".", "-")}]}
+    text = plain_email(html)
+    if not text.strip():
+        raise HTTPException(500, "Failed to send email")
+    payload = {
+        "from": sender,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+        "text": text,
+        "tags": [{"name": "template", "value": TEMPLATE_VERSION.replace(".", "-")}],
+    }
     reply = (os.environ.get("EMAIL_REPLY_TO") or "").strip()
     if reply:
         payload["reply_to"] = reply
@@ -193,7 +294,7 @@ async def _send_resend(*, to: str, subject: str, html: str, idempotency_key: str
     except Exception:
         logger.error("Resend send error")
         raise HTTPException(503, "Email is temporarily unavailable")
-    if resp.status_code in (408, 429, 500, 502, 503):
+    if resp.status_code in (408, 425, 429) or resp.status_code >= 500:
         logger.warning("Resend temporarily unavailable: %s", resp.status_code)
         raise HTTPException(503, "Email is temporarily unavailable")
     if resp.status_code >= 400:

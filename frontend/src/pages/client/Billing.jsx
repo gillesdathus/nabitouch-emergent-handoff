@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { toast } from "sonner";
+import { useState } from "react";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, FileText, RefreshCw, ShieldCheck, Wallet } from "lucide-react";
@@ -60,19 +59,8 @@ export default function Billing() {
   const { rows, error, reload, replace } = useInvoices(undefined, true, true);
   const [filter, setFilter] = useState("open");
   const [openId, setOpenId] = useState(null);
-  const [params, setParams] = useSearchParams();
-  useEffect(() => {
-    const sid = params.get("session_id");
-    if (params.get("card") === "cancel") { toast.message("Checkout cancelled. Nothing was charged."); setParams({}); }
-    if (params.get("card") !== "return" || !sid) return;
-    let tries = 0;
-    const check = () => api.stripeReturn(sid).then((r) => {
-      if (r.confirmed) { toast.success("Payment confirmed by Stripe. Thank you!"); reload(); setParams({}); }
-      else if (++tries < 8) setTimeout(check, 2500);
-      else { toast.message("Payment is processing. It will appear here once Stripe confirms."); setParams({}); }
-    }).catch(() => {});
-    check();
-  }, [params, setParams, reload]);
+  const [params] = useSearchParams();
+  if (params.has("card")) return <Navigate replace to={"/me/billing/payment-result" + (params.get("session_id") ? "?session_id=" + encodeURIComponent(params.get("session_id")) : "")} />;
   const flags = { cardsOn: restrictedFlag(idx?.settings, "cardCheckoutEnabled"), emailOn: restrictedFlag(idx?.settings, "invoiceEmailEnabled"), giftOn: restrictedFlag(idx?.settings, "giftCardsEnabled") };
   if (!me) return <div className="mx-auto max-w-xl px-5 py-16 text-center"><p>Please sign in to see your invoices.</p><Link to="/login" className="nb-btn-primary mt-4" data-testid="billing-signin-link">Sign in</Link></div>;
   const totals = sumInvoices(rows);

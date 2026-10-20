@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ClientDirectory } from "@/components/clients/ClientDirectory";
 import { Avatar, CatalogueImage, Pill } from "@/components/ui-kit";
 import { HubLink, HubSection, PageHeader } from "@/components/tide";
-import { BadgeCheck, BarChart3, CalendarClock, Gift, GraduationCap, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
+import { BadgeCheck, BarChart3, CalendarClock, Car, Gift, GraduationCap, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { ClientProfile, PractitionerProfile } from "@/components/ops/Profiles";
@@ -243,8 +244,8 @@ function PractitionerCard({ person, soon }) {
   };
   const gallery = Array.isArray(person.gallery) ? person.gallery : [];
   return (
-    <div className="nb-card p-5" data-testid={`manage-pract-${person.id}`}>
-      <div className="flex items-center gap-3"><Avatar person={person} /><div className="flex-1"><p className="font-semibold">{person.name} {person.isOwner && <Pill tone="blue">Owner</Pill>}</p><p className="text-xs text-nb-mute">{(person.specialties || []).join(" · ")}</p></div><Switch checked={person.available} onCheckedChange={(value) => run(() => api.patch("practitioners", person.id, { available: value, _audit: `${person.name} availability → ${value ? "on" : "off"}` }))} data-testid={`manage-avail-${person.id}`} /></div>
+    <div className="nb-card min-w-0 p-4 sm:p-5" data-testid={`manage-pract-${person.id}`}>
+      <div className="flex min-w-0 items-center gap-3"><Avatar person={person} /><div className="min-w-0 flex-1"><p className="break-words font-semibold">{person.name} {person.isOwner && <Pill tone="blue">Owner</Pill>}</p><p className="truncate text-xs text-nb-mute">{(person.specialties || []).join(" · ")}</p></div><Switch checked={person.available} onCheckedChange={(value) => run(() => api.patch("practitioners", person.id, { available: value, _audit: `${person.name} availability → ${value ? "on" : "off"}` }))} data-testid={`manage-avail-${person.id}`} /></div>
       <div className="mt-3 flex flex-wrap gap-2">
         <label className="nb-btn-ghost inline-flex h-9 cursor-pointer items-center px-3 text-xs">
           Replace photo
@@ -289,7 +290,16 @@ export default function Manage() {
   const [invite, setInvite] = useState(null);
   const [clientId, setClientId] = useState(null);
   const [personId, setPersonId] = useState(null);
-  const [person, setPerson] = useState({ name: "", email: "", phone: "", role: "practitioner" });
+  const [person, setPerson] = useState({ name: "", email: "", phone: "", role: "practitioner", roles: ["practitioner"] });
+  const toggleInviteRole = (role) => {
+    setPerson((current) => {
+      const have = new Set(current.roles || [current.role]);
+      if (have.has(role)) have.delete(role); else have.add(role);
+      if (!have.size) have.add("practitioner");
+      const roles = ["owner", "manager", "practitioner", "desk"].filter((item) => have.has(item));
+      return { ...current, roles, role: roles[0] };
+    });
+  };
   const soon = (d) => d <= addDays(todayISO(), 60);
   const today = todayISO();
   const openTab = (name, extra) => {
@@ -310,6 +320,8 @@ export default function Manage() {
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <HubSection title="Operations" testid="manage-section-operations">
           <HubLink to="/owner/dispatch" icon={Radio} tint="tint-lagoon" title="Live Fleet" detail="Dispatch, arrivals, and visits on the road." meta={onDuty ? String(onDuty) : undefined} testid="manage-link-live" />
+          <HubLink to="/owner/fleet" icon={Car} tint="tint-mint" title="Security Shield · Fleet" detail="Vehicles, plates, photos, and practitioner assignments." testid="manage-link-fleet" />
+          <HubLink to="/owner/shield" icon={Shield} tint="tint-lagoon" title="Security Shield" detail="Credentials, renewals, active visits, and safety." testid="manage-link-shield" />
           <HubLink to="/owner/availability" icon={CalendarClock} tint="tint-ice" title="Availability" detail="Weekly hours, breaks, and travel buffers." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-link-availability" />
           <HubLink to="/owner/routes" icon={Route} tint="tint-mint" title="Routes" detail="The day’s stops in Edmonton order." meta={visitsToday.length ? String(visitsToday.length) : undefined} testid="manage-link-routes" />
           <HubLink to="/owner/zones" icon={MapPinned} tint="tint-meadow" title="Travel zones" detail="Radius, travel fee, and which rings are on." meta={zonesOn ? String(zonesOn) : undefined} testid="manage-link-travel" />
@@ -319,10 +331,11 @@ export default function Manage() {
           <HubLink icon={Users} tint="tint-ice" title="Clients" detail="Profiles, visits, and balances on file." meta={state.clients?.length ? String(state.clients.length) : undefined} testid="manage-open-clients" onClick={() => openTab("clients")} />
           <HubLink icon={UserRound} tint="tint-mint" title="Practitioners" detail="Photos, bookable status, and public profiles." meta={state.practitioners?.length ? String(state.practitioners.length) : undefined} testid="manage-open-practitioners" onClick={() => openTab("practitioners")} />
           <HubLink icon={MailPlus} tint="tint-lagoon" title="Invitations" detail="Create a practitioner invite. Email delivery stays off." testid="manage-open-invites" onClick={() => openTab("practitioners", () => setShowInvite(true))} />
-          <HubLink to="/owner/credentials" icon={BadgeCheck} tint="tint-meadow" title="Credentials" detail="Registration, insurance, and activation." meta={expiring ? `${expiring} due` : undefined} testid="manage-link-credentials" />
+          <HubLink to="/owner/credentials" icon={BadgeCheck} tint="tint-meadow" title="Credentials" detail="Association, liability, municipal, CPR — 14-day grace after approval." meta={expiring ? `${expiring} due` : undefined} testid="manage-link-credentials" />
         </HubSection>
         <HubSection title="Services and growth" testid="manage-section-growth">
           <HubLink icon={Sparkles} tint="tint-lagoon" title="Service catalogue" detail="Durations, prices, photos, and publication." meta={published ? String(published) : undefined} testid="manage-open-services" onClick={() => openTab("services")} />
+          <HubLink to="/owner/marketing" icon={Tag} tint="tint-mint" title="Marketing" detail="Welcome offer, flash campaigns, follow-up coupons, and light reporting." testid="manage-link-marketing" />
           <HubLink to="/owner/promos" icon={Tag} tint="tint-mint" title="Promotions" detail="Codes and the welcome offer. Gift cards stay inactive." meta={state.promotions?.length ? String(state.promotions.length) : undefined} testid="manage-link-promotions" />
           <HubLink to="/owner/campaigns" icon={Zap} tint="tint-ice" title="Campaigns" detail="The same flash-booking desk, filtered by status." testid="manage-link-campaigns" />
           <HubLink to="/owner/rewards" icon={Gift} tint="tint-meadow" title="Rewards" detail="Draft point rules. Earning and redemption stay off." testid="manage-link-rewards" />
@@ -337,27 +350,34 @@ export default function Manage() {
           <HubLink to="/owner/training" icon={GraduationCap} tint="tint-lagoon" title="Training" detail="Isolated scenarios. They do not write to live clients." testid="manage-link-training" />
         </HubSection>
       </div>
-      <div ref={records} className="scroll-mt-24">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
+      <div ref={records} className="min-w-0 scroll-mt-24">
+      <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <p className="nb-eyebrow">Workspace</p>
           <h2 className="text-xl font-semibold tracking-tight text-nb-ink">Records</h2>
         </div>
         <p className="text-xs text-nb-mute">{state.practitioners.length} practitioners · {state.services.length} services · {state.clients.length} clients</p>
       </div>
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-11 rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100">{["practitioners", "services", "clients"].map((t) => <TabsTrigger key={t} value={t} data-testid={`manage-tab-${t}`} className="rounded-full px-4 capitalize data-[state=active]:bg-nb-ink data-[state=active]:text-white">{t}</TabsTrigger>)}</TabsList>
+        <div className="overflow-x-auto">
+          <TabsList className="inline-flex h-11 w-max min-w-full rounded-full bg-white p-1 shadow-sm ring-1 ring-sky-100 sm:w-auto">{["practitioners", "services", "clients"].map((t) => <TabsTrigger key={t} value={t} data-testid={`manage-tab-${t}`} className="rounded-full px-4 capitalize data-[state=active]:bg-nb-ink data-[state=active]:text-white">{t}</TabsTrigger>)}</TabsList>
+        </div>
         <TabsContent value="practitioners" className="mt-5 space-y-3">
-          <div className="nb-card space-y-3 p-4" data-testid="practitioner-invite">
-            <div className="flex items-center justify-between gap-3"><p className="font-semibold">Practitioners</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Add practitioner"}</button></div>
+          <div className="nb-card min-w-0 space-y-3 p-4" data-testid="practitioner-invite">
+            <div className="flex flex-wrap items-center justify-between gap-3"><p className="font-semibold">Staff invitations</p><button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setShowInvite((value) => !value)} data-testid="invite-open">{showInvite ? "Close" : "Invite staff"}</button></div>
             {showInvite && <>
-            <p className="text-xs text-nb-mute">This creates an invited profile. You do not set their password. Email delivery is off in this preview, so a single-use link is shown once. SMS is not configured.</p>
+            <p className="text-xs text-nb-mute">Invite owner, manager, reception, or practitioner roles. You do not set their password. A single-use link is shown once when email delivery is off.</p>
             <div className="grid gap-2 sm:grid-cols-2">
               <input className="nb-input h-10" placeholder="Name" value={person.name} onChange={(e) => setPerson({ ...person, name: e.target.value })} data-testid="invite-name" />
               <input className="nb-input h-10" placeholder="Email" value={person.email} onChange={(e) => setPerson({ ...person, email: e.target.value })} data-testid="invite-email" />
               <input className="nb-input h-10" placeholder="Mobile phone" value={person.phone} onChange={(e) => setPerson({ ...person, phone: e.target.value })} data-testid="invite-phone" />
+              <div className="sm:col-span-2 flex flex-wrap gap-3 text-sm" data-testid="invite-roles">
+                {[["owner", "Owner"], ["manager", "Manager"], ["desk", "Reception"], ["practitioner", "Practitioner"]].map(([id, label]) => (
+                  <label key={id} className="inline-flex items-center gap-2"><input type="checkbox" checked={(person.roles || []).includes(id)} onChange={() => toggleInviteRole(id)} data-testid={`invite-role-${id}`} />{label}</label>
+                ))}
+              </div>
             </div>
-            <button type="button" className="nb-btn-primary h-10 px-4 text-sm" data-testid="invite-send" onClick={() => run(() => api.inviteStaff(person), "Invitation created").then((result) => { setInvite(result); setPerson({ name: "", email: "", phone: "", role: "practitioner" }); setShowInvite(false); }).catch(() => {})}>Create invitation</button>
+            <button type="button" className="nb-btn-primary h-10 px-4 text-sm" data-testid="invite-send" onClick={() => run(() => api.inviteStaff({ ...person, roles: person.roles, role: person.role }), "Invitation created").then((result) => { setInvite(result); setPerson({ name: "", email: "", phone: "", role: "practitioner", roles: ["practitioner"] }); setShowInvite(false); }).catch(() => {})}>Create invitation</button>
             </>}
             {invite?.previewInviteToken && <p className="break-all rounded-2xl bg-sky-50 p-3 text-xs" data-testid="invite-link">Copy this link once: {window.location.origin}/join?token={invite.previewInviteToken}</p>}
             {invite && !invite.previewInviteToken && <p className="text-sm">{invite.message}</p>}
@@ -380,15 +400,7 @@ export default function Manage() {
             </div>
           ))}
         </TabsContent>
-        <TabsContent value="clients" className="mt-5 space-y-3">
-          <input className="nb-input" placeholder="Search clients" value={q} onChange={(e) => setQ(e.target.value)} data-testid="manage-client-search" />
-          {state.clients.filter((c) => `${c.firstName} ${c.lastName} ${c.email}`.toLowerCase().includes(q.toLowerCase())).map((c) => {
-            const visits = state.appointments.filter((a) => a.clientId === c.id);
-            const next = visits.filter((a) => a.date >= todayISO() && !["cancelled", "no_show"].includes(a.status)).sort((a, b) => a.date.localeCompare(b.date))[0];
-            const due = visits.reduce((sum, a) => sum + (a.settle?.balance || 0), 0);
-            return <div key={c.id} className="flex items-center gap-2"><button type="button" onClick={() => setClientId(c.id)} className="nb-card flex min-w-0 flex-1 items-center gap-3 p-4 text-left" data-testid={`manage-client-${c.id}`}><Avatar person={c} photo={c.photo} /><div className="flex-1"><p className="font-semibold">{c.firstName} {c.lastName}</p><p className="text-xs text-nb-mute">{c.email} · {c.phone || "No phone"} · {visits.length} visits · balance {money(due)}{next ? ` · next ${next.date}` : ""}</p></div>{c.marketingConsent && <Pill tone="turq">Marketing opt-in</Pill>}</button><Link to={`/owner/clients/${c.id}`} data-testid={`manage-client-open-${c.id}`} className="nb-btn-ghost h-10 shrink-0 px-3 text-xs">Full record</Link></div>;
-          })}
-        </TabsContent>
+        <TabsContent value="clients" className="mt-5"><ClientDirectory role="owner" /></TabsContent>
       </Tabs>
       {clientId && <ClientProfile clientId={clientId} onClose={() => setClientId(null)} />}
       {personId && <PractitionerProfile personId={personId} onClose={() => setPersonId(null)} />}

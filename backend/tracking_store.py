@@ -15,6 +15,9 @@ FIX_TTL = 120
 EVENT_TTL = 900
 CAP_TTL = 7200
 EVENT_LIMIT = 200
+# Opt-in safety breadcrumbs (not continuous tracking). Short ring, short TTL.
+HISTORY_TTL = 7200
+HISTORY_LIMIT = 24
 
 _COMPARE = """
 local key = KEYS[1]
@@ -103,9 +106,37 @@ async def touch(aid, ttl=FIX_TTL):
 
 async def drop_session(aid):
     try:
-        await client().delete(_fix_key(aid))
+        await client().delete(_fix_key(aid), f"{PREFIX}hist:{aid}")
     except redis.RedisError as exc:
         raise TrackingUnavailable("Tracking storage is unavailable") from exc
+
+
+async def append_safety_sample(aid, sample: dict, *, limit=HISTORY_LIMIT, ttl=HISTORY_TTL):
+    """Store a coarse breadcrumb for authorized safety reconstruction. Not a full trip log."""
+    key = f"{PREFIX}hist:{aid}"
+    try:
+        r = client()
+        pipe = r.pipeline()
+        pipe.lpush(key, json.dumps(sample))
+        pipe.ltrim(key, 0, int(limit) - 1)
+        pipe.expire(key, int(ttl))
+        await pipe.execute()
+    except redis.RedisError as exc:
+        raise TrackingUnavailable("Tracking storage is unavailable") from exc
+
+
+async def read_safety_samples(aid, limit=HISTORY_LIMIT):
+    try:
+        raw = await client().lrange(f"{PREFIX}hist:{aid}", 0, int(limit) - 1)
+    except redis.RedisError as exc:
+        raise TrackingUnavailable("Tracking storage is unavailable") from exc
+    out = []
+    for item in raw:
+        row = _loads(item)
+        if row:
+            out.append(row)
+    out.reverse()
+    return out
 
 
 async def publish_event(event: dict):

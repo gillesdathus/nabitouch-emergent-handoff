@@ -12,24 +12,37 @@ export function RestrictionList({ restrictions, testid = "consent-restrictions" 
   if (!restrictions) return null;
   const items = [
     restrictions.avoidAreas?.length ? `Avoid: ${restrictions.avoidAreas.join(", ")}` : null,
-    `Pressure up to ${restrictions.pressureMax}`,
-    `Draping: ${restrictions.draping}`,
+    restrictions.pressureMax ? `Pressure up to ${restrictions.pressureMax}` : null,
+    restrictions.draping ? `Draping: ${restrictions.draping}` : null,
     restrictions.sensitiveAreas ? "Sensitive-area treatment consented" : "No sensitive-area treatment",
     restrictions.notes ? `Note: ${restrictions.notes}` : null,
   ].filter(Boolean);
+  if (!items.length) return null;
   return <ul className="flex flex-wrap gap-1.5" data-testid={testid}>{items.map((item) => <li key={item} className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-medium text-rose-800 ring-1 ring-rose-100">{item}</li>)}</ul>;
 }
 
 export function useSessionReadiness(apptId, { poll = 10000, enabled = true } = {}) {
   const [data, setData] = useState(null);
-  const load = useCallback(() => (enabled && apptId ? api.sessionReadiness(apptId).then(setData).catch(() => {}) : Promise.resolve()), [apptId, enabled]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(!!(enabled && apptId));
+  const load = useCallback(() => {
+    if (!enabled || !apptId) {
+      setLoading(false);
+      return Promise.resolve();
+    }
+    setLoading(true);
+    return api.sessionReadiness(apptId)
+      .then((row) => { setData(row); setError(null); return row; })
+      .catch((err) => { setError(err); })
+      .finally(() => { setLoading(false); });
+  }, [apptId, enabled]);
   useEffect(() => {
     load();
     if (!enabled || !poll) return undefined;
     const timer = setInterval(() => { if (!document.hidden) load(); }, poll);
     return () => clearInterval(timer);
   }, [load, poll, enabled]);
-  return { data, reload: load, setData };
+  return { data, error, loading, reload: load, setData };
 }
 
 export function SessionReadiness({ readiness, onWithdrawn, canWithdraw }) {

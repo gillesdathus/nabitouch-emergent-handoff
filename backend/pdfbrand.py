@@ -41,7 +41,9 @@ def fit(text, font, size, width):
 
 
 class Doc:
-    def __init__(self, title, settings):
+    def __init__(self, title, settings, pages=None, stamp=""):
+        self.pages = pages
+        self.stamp = stamp
         self.buf = io.BytesIO()
         self.c = canvas.Canvas(self.buf, pagesize=LETTER, pageCompression=1)
         self.c.setTitle(title)
@@ -83,7 +85,9 @@ class Doc:
         c.line(M, 52, W - M, 52)
         self.font("r", 7.5, MUTE)
         c.drawString(M, 40, "Breathe. Feel. Heal. Anywhere.  ·  This document contains no clinical notes.")
-        c.drawRightString(W - M, 40, f"Page {self.page}")
+        if self.stamp:
+            c.drawString(M, 30, self.stamp[:110])
+        c.drawRightString(W - M, 40, f"Page {self.page} of {self.pages}" if self.pages else f"Page {self.page}")
 
     def need(self, height):
         if self.y - height < 72:
@@ -154,7 +158,11 @@ class Doc:
         draw(headers, "m", MUTE)
         self.y -= 14
         for n, row in enumerate(rows):
+            before = self.page
             self.need(18)
+            if self.page != before:
+                draw(headers, "m", MUTE)
+                self.y -= 14
             if n % 2 == 0:
                 self.c.setFillColor(ICE)
                 self.c.rect(M - 4, self.y - 5, W - 2 * M + 8, 16, stroke=0, fill=1)
@@ -228,7 +236,15 @@ def receipt_pdf(view, settings):
 
 
 def report_pdf(title, period, kpis, sections, settings):
-    d = Doc(title, settings)
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    stamp = f"{title}  ·  {period}  ·  Generated {datetime.now(ZoneInfo('America/Edmonton')).strftime('%Y-%m-%d %H:%M')} Edmonton"
+    first = _report_doc(title, period, kpis, sections, settings, None, stamp)
+    return _report_doc(title, period, kpis, sections, settings, first.page, stamp).bytes()
+
+
+def _report_doc(title, period, kpis, sections, settings, pages, stamp):
+    d = Doc(title, settings, pages=pages, stamp=stamp)
     d.hero(f"{kpis[0][0]}  ·  {period}" if kpis else period, kpis[0][1] if kpis else "", [])
     d.facts(kpis[1:] if len(kpis) > 1 else [], cols=4)
     for name, headers, rows, widths in sections:
@@ -238,4 +254,4 @@ def report_pdf(title, period, kpis, sections, settings):
         else:
             d.note("No records in this period.")
     d.note("All figures come from Nabitouch ledger records. Insurance is counted only when received.")
-    return d.bytes()
+    return d

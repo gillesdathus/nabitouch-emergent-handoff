@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
 import { Avatar } from "@/components/ui-kit";
@@ -23,7 +23,11 @@ const ICONS = {
 };
 
 const OWNER_MORE = [
+  ["/owner/clients", "Clients"],
+  ["/owner/practitioners", "Practitioners"],
   ["/owner/dispatch", "Live Fleet"],
+  ["/owner/fleet", "Security Shield · Fleet"],
+  ["/owner/shield", "Security Shield"],
   ["/owner/turnaround", "Session turnaround"],
   ["/owner/feedback", "Client feedback"],
   ["/owner/messages", "Visit messages"],
@@ -52,10 +56,13 @@ const STAFF = {
     nav: [
       { to: "/pro", label: "Today", icon: Sun, end: true },
       { to: "/pro/route", label: "Route", icon: RouteIcon },
-      { to: "/pro/availability", label: "Hours", icon: Clock },
+      { to: "/pro/messages", label: "Messages", icon: MessageSquare },
+      { to: "/pro/availability", label: "Schedule", icon: Clock },
       { to: "/pro/profile", label: "Me", icon: UserRound },
     ],
     more: [
+      { to: "/pro/vehicle", label: "My vehicle", icon: Truck },
+      { to: "/pro/shield", label: "Driver's licence", icon: ShieldCheck },
       { to: "/pro/plans", label: "Plans", icon: ClipboardList },
       { to: "/pro/earnings", label: "Earnings", icon: ReceiptText },
       { to: "/pro/ratings", label: "Client ratings", icon: Star },
@@ -65,7 +72,7 @@ const STAFF = {
   owner: {
     title: "Owner",
     nav: [
-      { to: "/owner", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/owner", label: "Dashboard", short: "Home", icon: LayoutDashboard, end: true },
       { to: "/owner/schedule", label: "Schedule", icon: CalendarDays },
       { to: "/owner/manage", label: "Manage", icon: LayoutGrid },
       { to: "/owner/payments", label: "Invoices", icon: ReceiptText },
@@ -93,41 +100,58 @@ function Page({ children }) {
   return <div key={pathname} className="nb-page">{children}</div>;
 }
 
-export function FloatingNav({ items, more = [], testid = "bottom-nav" }) {
+const slug = (label) => label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
+
+function DockItem({ icon: Icon, label, active, primary, badge }) {
+  return (
+    <span className={cn("relative flex h-full flex-col items-center justify-center gap-0.5 rounded-2xl px-0 transition-colors duration-200", active ? "text-nb-ink" : primary ? "text-nb-blue" : "text-nb-mute")}>
+      {active && <motion.span layoutId="dock-active" transition={{ type: "spring", stiffness: 420, damping: 34 }} className="absolute inset-x-2 top-0 h-[3px] rounded-full bg-nb-ink" />}
+      <span className="relative">
+        {Icon && <Icon className="h-5 w-5 shrink-0" strokeWidth={active ? 2.3 : 1.9} aria-hidden="true" />}
+        {badge > 0 && <span className="absolute -right-1.5 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-nb-coral px-1 text-[9px] font-bold text-white" data-testid="nav-unread-badge">{badge > 9 ? "9+" : badge}</span>}
+      </span>
+      <span className={cn("max-w-full truncate text-[10px] leading-tight tracking-tight min-[360px]:text-[10.5px]", active ? "font-semibold" : "font-medium")}>{label}</span>
+    </span>
+  );
+}
+
+function MoreSheet({ more, testid, active, badges = {} }) {
+  const [open, setOpen] = useState(false);
+  const { pathname } = useLocation();
+  const badgeTotal = Object.values(badges).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  useEffect(() => { setOpen(false); }, [pathname]);
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger data-testid={`${testid}-more`} aria-label="More" className="min-w-0 flex-1">
+        <DockItem icon={MoreHorizontal} label="More" active={active} badge={badgeTotal} />
+      </SheetTrigger>
+      <SheetContent side="bottom" className="max-h-[80dvh] overflow-y-auto rounded-t-[28px] pb-[calc(1.25rem+var(--nb-safe-b))]" data-testid={`${testid}-more-sheet`}>
+        <SheetTitle className="mb-3 text-base">More</SheetTitle>
+        <div className="grid grid-cols-2 gap-2">
+          {more.map((item) => (
+            <NavLink key={item.to} to={item.to} data-testid={`${testid}-more-${slug(item.label)}`} className={({ isActive }) => cn("flex min-h-11 items-center justify-between gap-2 rounded-2xl px-3 py-2 text-sm font-medium ring-1 ring-sky-100", isActive ? "bg-nb-ink text-white ring-nb-ink" : "bg-white text-nb-ink hover:bg-sky-50")}>
+              <span>{item.label}</span>
+              {badges[item.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${slug(item.label)}`}>{badges[item.to] > 9 ? "9+" : badges[item.to]}</span>}
+            </NavLink>
+          ))}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+export function FloatingNav({ items, more = [], testid = "bottom-nav", badges = {} }) {
   const { pathname } = useLocation();
   const moreActive = more.some((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
   return (
-    <nav data-testid={testid} className="safe-bottom fixed inset-x-3 bottom-3 z-50 lg:hidden" aria-label="Bottom">
-      <div className="mx-auto flex max-w-md items-center justify-between gap-1 rounded-full p-1.5 shadow-[0_18px_40px_-16px_rgba(11,27,63,.45)] nb-glass">
-        {items.map((it) => {
-          const Icon = it.icon || ICONS[it.label];
-          return (
-            <NavLink key={it.to} to={it.to} end={it.end} data-testid={`${testid}-${it.label.toLowerCase().replace(/\s/g, "-")}`} aria-label={it.label} title={it.label} className="relative min-w-0 flex-1">
-              {({ isActive }) => (
-                <span className={cn("relative flex h-12 items-center justify-center gap-1.5 rounded-full transition-colors duration-200", isActive ? "text-white" : it.primary ? "text-nb-blue" : "text-nb-mute")}>
-                  {isActive && <motion.span layoutId={`${testid}-active`} transition={{ type: "spring", stiffness: 420, damping: 34 }} className="absolute inset-0 rounded-full bg-nb-ink" />}
-                  {!isActive && it.primary && <span className="absolute inset-1 rounded-full tint-lagoon" />}
-                  {Icon && <Icon className="relative h-5 w-5 shrink-0" strokeWidth={isActive ? 2.3 : 1.9} />}
-                </span>
-              )}
-            </NavLink>
-          );
-        })}
-        {more.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger data-testid={`${testid}-more`} aria-label="More" className={cn("relative flex h-12 min-w-0 flex-1 items-center justify-center rounded-full", moreActive ? "text-white" : "text-nb-mute")}>
-              {moreActive && <span className="absolute inset-0 rounded-full bg-nb-ink" />}
-              <MoreHorizontal className="relative h-5 w-5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52 rounded-2xl">
-              {more.map((item) => (
-                <DropdownMenuItem key={item.to} asChild className="rounded-xl">
-                  <Link to={item.to} data-testid={`${testid}-more-${item.label.toLowerCase()}`}>{item.label}</Link>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+    <nav data-testid={testid} className="nb-dock fixed inset-x-0 bottom-0 z-50 border-t border-sky-100 bg-white/95 backdrop-blur-md lg:hidden" aria-label="Primary">
+      <div className="mx-auto flex h-[var(--nb-nav-h)] max-w-xl items-stretch justify-between gap-0.5 px-1.5">
+        {items.map((it) => (
+          <NavLink key={it.to} to={it.to} end={it.end} data-testid={`${testid}-${slug(it.label)}`} aria-label={it.label} className="min-w-0 flex-1">
+            {({ isActive }) => <DockItem icon={it.icon || ICONS[it.label]} label={it.short || it.label} active={isActive} primary={it.primary} badge={badges[it.to]} />}
+          </NavLink>
+        ))}
+        {more.length > 0 && <MoreSheet more={more} testid={testid} active={moreActive} badges={badges} />}
       </div>
     </nav>
   );
@@ -155,18 +179,27 @@ function PublicFooter() {
 export function AccountMenu() {
   const nav = useNavigate();
   const { pathname } = useLocation();
-  const { user, logout } = useDemo();
+  const { user, logout, api, setUser } = useDemo();
   const spaces = spacesOf(user);
   const current = workspaceForPath(pathname);
   const signOut = async () => { await logout(); nav("/"); };
+  const switchWorkspace = async (role) => {
+    try {
+      const next = await api.setWorkspace(role);
+      if (setUser) setUser(next);
+      else if (user) Object.assign(user, next);
+    } catch { /* navigation still proceeds; preference is best-effort */ }
+    nav(WORKSPACES[role].to);
+  };
   if (!user) return <Link to="/login" data-testid="account-sign-in" aria-label="Sign in" className="nb-btn-ghost h-10 w-10 px-0 text-sm lg:w-auto lg:px-4"><LogIn className="h-4 w-4 lg:hidden" /><span className="hidden lg:inline">Sign in</span></Link>;
   return (
     <div className="flex items-center gap-2">
       {spaces.length > 1 && (
-        <select aria-label="Workspace" data-testid="workspace-switch" className="nb-input h-10 w-[7.5rem] text-sm sm:w-auto" value={spaces.includes(current) ? current : spaces[0]} onChange={(e) => nav(WORKSPACES[e.target.value].to)}>
+        <select aria-label="Workspace" data-testid="workspace-switch" className="nb-input h-10 w-[7.5rem] text-sm sm:w-auto" value={spaces.includes(current) ? current : spaces[0]} onChange={(e) => switchWorkspace(e.target.value)}>
           {spaces.map((role) => <option key={role} value={role}>{WORKSPACES[role].label}</option>)}
         </select>
       )}
+      <Link to="/account/security" data-testid="account-security-link" className="nb-btn-ghost inline-flex h-10 px-3 text-sm" aria-label="Account and security"><ShieldCheck className="h-4 w-4" /><span className="hidden sm:inline">Security</span></Link>
       <button type="button" onClick={signOut} data-testid="account-sign-out" aria-label="Sign out" className="nb-btn-ghost h-10 shrink-0 px-3 text-sm"><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Sign out</span></button>
     </div>
   );
@@ -188,8 +221,8 @@ export function ClientShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
   return (
-    <div className="flex min-h-screen flex-col overflow-x-hidden">
-      <header className="sticky top-0 z-40 border-x-0 border-t-0 nb-glass">
+    <div className="flex min-h-[100dvh] flex-col overflow-x-clip">
+      <header className="sticky top-0 z-40 border-x-0 border-t-0 pt-[var(--nb-safe-t)] nb-glass">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-5">
           <Lockup />
           <nav className="hidden items-center gap-1 lg:flex" aria-label="Main">
@@ -216,7 +249,7 @@ export function ClientShell() {
           </nav>
         )}
       </header>
-      <main className="flex-1 pb-28 lg:pb-10"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
+      <main className="nb-main-clear flex-1"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
       {showWa && <WhatsAppFab phone={wa.phone || "+17802356508"} />}
       <FloatingNav items={BOTTOM_NAV} testid="client-bottom" />
     </div>
@@ -233,21 +266,37 @@ export function StaffShell({ role }) {
 
 function StaffShellInner({ role }) {
   const cfg = STAFF[role];
-  const { idx, practitionerId, user } = useDemo();
-  const me = role === "pro" ? idx.practitioners[practitionerId] : null;
+  const { idx, practitionerId, user, api } = useDemo();
+  const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
+  const [unread, setUnread] = useState(0);
   useEffect(() => { registerPush().catch(() => {}); }, []);
+  useEffect(() => {
+    if (role !== "pro") return undefined;
+    let stop = false;
+    const load = () => api.inbox().then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); }).catch(() => {});
+    load();
+    const timer = setInterval(load, 20000);
+    return () => { stop = true; clearInterval(timer); };
+  }, [api, role, practitionerId]);
+  const badges = role === "pro" && unread > 0 ? { "/pro/messages": unread } : {};
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen overflow-x-clip">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sky-100 bg-white px-4 py-6 lg:flex">
         <Lockup to={cfg.nav[0].to} testid={`${role}-logo-link`} className="px-2" />
         <p className="nb-eyebrow mb-3 mt-8 px-2">{cfg.title} workspace</p>
         <nav className="space-y-1" aria-label={`${cfg.title} navigation`}>
           {cfg.nav.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center gap-3 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}><n.icon className="h-[18px] w-[18px]" />{n.label}</NavLink>
+            <NavLink key={n.to} to={n.to} end={n.end} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center justify-between gap-2 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}>
+              <span className="flex items-center gap-3"><n.icon className="h-[18px] w-[18px]" />{n.label}</span>
+              {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${n.label.toLowerCase()}`}>{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
+            </NavLink>
           ))}
           {cfg.more.map((n) => (
-            <NavLink key={n.to} to={n.to} data-testid={`${role}-side-${n.label.toLowerCase()}`} className={({ isActive }) => cn("flex h-11 items-center gap-3 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}><n.icon className="h-[18px] w-[18px]" />{n.label}</NavLink>
+            <NavLink key={n.to} to={n.to} data-testid={`${role}-side-${n.label.toLowerCase().replace(/\s+/g, "-")}`} className={({ isActive }) => cn("flex h-11 items-center justify-between gap-2 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}>
+              <span className="flex items-center gap-3"><n.icon className="h-[18px] w-[18px]" />{n.label}</span>
+              {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white">{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
+            </NavLink>
           ))}
         </nav>
         {role === "owner" && (
@@ -271,13 +320,13 @@ function StaffShellInner({ role }) {
         </div>
       </aside>
       <div className="min-w-0 lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-sky-100 bg-white/90 px-4 backdrop-blur lg:hidden">
-          <Lockup to={cfg.nav[0].to} testid={`${role}-mobile-logo-link`} />
-          <AccountMenu />
+        <header className="sticky top-0 z-30 flex h-[calc(var(--nb-header-h)+var(--nb-safe-t))] items-center justify-between border-b border-sky-100 bg-white/95 px-4 pt-[var(--nb-safe-t)] backdrop-blur lg:hidden">
+          <Lockup to={cfg.nav[0].to} testid={`${role}-mobile-logo-link`} className="min-w-0" />
+          <div className="min-w-0 shrink"><AccountMenu /></div>
         </header>
-        <main className="px-4 py-6 pb-28 sm:px-6 lg:px-10 lg:pb-10"><Page><Outlet /></Page></main>
+        <main className="nb-main-clear mx-auto min-w-0 max-w-[1600px] px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8"><Page><Outlet /></Page></main>
       </div>
-      <FloatingNav items={cfg.nav} more={cfg.more} testid={`${role}-bottom`} />
+      <FloatingNav items={cfg.nav} more={role === "owner" ? OWNER_MORE.map(([to, label]) => ({ to, label })) : cfg.more} testid={`${role}-bottom`} badges={badges} />
     </div>
   );
 }

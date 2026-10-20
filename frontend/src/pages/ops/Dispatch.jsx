@@ -77,7 +77,7 @@ export default function Dispatch({ role }) {
               </button>
               );
             })}
-            {fleet.length === 0 && <p className="text-sm text-nb-mute">The fleet is empty. A visit appears here after Start Travel, and a marker appears only when sharing has a position.</p>}
+            {fleet.length === 0 && <p className="text-sm text-nb-mute">The fleet is empty. A visit appears here after On My Way, and a marker appears only when sharing has a position.</p>}
             <Notice testid="fleet-trip-alerts">Trip status on this board is operational. SMS and push are not sent. <Link to={role === "owner" ? "/owner/messages" : "/desk/messages"} className="font-semibold text-nb-blue">Open visit messages</Link></Notice>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { money } from "@/lib/domain";
 import { api, apiError } from "@/lib/api";
 
 // Address suggestions come from the API. The server decides the zone and the travel fee.
-export function AddressPicker({ value, onChange, query, onQuery, testid = "address" }) {
+export function AddressPicker({ value, onChange, query, onQuery, testid = "address", purpose = "visit" }) {
   const [open, setOpen] = useState(false);
   const [locating, setLocating] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -14,22 +14,36 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
   const [unit, setUnit] = useState(value?.unit || "");
   const [postal, setPostal] = useState(value?.postal || "");
   const q = query ?? "";
+  const clinic = purpose === "clinic";
 
   useEffect(() => {
     if (!open || q.trim().length < 3) {
       setMatches([]);
       return undefined;
     }
+    let stopped = false;
     const handle = setTimeout(() => {
-      api.geoSuggest(q.trim()).then((body) => { setMatches(body.suggestions || []); setError(""); }).catch((err) => { setMatches([]); setError(apiError(err)); });
+      api.geoSuggest(q.trim()).then((body) => { if (!stopped) { setMatches(body.suggestions || []); setError(""); } }).catch((err) => { if (!stopped) { setMatches([]); setError(apiError(err)); } });
     }, 250);
-    return () => clearTimeout(handle);
+    return () => { stopped = true; clearTimeout(handle); };
   }, [q, open]);
 
   const apply = async (body) => {
     setChecking(true);
     setError("");
     try {
+      if (clinic) {
+        if (!body.mapboxId) {
+          setError("Choose an address suggestion before confirming the clinic.");
+          onChange(null);
+          return;
+        }
+        const checked = await api.geoClinicConfirm({ line: body.line, mapboxId: body.mapboxId, postal, clientConfirmed: false });
+        onChange({ line: checked.line, mapboxId: checked.mapboxId, postal, clientConfirmed: false, confidence: checked.confidence });
+        onQuery(checked.line);
+        setVerdict(null);
+        return;
+      }
       const checked = await api.geoCheck(body);
       setVerdict(checked);
       if (!checked.eligible) {
@@ -57,6 +71,17 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
     setChecking(true);
     setError("");
     try {
+      if (clinic) {
+        const checked = await api.geoClinicConfirm({ line: value.line, mapboxId: value.mapboxId, postal, clientConfirmed: true });
+        if (!checked.accepted) {
+          onChange({ ...value, postal, clientConfirmed: false });
+          setError("This address needs review before the clinic location can be saved.");
+          return;
+        }
+        onChange({ ...value, line: checked.line, lat: checked.lat, lng: checked.lng, mapboxId: checked.mapboxId, postal, clientConfirmed: true, confidence: checked.confidence });
+        onQuery(checked.line);
+        return;
+      }
       const checked = await api.geoConfirm({ line: value.line, mapboxId: value.mapboxId, postal, unit, clientConfirmed: true });
       const approximate = checked.confidence && checked.confidence !== "address";
       if (!checked.accepted || approximate) {
@@ -113,11 +138,12 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
         <input className="nb-input" value={postal} data-testid={`${testid}-postal-input`} placeholder="T5J 2R4" autoComplete="postal-code" onChange={(e) => setPostal(e.target.value)} /></label>
       {value?.line && !value.clientConfirmed && <button type="button" onClick={confirmServiceAddress} data-testid={`${testid}-confirm`} className="nb-btn-primary h-10 px-4 text-sm">Confirm this service address</button>}
       {value?.clientConfirmed && <p data-testid={`${testid}-confirmed`} className="text-sm text-teal-800">You confirmed this civic address. The arrival point can still be adjusted without changing the street.</p>}
-      <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="mt-2 flex items-center gap-2 text-sm font-medium text-nb-blue">
+      {!clinic && <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="mt-2 flex items-center gap-2 text-sm font-medium text-nb-blue">
         {locating || checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crosshair className="h-4 w-4" />} Use my current location <span className="text-xs font-normal text-nb-mute">(optional — asks permission)</span>
-      </button>
+      </button>}
       {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
-      {verdict && <ZoneResult res={verdict} testid={testid} />}
+      {!clinic && verdict && <ZoneResult res={verdict} testid={testid} />}
+      {clinic && value?.clientConfirmed && <p data-testid={`${testid}-navigation-ready`} className="text-sm text-teal-800">This clinic address is confirmed for navigation.</p>}
     </div>
   );
 }

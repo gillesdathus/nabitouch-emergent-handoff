@@ -101,10 +101,18 @@ def welcome_history_blocks(appointments):
     A no-show blocks as well: the visit was not released.
     Cancelled and refunded appointments block only when that visit already received the welcome benefit.
     A cancelled or refunded visit that never received it leaves the person eligible.
+    Free standalone trial appointments never consume first-regular-booking eligibility.
     """
+    from trial import is_trial_appointment
+
     for appt in appointments or []:
         status = str((appt or {}).get("status") or "")
         if not status:
+            continue
+        if is_trial_appointment(appt):
+            # Trial is lead acquisition only; welcome stays for the first regular booking.
+            if welcome_claimed(appt):
+                return True
             continue
         if welcome_claimed(appt):
             return True
@@ -119,7 +127,7 @@ def launch_welcome_offer():
     return {
         "id": "promo-welcome",
         "code": "WELCOME20",
-        "name": "First-booking welcome offer",
+        "name": "Your First Massage, 20% Off.",
         "type": "percent",
         "value": 20,
         "maxDiscount": 40,
@@ -134,7 +142,47 @@ def launch_welcome_offer():
         "approval": "approved",
         "appliesTo": "treatment",
         "requiresMarketingConsent": False,
+        "placements": ["home", "account", "booking", "services", "offers"],
+        "bannerHeadline": "Your First Massage, 20% Off.",
+        "bannerBody": "Book your first eligible regular massage through the Nabitouch app and enjoy 20% off.",
+        "ctaLabel": "Book my first massage",
     }
+
+
+async def ensure_welcome_offer(db):
+    """Idempotent upsert of WELCOME20 so Home/Offers can surface it without a manual seed."""
+    row = launch_welcome_offer()
+    existing = await db.nt_promotions.find_one({"id": "promo-welcome"}, {"_id": 0})
+    if not existing:
+        await db.nt_promotions.insert_one(dict(row))
+        return row, True
+    # Preserve owner toggles (enabled/approval/placements) while restoring missing public copy fields.
+    patch = {}
+    if not existing.get("bannerHeadline"):
+        patch["bannerHeadline"] = row["bannerHeadline"]
+    if not existing.get("bannerBody"):
+        patch["bannerBody"] = row["bannerBody"]
+    if not existing.get("ctaLabel"):
+        patch["ctaLabel"] = row["ctaLabel"]
+    places = existing.get("placements")
+    if isinstance(places, list) and "offers" not in places:
+        patch["placements"] = list(places) + ["offers"]
+    if existing.get("name") in (None, "", "First-booking welcome offer"):
+        patch["name"] = row["name"]
+    if patch:
+        await db.nt_promotions.update_one({"id": "promo-welcome"}, {"$set": patch})
+        existing = {**existing, **patch}
+    return existing, False
+
+
+def promo_shows(promo, placement):
+    """Gate banner display by placement list. Missing placements default to home + account."""
+    if not promo:
+        return False
+    places = promo.get("placements")
+    if not isinstance(places, list) or not places:
+        places = ["home", "account"]
+    return placement in places
 
 
 def promo_eligible(promo, client, slug, today=None):

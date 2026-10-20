@@ -147,7 +147,9 @@ def test_desk_cannot_see_practitioner_home_on_a_trip(owner, desk):
     people = requests.get(f"{API}/state", headers=owner, timeout=20).json()["practitioners"]
     base = next(person["base"] for person in people if person["id"] == "p-liam")
     trip = next(item["trip"] for item in requests.get(f"{API}/state", headers=desk, timeout=20).json()["appointments"] if item["id"] == "a-106")
-    assert [trip["from"]["lat"], trip["from"]["lng"]] != [base["lat"], base["lng"]]
+    assert "from" not in trip
+    assert trip.get("sharing") is not True
+    assert [base["lat"], base["lng"]] != [trip.get("to", {}).get("lat"), trip.get("to", {}).get("lng")]
 
 
 def test_tracking_still_requires_a_session_and_suggest_does_not_echo_a_token():
@@ -221,17 +223,18 @@ def test_mapbox_resolve_ignores_client_coordinates_and_hides_provider_errors(mon
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
 
     async def run():
-        hit = await GEO.resolve(line="4950 Gateway Blvd, Leduc, AB", point={"lat": 53.5461, "lng": -113.4938})
+        # Ephemeral resolve (coverage check) must not require permanent storage.
+        hit = await GEO.resolve(line="4950 Gateway Blvd, Leduc, AB", point={"lat": 53.5461, "lng": -113.4938}, persist=False)
         assert hit["lat"] == 53.2594
         assert hit["provider"] == "mapbox"
         calls["mode"] = "down"
         with pytest.raises(ProviderError) as caught:
-            await GEO.resolve(line="10150 104 St NW, Edmonton, AB")
+            await GEO.resolve(line="10150 104 St NW, Edmonton, AB", persist=False)
         assert SECRET not in str(caught.value)
         assert "access_token" not in str(caught.value)
         calls["mode"] = "empty"
         with pytest.raises(GeocodeError):
-            await GEO.resolve(line="missing address Edmonton AB")
+            await GEO.resolve(line="missing address Edmonton AB", persist=False)
 
     try:
         asyncio.run(run())

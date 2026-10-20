@@ -11,6 +11,7 @@ test("preview and draft treatments are not bookable", () => {
   expect(servicePublication({ publication: "preview", enabled: false })).toBe("preview");
   expect(bookableCatalogueService({ publication: "preview", enabled: false })).toBe(false);
   expect(bookableCatalogueService({ publication: "published", enabled: true })).toBe(true);
+  expect(bookableCatalogueService({ publication: "published", kind: "trial", slug: "ten-minutes-on-us", prices: { 10: 0 } })).toBe(false);
   expect(publiclyBookable({ available: true, profileVisibility: "hidden" })).toBe(false);
   expect(publiclyBookable({ available: true, profileVisibility: "published" })).toBe(true);
   expect(profileVisibility({ onboardingStatus: "draft" })).toBe("draft");

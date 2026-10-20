@@ -28,7 +28,12 @@ export function servicePublication(service) {
 }
 
 export function bookableCatalogueService(service) {
+  if (!service || service.kind === "trial" || service.slug === "ten-minutes-on-us") return false;
   return servicePublication(service) === "published";
+}
+
+export function isTrialService(service) {
+  return Boolean(service && (service.kind === "trial" || service.slug === "ten-minutes-on-us"));
 }
 
 export function managedMediaPath(src, size) {
@@ -44,7 +49,7 @@ export const STATUS = {
   confirmed: { label: 'Booking confirmed', tone: 'blue', client: 'Confirmed' },
   assigned: { label: 'Practitioner assigned', tone: 'blue', client: 'Confirmed' },
   preparing: { label: 'Preparing for visit', tone: 'cyan', client: 'Practitioner preparing' },
-  en_route: { label: 'En route', tone: 'cyan', client: 'En route' },
+  en_route: { label: 'En route', tone: 'cyan', client: 'Practitioner on the way' },
   arrived: { label: 'Arrived at location', tone: 'turq', client: 'Arrived' },
   in_session: { label: 'Session in progress', tone: 'green', client: 'Session in progress' },
   session_ended: { label: 'Session ended', tone: 'teal', client: 'Session completed' },
@@ -65,17 +70,78 @@ export const STATUS = {
 
 export const LIFECYCLE = ['requested', 'assigned', 'preparing', 'en_route', 'arrived', 'in_session', 'session_ended',
   'soap_pending', 'soap_completed', 'leaving', 'completed', 'processing', 'closed'];
-export const CLIENT_STAGES = ['Confirmed', 'Practitioner preparing', 'En route', 'Arrived', 'Session in progress', 'Session completed', 'Visit completed'];
+/** Operational phases shown to clients. Advanced only by real appointment status transitions — never by intake, consent, or space prep. */
+export const CLIENT_VISIT_PHASES = [
+  { id: 'confirmed', label: 'Confirmed', statuses: ['requested', 'confirmed', 'assigned', 'reassigned'] },
+  { id: 'preparing', label: 'Practitioner preparing', statuses: ['preparing'] },
+  { id: 'en_route', label: 'Practitioner on the way', statuses: ['en_route', 'delayed'] },
+  { id: 'arrived', label: 'Arrived', statuses: ['arrived'] },
+  { id: 'in_session', label: 'Session in progress', statuses: ['in_session'] },
+  { id: 'session_done', label: 'Session completed', statuses: ['session_ended', 'soap_pending', 'soap_completed'] },
+  { id: 'completed', label: 'Visit completed', statuses: ['leaving', 'completed', 'processing', 'closed'] },
+];
+/** @deprecated Prefer clientVisitProgress(); kept for older imports. */
+export const CLIENT_STAGES = CLIENT_VISIT_PHASES.map((phase) => phase.label);
 export const ACTIVE = ['preparing', 'en_route', 'arrived', 'in_session', 'session_ended', 'soap_pending', 'soap_completed', 'leaving', 'interrupted', 'safety_hold'];
 export const OPEN = ['requested', 'confirmed', 'assigned', ...ACTIVE];
 export const DONE = ['completed', 'processing', 'closed'];
 
+const CLIENT_VISIT_DETAIL = {
+  confirmed: 'This updates when your practitioner starts preparing or begins travel — not when health check, consent, or space prep are done.',
+  preparing: 'Your practitioner is getting ready. Travel status appears when they start the trip.',
+  en_route: 'Your practitioner is travelling to you. Arrival is confirmed only when they mark it in the app.',
+  arrived: 'Your practitioner is at your location and will start the session when you are both ready.',
+  in_session: 'Your massage is underway.',
+  session_done: 'Treatment has ended. Your practitioner is finishing notes and wrapping up.',
+  completed: 'This visit is complete.',
+  cancelled: 'This appointment was cancelled.',
+  no_show: 'This visit was marked as missed.',
+  interrupted: 'Treatment is paused. Your practitioner will resume or end the visit from their app.',
+  safety_hold: 'This visit is on hold for safety. Nabitouch or your practitioner will follow up.',
+  rescheduled: 'This visit was rescheduled.',
+};
+
+/**
+ * Client visit progress from appointment.status only.
+ * Intake, consent, and preparation checklist never advance the operational phase.
+ * Space readiness may soften the confirmed headline to "Ready for your visit" without changing phase.
+ */
+export function clientVisitProgress(appt) {
+  const status = appt?.status || 'requested';
+  if (['cancelled', 'no_show', 'interrupted', 'safety_hold', 'rescheduled'].includes(status)) {
+    return {
+      headline: STATUS[status]?.client || status,
+      detail: CLIENT_VISIT_DETAIL[status] || '',
+      phaseId: status,
+      stageIndex: -1,
+      stageCount: CLIENT_VISIT_PHASES.length,
+      showBar: false,
+      operational: true,
+    };
+  }
+  const stageIndex = CLIENT_VISIT_PHASES.findIndex((phase) => phase.statuses.includes(status));
+  const phase = CLIENT_VISIT_PHASES[Math.max(0, stageIndex)];
+  const spaceReady = Boolean(appt?.readiness?.allReady);
+  const headline = phase.id === 'confirmed' && spaceReady ? 'Ready for your visit' : phase.label;
+  return {
+    headline,
+    detail: phase.id === 'confirmed' && spaceReady
+      ? 'Your space checklist is saved. Visit progress still waits for your practitioner to prepare or start travel.'
+      : CLIENT_VISIT_DETAIL[phase.id],
+    phaseId: phase.id,
+    stageIndex: Math.max(0, stageIndex),
+    stageCount: CLIENT_VISIT_PHASES.length,
+    showBar: true,
+    operational: true,
+  };
+}
+
 // Practitioner big-button flow. `nav` = opens SOAP editor instead of transitioning.
 export const ACTIONS = [
   { to: 'preparing', label: 'Prepare for Visit', from: ['assigned', 'confirmed'], secondary: true },
-  { to: 'en_route', label: 'Start Travel', from: ['assigned', 'confirmed', 'preparing'] },
-  { to: 'arrived', label: "I've Arrived", from: ['en_route'] },
-  { to: 'in_session', label: 'Start Session', from: ['arrived'] },
+  { to: 'en_route', label: 'On My Way', from: ['assigned', 'confirmed', 'preparing'] },
+  { to: 'arrived', label: 'Mark Arrived', from: ['en_route'] },
+  { to: 'in_session', label: 'Start Treatment', from: ['arrived'] },
   { to: 'in_session', label: 'Resume Session', from: ['interrupted'] },
   { to: 'leaving', label: 'End Visit & Leave', from: ['interrupted'], confirm: 'End this visit without further treatment? Treatment time so far is recorded and cleanup starts.' },
   { to: 'session_ended', label: 'End Treatment', from: ['in_session'], confirm: 'End treatment now? The treatment time is recorded and the cleanup countdown starts.' },
@@ -120,19 +186,6 @@ export const CLAIM_STATUS = {
   declined: { label: 'Claim declined', tone: 'red' },
 };
 
-// Simulated GPS replay of an authorised work trip. Returns null when not sharing.
-export function tripState(appt, now = Date.now()) {
-  const tr = appt?.trip;
-  if (!tr?.sharing || appt.status !== 'en_route') return null;
-  const t = Math.min(1, Math.max(0, (now - new Date(tr.startedAt).getTime()) / (tr.demoSec * 1000)));
-  const { from: a, to: b } = tr;
-  const c = { lat: (a.lat + b.lat) / 2 + (b.lng - a.lng) * 0.18, lng: (a.lng + b.lng) / 2 - (b.lat - a.lat) * 0.35 };
-  const at = (u) => ({ lat: (1 - u) ** 2 * a.lat + 2 * (1 - u) * u * c.lat + u * u * b.lat, lng: (1 - u) ** 2 * a.lng + 2 * (1 - u) * u * c.lng + u * u * b.lng });
-  const etaMin = t >= 1 ? 0 : Math.max(1, Math.ceil(tr.driveMin * (1 - t)));
-  const arrival = new Date(now + etaMin * 60000);
-  const sched = new Date(`${appt.date}T${appt.time}:00`);
-  return { t, pos: at(t), route: Array.from({ length: 41 }, (_, i) => at(i / 40)), etaMin, arrival, remainingKm: Math.max(0, tr.km * (1 - t)), lateMin: Math.round((arrival - sched) / 60000), arriving: t >= 0.97 };
-}
 export const fmtClockTime = (d) => d.toLocaleTimeString('en-CA', { timeZone: "America/Edmonton", hour: 'numeric', minute: '2-digit' });
 
 export const RECEPTION_PERMS = [
@@ -189,21 +242,6 @@ export function paymentChoice(draft, settings) {
 
 export const INSURERS = ['Alberta Blue Cross', 'Canada Life', 'Sun Life', 'Manulife', 'Green Shield Canada', 'Desjardins', 'Other'];
 
-// Synthetic sample addresses used by the demo autocomplete (no external geocoder).
-export const SAMPLE_ADDRESSES = [
-  { line: '10150 104 St NW, Edmonton, AB', area: 'Downtown', lat: 53.5435, lng: -113.499 },
-  { line: '10222 102 St NW, Edmonton, AB', area: 'Downtown', lat: 53.5445, lng: -113.4935 },
-  { line: '11135 83 Ave NW, Edmonton, AB', area: 'Garneau', lat: 53.519, lng: -113.517 },
-  { line: '9620 83 Ave NW, Edmonton, AB', area: 'Strathcona', lat: 53.518, lng: -113.473 },
-  { line: '12520 102 Ave NW, Edmonton, AB', area: 'Westmount', lat: 53.5431, lng: -113.5363 },
-  { line: '5320 Terwillegar Blvd NW, Edmonton, AB', area: 'Terwillegar', lat: 53.462, lng: -113.585 },
-  { line: '8882 170 St NW, Edmonton, AB', area: 'West Edmonton', lat: 53.5225, lng: -113.6235 },
-  { line: '13650 50 St NW, Edmonton, AB', area: 'Clareview', lat: 53.6015, lng: -113.4135 },
-  { line: '2020 Sherwood Dr, Sherwood Park, AB', area: 'Sherwood Park', lat: 53.5413, lng: -113.2958 },
-  { line: '1 St Anne St, St. Albert, AB', area: 'St. Albert', lat: 53.6305, lng: -113.6256 },
-  { line: '4950 Gateway Blvd, Leduc, AB', area: 'Leduc', lat: 53.2594, lng: -113.5492 },
-];
-
 export const CLINIC_POINT = { lat: 53.5461, lng: -113.4938 };
 
 export const money = (n) => `$${(Number(n) || 0).toFixed(2)}`;
@@ -238,10 +276,103 @@ export function staffActor(user) {
   return user?.name || user?.email || "Staff";
 }
 
+function finitePoint(lat, lng) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { lat: latitude, lng: longitude };
+}
+
+export function isClinicVisit(appt) {
+  return appt?.locationType === "clinic" || appt?.location === "clinic";
+}
+
+/** Mobile visits are eligible for Track Visit live travel; clinic visits are summary-only. */
+export function isMobileTrackable(appt) {
+  return !!appt && !isClinicVisit(appt);
+}
+
+/**
+ * Client Track Visit view states (A–E) plus terminal overlays.
+ * Live map/ETA belong only to en_route when trip.sharing is on — enforced by the Track Visit page.
+ */
+export function trackVisitView(appt) {
+  const status = appt?.status || "requested";
+  if (["cancelled", "no_show"].includes(status)) return "cancelled";
+  if (status === "rescheduled") return "rescheduled";
+  if (["interrupted", "safety_hold"].includes(status)) return status;
+  if (["requested", "confirmed", "assigned", "preparing", "reassigned"].includes(status)) return "confirmed";
+  if (status === "en_route" || status === "delayed") return "en_route";
+  if (status === "arrived") return "arrived";
+  if (status === "in_session") return "in_session";
+  if (["session_ended", "soap_pending", "soap_completed", "leaving", "completed", "processing", "closed"].includes(status)) return "completed";
+  return "confirmed";
+}
+
+export function visitNavigationPoint(appt) {
+  const address = appt?.address || {};
+  if (appt?.locationType === "clinic") {
+    if (address.navigation !== "ready") return null;
+    return finitePoint(address.lat, address.lng);
+  }
+  const arrival = address.arrival && typeof address.arrival === "object" ? finitePoint(address.arrival.lat, address.arrival.lng) : null;
+  return arrival || finitePoint(address.lat, address.lng);
+}
+
+export function navigationHref(app, point) {
+  if (!point) return "";
+  const { lat, lng } = point;
+  if (app === "apple") return `https://maps.apple.com/?daddr=${lat},${lng}`;
+  if (app === "waze") return `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+}
+
+export function clinicSavePayload(clinic, query, pick) {
+  const confirmed = pick?.clientConfirmed && pick.mapboxId ? pick : null;
+  const line = String(confirmed?.line || query || "").trim();
+  const next = { ...(clinic || {}), address: line, enabled: false };
+  delete next.lat;
+  delete next.lng;
+  delete next.mapboxId;
+  delete next.coordinatesVerified;
+  delete next.navigation;
+  delete next.confirmation;
+  if (confirmed) {
+    next.confirmation = { mapboxId: confirmed.mapboxId, line: confirmed.line, postal: confirmed.postal || "", clientConfirmed: true };
+  }
+  return next;
+}
+
 const birthdayMonth = (c) => c?.dob && Number(c.dob.split('-')[1]) === new Date().getMonth() + 1;
 
-export function welcomeOfferListed(promo) {
-  return Boolean(promo && promo.enabled && promo.approval === "approved" && promo.eligibility === "first_online");
+export function welcomeOfferListed(promo, placement) {
+  if (!(promo && promo.enabled && promo.approval === "approved" && promo.eligibility === "first_online")) return false;
+  if (!placement) return true;
+  const places = Array.isArray(promo.placements) && promo.placements.length ? promo.placements : ["home", "account"];
+  return places.includes(placement);
+}
+
+export function promoBannerCopy(promo) {
+  if (!promo) return { headline: "Your First Massage, 20% Off.", body: "", cta: "Book my first massage" };
+  const value = Number(promo.value) || 0;
+  const cap = promo.maxDiscount != null ? Number(promo.maxDiscount) : null;
+  const defaultBody = promo.type === "percent"
+    ? `Book your first eligible regular massage through the Nabitouch app and enjoy ${value}% off${cap != null ? ` (up to $${cap})` : ""}. Travel and GST are calculated separately.`
+    : `${money(value)} off the treatment price of a qualifying first booking. Travel and GST are calculated separately.`;
+  return {
+    headline: promo.bannerHeadline || promo.name || "Your First Massage, 20% Off.",
+    body: promo.bannerBody || defaultBody,
+    cta: promo.ctaLabel || "Book my first massage",
+  };
+}
+
+export function trialCampaignListed(campaign, placement) {
+  if (!campaign || campaign.offerKind !== "trial") return false;
+  if (campaign.soldOut) return false;
+  if (placement === "home" && campaign.showHome === false) return false;
+  if (placement === "offers" && campaign.showOffers === false) return false;
+  return true;
 }
 
 export function promoEligibility(promo, client, slug) {
@@ -265,8 +396,9 @@ export function quote({ service, duration, addons = [], zone, client, promotions
   const best = eligible.filter((p) => !p.stackable).sort((a, b) => calc(b) - calc(a))[0];
   const applied = [...(best ? [best] : []), ...eligible.filter((p) => p.stackable && p.eligibility !== "first_online")];
   const discount = Math.min(applied.reduce((s, p) => s + calc(p), 0), base);
-  const localTravel = locationType === 'clinic' ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
-  const travel = locationType === 'clinic' ? 0 : (typeof serverTravel === 'number' ? serverTravel : localTravel);
+  const trialVisit = isTrialService(service);
+  const localTravel = (locationType === 'clinic' || trialVisit) ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
+  const travel = (locationType === 'clinic' || trialVisit) ? 0 : (typeof serverTravel === 'number' ? serverTravel : localTravel);
   const subtotal = base - discount + addonsTotal + travel;
   const tax = Math.round(subtotal * (settings?.gst ?? 0.05) * 100) / 100;
   return {

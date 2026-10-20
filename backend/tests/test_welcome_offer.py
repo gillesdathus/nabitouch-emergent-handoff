@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from billing import lines_from_pricing
-from pricing import identity_keys, launch_welcome_offer, quote, welcome_history_blocks
+from pricing import identity_keys, launch_welcome_offer, promo_shows, quote, welcome_history_blocks
 from rewards import preview_redemption
 
 
@@ -48,9 +48,29 @@ def test_swedish_welcome_total_is_100_80():
     assert priced["travel"] == 0
     assert priced["tax"] == 4.8
     assert priced["total"] == 100.8
-    assert priced["promoName"] == "First-booking welcome offer"
-    assert priced["welcomeOffer"] is True
-    rows, net, tax, total = lines_from_pricing(priced)
+
+
+def test_welcome_offer_has_placements_and_edit_does_not_rewrite_invoice_lines():
+    offer = launch_welcome_offer()
+    assert "home" in offer["placements"] and "account" in offer["placements"] and "offers" in offer["placements"]
+    assert offer["bannerHeadline"] == "Your First Massage, 20% Off."
+    assert offer["ctaLabel"] == "Book my first massage"
+    assert promo_shows(offer, "home") is True
+    assert promo_shows(offer, "offers") is True
+    assert promo_shows({**offer, "placements": ["account"]}, "offers") is False
+    snapshot = {
+        "base": 120, "addons": 0, "addonList": [], "discount": 24, "travel": 0, "tax": 4.8, "total": 100.8,
+        "promoId": "promo-welcome", "promoName": "First-booking welcome offer", "promoCode": "WELCOME20",
+        "welcomeOffer": True,
+    }
+    before = lines_from_pricing(snapshot)
+    edited = _offer(value=30, maxDiscount=50, bannerHeadline="New headline")
+    assert edited["value"] == 30
+    after = lines_from_pricing(snapshot)
+    assert before == after
+    assert snapshot["promoName"] == "First-booking welcome offer"
+    assert snapshot["welcomeOffer"] is True
+    rows, net, tax, total = lines_from_pricing(snapshot)
     assert rows[0]["netCents"] == 12000
     assert rows[1]["description"] == "First-booking welcome offer"
     assert rows[1]["netCents"] == -2400

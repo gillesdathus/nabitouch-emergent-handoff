@@ -19,12 +19,12 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from config import cookie_samesite, cookie_secure, is_production
+from config import cookie_samesite, cookie_secure, is_production, security_shield_safety_sampling_enabled
 from tracking_store import (
-    TrackingUnavailable, accept_fix, allow_rate, cache_drop, cache_get, cache_set,
+    TrackingUnavailable, accept_fix, allow_rate, append_safety_sample, cache_drop, cache_get, cache_set,
     clear_all, drop_session, force_set, issue_capability, lookup_browser, lookup_capability,
-    open_guest_browser, poll_events, publish_event, read_fix, redact_location_events, revoke_capabilities,
-    subscribe, touch,
+    open_guest_browser, poll_events, publish_event, read_fix, read_safety_samples, redact_location_events,
+    revoke_capabilities, subscribe, touch,
 )
 
 EVENT_VERSION = 1
@@ -34,6 +34,8 @@ TRANSITION_EVENTS = {"en_route": "trip.started", "arrived": "practitioner.arrive
                      "session_ended": "session.ended", "leaving": "practitioner.departed", "completed": "visit.completed",
                      "cancelled": "tracking.stopped", "no_show": "tracking.stopped", "interrupted": "tracking.paused", "delayed": "trip.delayed"}
 STALE_SEC, MAX_ACCURACY_M, MAX_SKEW_SEC = 30, 150, 120
+ETA_REFRESH_SEC = 300  # Approved live-ETA cadence: recalculate Mapbox at most every five minutes.
+ETA_MANUAL_REFRESH_SEC = 60  # Client "Refresh ETA" rate limit per appointment.
 COMPLETED = {"in_session", "session_ended", "leaving", "completed", "processing", "closed", "soap_pending", "soap_completed"}
 PRIVACY_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff"}
 
@@ -42,6 +44,8 @@ def trip_sharing(appt):
     """Sharing is on only for an en-route trip the assigned practitioner started."""
     trip = appt.get("trip") or {}
     if appt.get("status") != "en_route" or not trip.get("sharing"):
+        return False
+    if trip.get("simulated") and trip.get("sharingSource") != "practitioner":
         return False
     if is_production() and trip.get("sharingSource") != "practitioner":
         return False
@@ -164,28 +168,34 @@ class LogNotificationService:
 
 
 class MapboxDirections:
-    """Mapbox directions, cached per trip (refresh every 30 s or after moving 250 m).
+    """Mapbox directions, cached per trip (refresh every ETA_REFRESH_SEC).
 
     driving-traffic is preferred. If traffic data is missing, driving is used and labeled as a road
     estimate. A straight-line estimate is the last resort. None of these are a confirmed arrival.
+    Multiple client viewers share one Redis cache so open tabs do not multiply Directions calls.
     """
     URL = "https://api.mapbox.com/directions/v5/mapbox/{profile}/{a};{b}"
 
     def __init__(self):
         self._cache = {}
+        self._blocked_until = 0
 
     def _estimate(self, position, dest, provider="estimated"):
         eta = ETA.eta(position, dest)
         eta["provider"] = provider
         eta["confirmed"] = False
+        eta["updatedAt"] = now_iso()
         return eta, None
 
     async def _fetch(self, profile, position, dest, token):
+        if time.time() < self._blocked_until:
+            raise RuntimeError("directions temporarily unavailable")
         async with httpx.AsyncClient(timeout=6) as client:
             response = await client.get(
                 self.URL.format(profile=profile, a=f"{position['lng']},{position['lat']}", b=f"{dest['lng']},{dest['lat']}"),
                 params={"access_token": token, "geometries": "geojson", "overview": "full"})
         if response.status_code in (401, 403, 429):
+            self._blocked_until = time.time() + 60
             raise RuntimeError("directions unavailable")
         response.raise_for_status()
         routes = response.json().get("routes") or []
@@ -193,15 +203,23 @@ class MapboxDirections:
             raise RuntimeError("directions empty")
         return routes[0]
 
-    async def eta(self, aid, position, dest):
+    async def eta(self, aid, position, dest, force=False):
         token = os.environ.get("MAPBOX_TOKEN")
         cached = await cache_get(aid) or self._cache.get(aid)
-        if cached and time.time() - cached["ts"] < 30 and haversine_km(cached["from"], position) < 0.25:
+        # Reuse the last Mapbox snapshot for five minutes so GPS heartbeats do not burn Directions quota.
+        if (
+            not force
+            and cached
+            and cached.get("dest") == dest
+            and time.time() - cached["ts"] < ETA_REFRESH_SEC
+        ):
             elapsed = (time.time() - cached["ts"]) / 60
             eta = dict(cached["eta"])
-            eta["etaMin"] = max(0, math.ceil(cached["durMin"] - elapsed)) if eta["remainingKm"] > 0.05 else 0
+            eta["etaMin"] = max(0, math.ceil(cached["durMin"] - elapsed)) if eta.get("remainingKm", 0) > 0.05 else 0
             eta["confirmed"] = False
-            return eta, cached["route"]
+            eta["updatedAt"] = cached.get("updatedAt") or eta.get("updatedAt")
+            eta["cached"] = True
+            return eta, cached.get("route")
         if not token:
             return self._estimate(position, dest)
         route_doc, provider = None, None
@@ -215,16 +233,44 @@ class MapboxDirections:
         if not route_doc:
             return self._estimate(position, dest)
         km, dur = round(route_doc["distance"] / 1000, 2), route_doc["duration"] / 60
-        eta = {"etaMin": max(0, math.ceil(dur)) if km > 0.05 else 0, "remainingKm": km, "provider": provider, "confirmed": False}
+        updated = now_iso()
+        eta = {
+            "etaMin": max(0, math.ceil(dur)) if km > 0.05 else 0,
+            "remainingKm": km,
+            "provider": provider,
+            "confirmed": False,
+            "updatedAt": updated,
+            "cached": False,
+        }
         route = [{"lat": lat, "lng": lng} for lng, lat in route_doc["geometry"]["coordinates"]]
-        saved = {"ts": time.time(), "from": position, "durMin": dur, "eta": eta, "route": route}
+        saved = {"ts": time.time(), "from": position, "dest": dict(dest), "durMin": dur, "eta": eta, "route": route, "updatedAt": updated}
         self._cache[aid] = saved
-        await cache_set(aid, saved)
+        await cache_set(aid, saved, ttl=ETA_REFRESH_SEC + 30)
         return eta, route
 
     async def drop(self, aid):
         self._cache.pop(aid, None)
         await cache_drop(aid)
+
+
+async def open_sharing_session(aid: str, practitioner_id: Optional[str]):
+    """Open the Redis tracking slot when travel begins. Does not invent a GPS fix."""
+    try:
+        current = await read_fix(aid)
+        same = current and current.get("practitionerId") == practitioner_id and "lat" in current
+        if not same:
+            await force_set(aid, {
+                "seq": 0,
+                "paused": False,
+                "practitionerId": practitioner_id,
+                "receivedTs": time.time(),
+                "serverTime": now_iso(),
+                "sharing": True,
+            })
+        else:
+            await touch(aid)
+    except TrackingUnavailable:
+        logging.getLogger(__name__).warning("Tracking storage unavailable while opening sharing for %s", aid)
 
 
 ROUTES = MockRouteProvider()
@@ -332,16 +378,22 @@ def build_tracking_router(coll, add_audit, user_from):
         out = {"appointmentId": appt["id"], "status": appt["status"], "sharing": sharing, "phase": phase,
                "lastFixAt": fresh["serverTime"] if fresh else None, "ageSec": round(age, 1) if age is not None else None,
                "stale": phase == "stale", "approximate": fresh.get("approximate") if fresh else None,
-               "source": fresh.get("source") if fresh else None, "confirmedArrival": False}
+               "source": fresh.get("source") if fresh else None,
+               "confirmedArrival": bool((appt.get("arrivalCode") or {}).get("verifiedAt") or appt.get("clientVerifiedAt"))}
         show_pos = include_pos and fresh and phase in ("live", "stale") and not paused
+        dest = (appt.get("trip") or {}).get("to") or {}
+        if not dest.get("lat") or not dest.get("lng"):
+            addr = appt.get("address") or {}
+            if addr.get("lat") is not None and addr.get("lng") is not None:
+                dest = {"lat": addr["lat"], "lng": addr["lng"]}
+        if dest.get("lat") is not None and dest.get("lng") is not None and (show_pos or sharing):
+            out["destination"] = {"lat": dest["lat"], "lng": dest["lng"]}
         if show_pos:
             out["position"] = {"lat": fresh["lat"], "lng": fresh["lng"], "accuracy": fresh["accuracy"]}
-            dest = appt.get("address") or {}
-            if dest.get("lat") is not None and dest.get("lng") is not None:
-                out["destination"] = {"lat": dest["lat"], "lng": dest["lng"]}
             if fresh.get("route"):
                 out["route"] = fresh["route"]
-        if fresh and include_eta and fresh.get("eta"):
+        # Live ETA only while driving with a real fix — never invent an arrival time.
+        if fresh and include_eta and fresh.get("eta") and phase in ("live", "stale") and not paused:
             eta = dict(fresh["eta"])
             eta["confirmed"] = False
             out["eta"] = eta
@@ -373,12 +425,7 @@ def build_tracking_router(coll, add_audit, user_from):
         try:
             if not await allow_rate(f"start:{auth.subject}", 20):
                 raise HTTPException(429, "Too many tracking requests")
-            current = await read_fix(aid)
-            same = current and current.get("practitionerId") == appt.get("practitionerId") and "lat" in current
-            if not same:
-                await force_set(aid, {"seq": 0, "paused": False, "practitionerId": appt.get("practitionerId"), "receivedTs": time.time(), "serverTime": now_iso(), "sharing": True})
-            else:
-                await touch(aid)
+            await open_sharing_session(aid, appt.get("practitionerId"))
         except TrackingUnavailable as exc:
             raise HTTPException(503, "Tracking is temporarily unavailable") from exc
         trip = {**(appt.get("trip") or {}), "sharing": True, "sharingSource": "practitioner"}
@@ -387,6 +434,34 @@ def build_tracking_router(coll, add_audit, user_from):
         await add_audit(auth.subject or auth.role, f"{appt['ref']} location sharing started", aid)
         await emit("tracking.resumed", appt, {})
         return {"ok": True, "sharing": True}
+
+    @r.post("/sessions/{aid}/eta/refresh")
+    async def refresh_eta(aid: str, request: Request):
+        """Manual ETA refresh. Rate-limited. Uses the latest GPS fix only — never invents an arrival."""
+        auth = await auth_of(request)
+        appt = await load(aid)
+        await session_view(auth, appt)
+        if appt.get("status") != "en_route" or not trip_sharing(appt):
+            raise HTTPException(409, "Live ETA is only available while the practitioner is travelling")
+        try:
+            if not await allow_rate(f"eta-refresh:{aid}", 1, window=ETA_MANUAL_REFRESH_SEC):
+                raise HTTPException(429, "ETA was refreshed recently. Try again in a minute.")
+        except TrackingUnavailable as exc:
+            raise HTTPException(503, "Tracking is temporarily unavailable") from exc
+        fix = await current_fix(appt)
+        dest = (appt.get("trip") or {}).get("to")
+        if not fix or "lat" not in fix or not dest:
+            return {"ok": False, "reason": "gps_unavailable", "eta": None}
+        pos = {"lat": fix["lat"], "lng": fix["lng"]}
+        eta, route = await DIRECTIONS.eta(aid, pos, dest, force=True)
+        eta["confirmed"] = False
+        updated = {**fix, "eta": eta, "route": route, "serverTime": now_iso(), "receivedTs": fix.get("receivedTs") or time.time()}
+        try:
+            await force_set(aid, updated)
+        except TrackingUnavailable as exc:
+            raise HTTPException(503, "Tracking is temporarily unavailable") from exc
+        await emit("eta.updated", appt, {"etaMin": eta.get("etaMin"), "remainingKm": eta.get("remainingKm"), "provider": eta.get("provider"), "confirmed": False})
+        return {"ok": True, "eta": eta}
 
     @r.post("/sessions/{aid}/stop")
     async def stop(aid: str, request: Request):
@@ -490,6 +565,21 @@ def build_tracking_router(coll, add_audit, user_from):
             raise HTTPException(503, "Tracking is temporarily unavailable") from exc
         if rejected is not None:
             return {"accepted": False, "reason": "out_of_order", "lastSeq": rejected}
+        # Opt-in safety breadcrumbs only (approved). ETA recalculation cadence stays ETA_REFRESH_SEC.
+        sampling = security_shield_safety_sampling_enabled() and (
+            (appt.get("trip") or {}).get("safetySampling") or (appt.get("safety") or {}).get("sampling")
+        )
+        if sampling and fix.source == "gps":
+            try:
+                await append_safety_sample(aid, {
+                    "lat": round(float(fix.lat), 5),
+                    "lng": round(float(fix.lng), 5),
+                    "at": now_iso(),
+                    "accuracy": fix.accuracy,
+                    "seq": fix.seq,
+                })
+            except TrackingUnavailable:
+                pass
         await emit("location.updated", appt, {"accuracy": fix.accuracy, "seq": fix.seq})
         await emit("eta.updated", appt, {"etaMin": eta.get("etaMin"), "remainingKm": eta.get("remainingKm"), "provider": eta.get("provider"), "confirmed": False})
         return {"accepted": True, "eta": eta}
@@ -689,7 +779,8 @@ async def on_transition(appt: dict, to: str, extra: Optional[dict] = None):
     """Called by the single lifecycle (server.apply_transition) — no second state model."""
     t = TRANSITION_EVENTS.get(to)
     try:
-        if to == "en_route" or to not in ("en_route", "delayed"):
+        # Do not drop the Redis session when entering en_route — open_sharing_session just created it.
+        if to not in ("en_route", "delayed"):
             await drop_session(appt["id"])
             await DIRECTIONS.drop(appt["id"])
             await redact_location_events(appt["id"])

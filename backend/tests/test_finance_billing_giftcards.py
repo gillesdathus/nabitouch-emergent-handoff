@@ -11,8 +11,7 @@ if not BASE_URL:
             if line.startswith("REACT_APP_BACKEND_URL="):
                 BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
 
-OWNER = ("owner@nabitouch.test", "Tide-ASlUVxgtlyYfG3c2")
-SAMPLE_PW = os.environ.get("SAMPLE_PW", "Sample-7ycTsfXpHCJV")  # current sample password (see /app/memory/test_credentials.md)
+from t1_common import OWNER, SAMPLE_PW
 CLIENT = ("sarah.demo@example.com", SAMPLE_PW)
 PRO = ("maya.demo@example.com", SAMPLE_PW)
 KINDS = ["revenue", "collections", "outstanding", "insurance", "giftcards", "earnings", "retention", "services", "refunds"]
@@ -145,8 +144,11 @@ class TestBilling:
             pytest.skip("no open invoice")
         inv = due[0]
         r = client.post(f"{BASE_URL}/api/invoices/{inv['id']}/checkout", json={"tipCents": 0})
-        assert r.status_code in (200, 400), r.text[:200]
-        if r.status_code == 200:
+        # Launch keeps STRIPE_CARD_CHECKOUT_ENABLED=false → 503 is the intended gate.
+        assert r.status_code in (200, 400, 503), r.text[:200]
+        if r.status_code == 503:
+            assert "turned off" in r.text.lower()
+        elif r.status_code == 200:
             assert r.json()["url"].startswith("https://checkout.stripe.com")
 
     def test_tip_too_big(self, client):
@@ -155,7 +157,9 @@ class TestBilling:
         if not due:
             pytest.skip("no open invoice")
         r = client.post(f"{BASE_URL}/api/invoices/{due[0]['id']}/checkout", json={"tipCents": 999999})
-        assert r.status_code == 400
+        assert r.status_code in (400, 503), r.text[:200]
+        if r.status_code == 503:
+            assert "turned off" in r.text.lower()
 
     def test_release_rules(self, owner, client):
         items = owner.get(f"{BASE_URL}/api/invoices").json()["items"]

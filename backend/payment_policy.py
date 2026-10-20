@@ -56,6 +56,17 @@ def deposit_cents(total_cents, policy):
     return amount
 
 
+def due_for_booking(total_dollars, policy, fields):
+    """Amount due for the price that will be stored. Insurance does not collect a card amount."""
+    fields = fields or {}
+    if fields.get("paymentMethod") == "insurance":
+        return None
+    choice = fields.get("payNow") if fields.get("payNow") in CHOICES else ("cash" if fields.get("selfMethod") == "cash" else None)
+    if not choice:
+        return None
+    return settlement(total_dollars, policy, choice)
+
+
 def settlement(total_dollars, policy, choice):
     """Payable now, after the full total exists. Cash is not a prepayment."""
     total = _cents(total_dollars)
@@ -89,6 +100,62 @@ def settlement(total_dollars, policy, choice):
         "status": status,
         "prepaid": False if selected == "cash" else due == total and due > 0,
     }
+
+
+def authorized_checkout_cents(visit, balance_cents, received_cents=0, requested_cents=None):
+    """Card amount for this attempt. A saved deposit or full payment wins over the outstanding balance and over a client number."""
+    balance = int(balance_cents)
+    received = int(received_cents or 0)
+    if balance <= 0:
+        raise ValueError("Amount must be within the outstanding balance")
+    visit = visit or {}
+    due = visit.get("paymentDue") if isinstance(visit.get("paymentDue"), dict) else {}
+    pay_now = visit.get("payNow")
+    stored = due.get("dueNowCents")
+    if pay_now in ("full", "deposit") and type(stored) is int and stored > 0:
+        still_due = stored - received
+        authorized = min(balance, still_due) if still_due > 0 else balance
+    elif pay_now == "deposit":
+        raise ValueError("This visit has no saved deposit amount")
+    elif requested_cents is None:
+        authorized = balance
+    else:
+        authorized = requested_cents
+    if type(authorized) is not int or authorized <= 0 or authorized > balance:
+        raise ValueError("Amount must be within the outstanding balance")
+    if requested_cents is not None and pay_now in ("full", "deposit") and requested_cents != authorized:
+        raise ValueError("That amount is not the amount due")
+    return authorized
+
+
+def gift_redemption_cents(visit, balance_cents, received_cents, card_balance_cents, requested_cents=None):
+    """Gift-card amount for this attempt. The cap is the amount still due, the card balance, and the invoice balance."""
+    payable = authorized_checkout_cents(visit, balance_cents, received_cents)
+    available = int(card_balance_cents)
+    if available <= 0:
+        raise ValueError("This gift card has no balance")
+    maximum = min(payable, available, int(balance_cents))
+    if maximum <= 0:
+        raise ValueError("Nothing is payable on this invoice")
+    if requested_cents is None:
+        return maximum
+    if type(requested_cents) is not int or requested_cents <= 0 or requested_cents > maximum:
+        raise ValueError("Amount must be within the amount due and the gift-card balance")
+    return requested_cents
+
+
+def manual_settlement_cents(visit, balance_cents, received_cents, requested_cents=None):
+    """Staff-confirmed cash or e-Transfer. A partial amount is allowed. It cannot pass the amount still due."""
+    payable = authorized_checkout_cents(visit, balance_cents, received_cents)
+    if requested_cents is None:
+        return payable
+    if type(requested_cents) is not int or requested_cents <= 0:
+        raise ValueError("Amount must be a positive number of cents")
+    if requested_cents > int(balance_cents):
+        raise ValueError("That payment is more than the outstanding balance")
+    if requested_cents > payable:
+        raise ValueError("That amount is more than the amount due")
+    return requested_cents
 
 
 def allowed_online_amounts(balance_cents, policy, received_cents=0):
