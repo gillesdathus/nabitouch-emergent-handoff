@@ -62,7 +62,7 @@ export default function Home() {
                 campaignId: trial.id,
                 serviceSlug: trial.serviceSlug || "ten-minutes-on-us",
                 duration: trial.durationMinutes || trial.complimentaryMinutes || 10,
-                locationType: (trial.locationTypes || ["clinic"])[0] || "clinic",
+                locationType: (trial.locationTypes || []).includes("home") ? "home" : ((trial.locationTypes || ["home"])[0] || "home"),
                 practitionerId: trial.practitionerId || undefined,
                 date: trial.bookingStart,
                 step: 0,

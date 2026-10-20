@@ -45,3 +45,13 @@ test("a listed welcome offer does not stack in the local estimate", () => {
   });
   expect(priced.discount).toBe(0);
 });
+
+test("trial local quotes stay at zero including travel for home visits", () => {
+  const trial = { slug: "ten-minutes-on-us", kind: "trial", prices: { 10: 0 } };
+  const priced = quote({
+    service: trial, duration: 10, zone: { fee: 15, perKm: 1 }, km: 8, promotions: [offer], settings, locationType: "home",
+  });
+  expect(priced.base).toBe(0);
+  expect(priced.travel).toBe(0);
+  expect(priced.total).toBe(0);
+});

@@ -370,8 +370,9 @@ export function quote({ service, duration, addons = [], zone, client, promotions
   const best = eligible.filter((p) => !p.stackable).sort((a, b) => calc(b) - calc(a))[0];
   const applied = [...(best ? [best] : []), ...eligible.filter((p) => p.stackable && p.eligibility !== "first_online")];
   const discount = Math.min(applied.reduce((s, p) => s + calc(p), 0), base);
-  const localTravel = locationType === 'clinic' ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
-  const travel = locationType === 'clinic' ? 0 : (typeof serverTravel === 'number' ? serverTravel : localTravel);
+  const trialVisit = isTrialService(service);
+  const localTravel = (locationType === 'clinic' || trialVisit) ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
+  const travel = (locationType === 'clinic' || trialVisit) ? 0 : (typeof serverTravel === 'number' ? serverTravel : localTravel);
   const subtotal = base - discount + addonsTotal + travel;
   const tax = Math.round(subtotal * (settings?.gst ?? 0.05) * 100) / 100;
   return {

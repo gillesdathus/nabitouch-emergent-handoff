@@ -172,11 +172,10 @@ export default function Booking() {
   }, [service?.id, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In-clinic stays off until owner activates it; never leave a stale clinic draft selected.
-  // Trial campaigns may still reserve clinic time when a street address exists.
+  // Trials default to mobile visits — do not keep a clinic location when clinic booking is closed.
   useEffect(() => {
     if (!idx?.settings) return;
-    const trialDraft = Boolean(draft.campaignId && isTrialService(service));
-    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic) && !trialDraft) {
+    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic)) {
       patchDraft({ locationType: "home" });
     }
   }, [idx?.settings, draft.locationType, draft.campaignId, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -239,7 +238,7 @@ export default function Booking() {
   const whereBlockedReason = !whereOk
     ? (draft.locationType === "clinic"
       ? (trialFlow
-        ? "The clinic address is not ready for this free trial yet. Book a regular massage instead, or try again shortly."
+        ? "In-clinic booking is not open right now. Choose a mobile visit above for your free trial, or book a regular massage."
         : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
       : "Confirm a service address in our Edmonton zones to continue.")
     : "";

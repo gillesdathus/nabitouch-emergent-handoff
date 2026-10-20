@@ -19,7 +19,7 @@ export function StepWhere() {
   const clinic = idx.settings.clinic;
   const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
-  const clinicShown = trialFlow || clinicBookable(clinic);
+  const clinicShown = clinicBookable(clinic);
   const selectSaved = (a) => {
     const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
     patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
@@ -29,15 +29,20 @@ export function StepWhere() {
   };
   return (
     <div>
-      <H t={trialFlow ? "Your free trial is in clinic" : "Where should we meet you?"} s={trialFlow ? "This introductory visit is at the Nabitouch clinic. No travel fee." : (clinicBookable(clinic) ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")} />
+      <H
+        t="Where should we meet you?"
+        s={trialFlow
+          ? (clinicShown ? "Your free 10-minute trial can be at an eligible Edmonton address, or the clinic when it is open for booking. No payment is required." : "Your free 10-minute trial can be at an eligible Edmonton home, office, hotel, or event address. No payment is required.")
+          : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")}
+      />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
-          <Tile key={l.id} on={draft.locationType === l.id} onClick={() => !trialFlow && patchDraft({ locationType: l.id })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id} disabled={trialFlow && l.id !== "clinic"}>
+          <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
             <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
           </Tile>); })}
       </div>
       {draft.locationType === "clinic" ? (
-        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">{trialFlow ? "Free trial · in clinic" : "In-clinic visit"}</p><p className="text-nb-mute">{clinic.address || (trialFlow && clinic.addressReady ? "Nabitouch clinic" : "Clinic address on file")} · no travel fee</p></div>
+        <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">{trialFlow ? "Free trial · in clinic" : "In-clinic visit"}</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
         <div className="mt-6 space-y-4">
           {me?.addresses?.length > 0 && (

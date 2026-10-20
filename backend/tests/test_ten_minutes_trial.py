@@ -5,6 +5,7 @@ import pytest
 import requests
 
 from pricing import launch_welcome_offer, quote, welcome_history_blocks
+from catalog import booking_block_reason
 from recovery import (
     apply_campaign_price,
     audience_ok,
@@ -18,12 +19,14 @@ from recovery import (
 )
 from trial import (
     TRIAL_DURATION_MIN,
+    TRIAL_LOCATION_TYPES,
     TRIAL_SERVICE_SLUG,
     is_trial_appointment,
     is_trial_offer,
     is_trial_service,
     launch_trial_service,
     trial_duration_ok,
+    trial_locations_need_home_fix,
 )
 
 BASE = "http://127.0.0.1:8001/api"
@@ -37,9 +40,14 @@ def test_trial_service_is_exactly_ten_minutes_at_zero():
     assert service["treatmentScope"] == "neck_shoulders"
     assert service["prices"] == {"10": 0}
     assert service["taxable"] is False
+    assert service["mobile"] is True
+    assert service["clinic"] is True
     assert is_trial_service(service) is True
     assert trial_duration_ok(10) is True
     assert trial_duration_ok(60) is False
+    assert booking_block_reason(service, 10, "home") is None
+    assert booking_block_reason(service, 10, "office") is None
+    assert booking_block_reason({**service, "mobile": False}, 10, "home") == "This service is not offered at home"
 
 
 def test_trial_quote_is_zero_and_never_takes_welcome():
@@ -57,6 +65,14 @@ def test_trial_quote_is_zero_and_never_takes_welcome():
     assert free["welcomeOffer"] is False
     assert free["campaignOfferKind"] == "trial"
     assert free.get("paymentRequired") is None
+    mobile = quote(
+        service=service, duration=10, addons=[], zone={"fee": 15, "perKm": 1}, client=person,
+        promotions=[launch_welcome_offer()], settings={"gst": 0.05, "addons": []}, location_type="home", km=8,
+    )
+    home_free = apply_campaign_price(mobile, {"offerKind": "trial", "title": "10 Minutes. On Us.", "complimentaryMinutes": 10}, 0.05)
+    assert home_free["travel"] == 0
+    assert home_free["total"] == 0
+    assert home_free["welcomeOffer"] is False
 
 
 def test_trial_appointments_preserve_first_regular_booking_eligibility():
@@ -91,7 +107,9 @@ def test_campaign_template_is_standalone_trial_not_flash_addon():
         "expiresAt": (at + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
     }
     assert campaign_live(live, at) is True
+    assert "home" in row["locationTypes"]
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "clinic") is True
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "home") is True
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "clinic") is False
     assert campaign_fits(live, live["bookingStart"], "10:00", 60, TRIAL_SERVICE_SLUG, "clinic") is False
     assert reserve_decision({**live, "status": "paused"}, {}, at, 0) != "reserved"
@@ -122,6 +140,15 @@ def test_trial_audience_uses_regular_treatment_history_not_registration():
     assert fields["showHome"] is False
     assert fields["showOffers"] is True
     assert fields["offerKind"] == "trial"
+    assert "home" in fields["locationTypes"]
+    clinic_only = parse_campaign_fields({
+        "title": "Trial", "offerKind": "trial", "bookingStart": "2030-01-15", "windowStart": "10:00",
+        "windowEnd": "12:00", "expiresAt": "2030-01-20T00:00:00+00:00", "publishAt": "2030-01-01T00:00:00+00:00",
+        "locationTypes": ["clinic"], "maxRedemptions": 5,
+    })
+    assert clinic_only["locationTypes"] == list(TRIAL_LOCATION_TYPES)
+    assert trial_locations_need_home_fix(["clinic"]) is True
+    assert trial_locations_need_home_fix(["home", "clinic"]) is False
 
 
 def test_disabled_or_expired_campaign_is_not_bookable():

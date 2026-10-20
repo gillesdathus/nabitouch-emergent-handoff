@@ -70,7 +70,7 @@ from notifications import (
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from giftcards import build_giftcard_router, ensure_giftcards
 from trial import (
-    TRIAL_DURATION_MIN, TRIAL_SERVICE_SLUG, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
+    TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG, ensure_trial_campaign_locations, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
     trial_duration_ok,
 )
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
@@ -240,6 +240,7 @@ async def lifespan(_app):
     await ensure_messaging(db)
     await ensure_giftcards(db)
     await ensure_trial_service(db)
+    await ensure_trial_campaign_locations(db)
     await ensure_welcome_offer(db)
     await ensure_plans(db)
     await ensure_safety(db)
@@ -1489,9 +1490,10 @@ async def bind_trial_campaign(payload):
     appointment = dict(payload.get("appointment") or {})
     appointment["serviceSlug"] = campaign.get("serviceSlug") or TRIAL_SERVICE_SLUG
     appointment["duration"] = int(campaign.get("durationMinutes") or campaign.get("complimentaryMinutes") or TRIAL_DURATION_MIN)
-    locations = campaign.get("locationTypes") or ["clinic"]
+    locations = campaign.get("locationTypes") or list(TRIAL_LOCATION_TYPES)
     if appointment.get("locationType") not in locations:
-        appointment["locationType"] = locations[0]
+        # Prefer home for mobile Nabitouch trials; do not silently force clinic.
+        appointment["locationType"] = "home" if "home" in locations else locations[0]
     appointment["addonIds"] = []
     bound = {**payload, "appointment": appointment, "useCredit": False, "redeemPoints": None, "winbackCode": None, "followupCode": None}
     if campaign.get("practitionerId"):

@@ -304,7 +304,7 @@ def launch_ten_minutes_on_us():
     owner-configurable. Draft defaults match the prior template so go-live still
     requires an explicit owner decision — they are not invented eligibility rules.
     """
-    from trial import DEFAULT_TRIAL_PRACTITIONER_ID, TRIAL_DURATION_MIN, TRIAL_SERVICE_SLUG
+    from trial import DEFAULT_TRIAL_PRACTITIONER_ID, TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG
 
     opening = now()
     return {
@@ -315,7 +315,7 @@ def launch_ten_minutes_on_us():
         "offerKind": "trial",
         "complimentaryMinutes": TRIAL_DURATION_MIN,
         "durationMinutes": TRIAL_DURATION_MIN,
-        "locationTypes": ["clinic"],
+        "locationTypes": list(TRIAL_LOCATION_TYPES),
         "serviceSlug": TRIAL_SERVICE_SLUG,
         "practitionerId": DEFAULT_TRIAL_PRACTITIONER_ID,
         "bookingChannels": ["app"],
@@ -384,11 +384,16 @@ def parse_campaign_fields(payload, *, current=None):
             raise ValueError("Complimentary minutes must be between 5 and 120")
         percent = 0
         fixed = 0
+    from trial import TRIAL_LOCATION_TYPES
+
     locations = payload.get("locationTypes") if "locationTypes" in payload else current.get("locationTypes")
-    if kind in ("complimentary", "trial"):
+    if kind == "complimentary":
         locations = locations if isinstance(locations, list) and locations else ["clinic"]
-        if kind == "trial" and not locations:
-            locations = ["clinic"]
+    elif kind == "trial":
+        locations = locations if isinstance(locations, list) and locations else list(TRIAL_LOCATION_TYPES)
+        # Never persist a clinic-only trial — home visits are an approved campaign rule.
+        if not any(loc in ("home", "office", "hotel", "event") for loc in locations):
+            locations = list(TRIAL_LOCATION_TYPES)
     elif not isinstance(locations, list):
         locations = []
     expiry = stamp(payload.get("expiresAt") or current.get("expiresAt"))

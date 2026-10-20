@@ -91,7 +91,7 @@ export default function Offers() {
                   <p className="mt-1 text-lg font-semibold" data-testid={`trial-title-${row.id}`}>{row.headline || "Try Nabitouch. 10 Minutes. On Us."}</p>
                   <p className="text-sm text-nb-mute" data-testid={`trial-subhead-${row.id}`}>{row.subhead || "Experience a free 10-minute neck-and-shoulder massage."}</p>
                   <p className="mt-1 text-sm text-nb-mute">{row.body || row.description || "Meet your therapist, feel the difference, and discover Nabitouch."}</p>
-                  <p className="mt-2 text-sm text-nb-mute">$0 · {row.durationMinutes || row.complimentaryMinutes || 10} min · neck and shoulders · {(row.locationTypes || ["clinic"]).join(", ")}</p>
+                  <p className="mt-2 text-sm text-nb-mute">$0 · {row.durationMinutes || row.complimentaryMinutes || 10} min · neck and shoulders · mobile visit at an eligible address</p>
                   <p className="text-sm" data-testid={`offer-spots-${row.id}`}>{row.soldOut ? "Fully booked" : expired ? "Offer ended" : `${row.remaining} openings left`}</p>
                   {!expired && !row.soldOut ? (
                     <Link
@@ -102,7 +102,7 @@ export default function Offers() {
                         campaignId: row.id,
                         serviceSlug: row.serviceSlug || "ten-minutes-on-us",
                         duration: row.durationMinutes || row.complimentaryMinutes || 10,
-                        locationType: (row.locationTypes || ["clinic"])[0] || "clinic",
+                        locationType: (row.locationTypes || []).includes("home") ? "home" : ((row.locationTypes || ["home"])[0] || "home"),
                         practitionerId: row.practitionerId || undefined,
                         date: row.bookingStart,
                         step: 0,
