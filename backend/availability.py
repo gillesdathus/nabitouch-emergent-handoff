@@ -883,48 +883,142 @@ def is_clinic_location(location_type):
     return location_type == "clinic"
 
 
-async def mapbox_leg(origin, dest):
-    """Road leg estimate. Failed directions fall back to a conservative non-zero estimate."""
-    minutes_est, provider = conservative_drive(origin, dest)
-    km = None
-    if origin and dest and provider != "same-stop":
+def _estimate_type(provider):
+    if provider == "mapbox-traffic":
+        return "traffic-aware"
+    if provider == "mapbox":
+        return "standard"
+    if provider == "same-stop":
+        return "same-stop"
+    return None
+
+
+def _geojson_linestring(raw):
+    """Validate Mapbox GeoJSON LineString coordinates as [lng, lat] pairs."""
+    if not isinstance(raw, dict):
+        return None
+    coords = raw.get("coordinates")
+    if not isinstance(coords, list) or len(coords) < 2:
+        return None
+    cleaned = []
+    for pair in coords:
+        if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+            return None
         try:
-            km = round(haversine_km(origin, dest) * 1.3, 1)
-        except Exception:
-            km = None
-    leg = {"minutes": minutes_est, "provider": provider, "km": km}
-    if not origin or not dest or provider == "same-stop":
-        if provider == "same-stop":
-            leg["km"] = 0
-        return leg
+            lng = float(pair[0])
+            lat = float(pair[1])
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(lng) or not math.isfinite(lat):
+            return None
+        if lat < -90 or lat > 90 or lng < -180 or lng > 180:
+            return None
+        cleaned.append([lng, lat])
+    if len(cleaned) < 2:
+        return None
+    return {"type": "LineString", "coordinates": cleaned}
+
+
+def _road_points(geometry):
+    """lat/lng points for LiveMap (same convention as tracking MapboxDirections.eta)."""
+    if not geometry:
+        return None
+    return [{"lat": lat, "lng": lng} for lng, lat in geometry["coordinates"]]
+
+
+def _unavailable_leg(minutes_est=None, provider="unavailable"):
+    """Explicit non-road state. Never fabricate geometry or present haversine as road distance."""
+    return {
+        "available": False,
+        "minutes": minutes_est,
+        "provider": provider,
+        "km": None,
+        "durationSec": None,
+        "distanceM": None,
+        "geometry": None,
+        "route": None,
+        "estimateType": None,
+        "routingProvider": "mapbox",
+    }
+
+
+async def mapbox_leg(origin, dest):
+    """Road leg from Mapbox Directions when available.
+
+    Scheduling callers may still use minutes from a conservative fallback via mapbox_drive.
+    My Route only treats available=True legs (with optional geometry) as driving ETA.
+    """
+    minutes_est, provider = conservative_drive(origin, dest)
+    if not origin or not dest:
+        return _unavailable_leg(minutes_est, provider)
+    if provider == "same-stop":
+        return {
+            "available": True,
+            "minutes": 0,
+            "provider": "same-stop",
+            "km": 0,
+            "durationSec": 0,
+            "distanceM": 0,
+            "geometry": None,
+            "route": None,
+            "estimateType": "same-stop",
+            "routingProvider": "mapbox",
+        }
+    fallback = _unavailable_leg(minutes_est, "unavailable")
     try:
         from tracking import DIRECTIONS
         import os
         token = os.environ.get("MAPBOX_TOKEN")
         if not token:
-            return leg
+            return fallback
         for profile, label in (("driving-traffic", "mapbox-traffic"), ("driving", "mapbox")):
             try:
                 route = await DIRECTIONS._fetch(profile, origin, dest, token)
-                road_km = route["distance"] / 1000
-                if road_km <= 0.05:
-                    return {"minutes": 0, "provider": "same-stop", "km": 0}
+                distance_m = float(route["distance"])
+                duration_sec = float(route["duration"])
+                if not math.isfinite(distance_m) or not math.isfinite(duration_sec):
+                    continue
+                if distance_m <= 50:
+                    return {
+                        "available": True,
+                        "minutes": 0,
+                        "provider": "same-stop",
+                        "km": 0,
+                        "durationSec": 0,
+                        "distanceM": 0,
+                        "geometry": None,
+                        "route": None,
+                        "estimateType": "same-stop",
+                        "routingProvider": "mapbox",
+                    }
+                geometry = _geojson_linestring(route.get("geometry") or {})
+                # Duration/distance may still be shown when geometry is missing, but never invent a line.
                 return {
-                    "minutes": max(1, math.ceil(route["duration"] / 60)),
+                    "available": True,
+                    "minutes": max(1, math.ceil(duration_sec / 60)),
                     "provider": label,
-                    "km": round(road_km, 1),
+                    "km": round(distance_m / 1000, 1),
+                    "durationSec": int(round(duration_sec)),
+                    "distanceM": int(round(distance_m)),
+                    "geometry": geometry,
+                    "route": _road_points(geometry),
+                    "estimateType": _estimate_type(label),
+                    "routingProvider": "mapbox",
                 }
             except Exception:
                 continue
     except Exception:
-        return leg
-    return leg
+        return fallback
+    return fallback
 
 
 async def mapbox_drive(origin, dest):
-    """Coordinates only. A failed route becomes a conservative non-zero estimate."""
+    """Coordinates only. A failed route becomes a conservative non-zero estimate for scheduling."""
     leg = await mapbox_leg(origin, dest)
-    return leg["minutes"], leg["provider"]
+    if leg.get("available") and leg.get("provider") != "unavailable":
+        return int(leg["minutes"]), leg["provider"]
+    minutes_est, provider = conservative_drive(origin, dest)
+    return minutes_est, provider
 
 
 def _live(production):
@@ -1527,25 +1621,53 @@ async def build_route(db, coll, practitioner_id, day, user, include_address=True
         nav_type = navigation_location_type(row)
         if index:
             previous = appointments[index - 1]
-            detail = await mapbox_leg(
-                visit_navigation_point(previous.get("address"), navigation_location_type(previous)),
-                visit_navigation_point(row.get("address"), nav_type),
-            )
-            drive = int(detail["minutes"])
-            travel_total += drive
+            origin_point = visit_navigation_point(previous.get("address"), navigation_location_type(previous))
+            dest_point = visit_navigation_point(row.get("address"), nav_type)
+            detail = await mapbox_leg(origin_point, dest_point)
             prev_end = minutes(appointments[index - 1]["time"]) + int(appointments[index - 1]["duration"])
-            depart = prev_end + int(rules["cleanupMin"])
-            arrive = depart + drive
-            if arrive + int(rules["setupMin"]) + int(rules["travelBufferMin"]) > minutes(row["time"]):
-                warnings.append({"appointmentId": row["id"], "ref": row.get("ref"), "message": "Travel time is tight before this visit"})
-            leg = {
-                "minutes": drive,
-                "provider": detail["provider"],
-                "km": detail.get("km"),
-                "depart": hhmm(depart),
-                "arrive": hhmm(arrive),
-                "computedAt": computed_at,
-            }
+            depart_ready = prev_end + int(rules["cleanupMin"])
+            if detail.get("available") and detail.get("minutes") is not None:
+                drive = int(detail["minutes"])
+                travel_total += drive
+                arrive = depart_ready + drive
+                if arrive + int(rules["setupMin"]) + int(rules["travelBufferMin"]) > minutes(row["time"]):
+                    warnings.append({"appointmentId": row["id"], "ref": row.get("ref"), "message": "Travel time is tight before this visit"})
+                leg = {
+                    "available": True,
+                    "minutes": drive,
+                    "provider": detail["provider"],
+                    "km": detail.get("km"),
+                    "durationSec": detail.get("durationSec"),
+                    "distanceM": detail.get("distanceM"),
+                    "geometry": detail.get("geometry"),
+                    "route": detail.get("route"),
+                    "estimateType": detail.get("estimateType"),
+                    "routingProvider": detail.get("routingProvider") or "mapbox",
+                    "origin": origin_point,
+                    "destination": dest_point,
+                    "depart": hhmm(depart_ready),
+                    "arrive": hhmm(arrive),
+                    "computedAt": computed_at,
+                }
+            else:
+                leg = {
+                    "available": False,
+                    "minutes": None,
+                    "provider": "unavailable",
+                    "km": None,
+                    "durationSec": None,
+                    "distanceM": None,
+                    "geometry": None,
+                    "route": None,
+                    "estimateType": None,
+                    "routingProvider": "mapbox",
+                    "origin": origin_point,
+                    "destination": dest_point,
+                    "depart": None,
+                    "arrive": None,
+                    "message": "Driving ETA unavailable",
+                    "computedAt": computed_at,
+                }
         address = row.get("address") or {}
         stop = {
             "id": row["id"],
@@ -1629,21 +1751,56 @@ async def preview_route_from_origin(db, coll, practitioner_id, user, origin, app
         raise HTTPException(409, "This visit does not have a navigable destination yet")
     rules = scheduling_rules(settings)
     detail = await mapbox_leg(point, dest)
-    drive = int(detail["minutes"])
-    start = minutes(appt["time"])
-    leave = leave_by_minutes(start, drive, rules)
-    arrive = leave + drive
     computed_at = datetime.now(timezone.utc).isoformat()
-    traffic = detail["provider"] == "mapbox-traffic"
-    return {
+    base = {
         "appointmentId": appt["id"],
         "ref": appt.get("ref"),
         "date": appt.get("date"),
         "time": appt.get("time"),
         "destination": dest,
+        "setupMin": int(rules["setupMin"]),
+        "travelBufferMin": int(rules["travelBufferMin"]),
+        "computedAt": computed_at,
+        "persisted": False,
+        "tripStarted": False,
+        "sharing": False,
+        "statusUnchanged": True,
+        "routingProvider": "mapbox",
+    }
+    if not detail.get("available") or detail.get("minutes") is None:
+        return {
+            **base,
+            "available": False,
+            "minutes": None,
+            "km": None,
+            "durationSec": None,
+            "distanceM": None,
+            "geometry": None,
+            "route": None,
+            "provider": "unavailable",
+            "estimateType": None,
+            "trafficAware": False,
+            "trafficNote": "Driving ETA unavailable — Mapbox Directions did not return a road route.",
+            "depart": None,
+            "arrive": None,
+            "message": "Driving ETA unavailable",
+        }
+    drive = int(detail["minutes"])
+    start = minutes(appt["time"])
+    leave = leave_by_minutes(start, drive, rules)
+    arrive = leave + drive
+    traffic = detail["provider"] == "mapbox-traffic"
+    return {
+        **base,
+        "available": True,
         "minutes": drive,
         "km": detail.get("km"),
+        "durationSec": detail.get("durationSec"),
+        "distanceM": detail.get("distanceM"),
+        "geometry": detail.get("geometry"),
+        "route": detail.get("route"),
         "provider": detail["provider"],
+        "estimateType": detail.get("estimateType"),
         "trafficAware": traffic,
         "trafficNote": (
             "Uses current traffic conditions — not a forecast for a future departure."
@@ -1652,13 +1809,6 @@ async def preview_route_from_origin(db, coll, practitioner_id, user, origin, app
         ),
         "depart": hhmm(max(0, leave)),
         "arrive": hhmm(max(0, arrive)),
-        "setupMin": int(rules["setupMin"]),
-        "travelBufferMin": int(rules["travelBufferMin"]),
-        "computedAt": computed_at,
-        "persisted": False,
-        "tripStarted": False,
-        "sharing": False,
-        "statusUnchanged": True,
     }
 
 

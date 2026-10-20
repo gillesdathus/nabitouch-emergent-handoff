@@ -11,7 +11,10 @@ import {
   formatKm,
   freshnessLabel,
   isMobileRouteStop,
+  isRoadLeg,
   providerLabel,
+  roadRoutesFromStops,
+  routePolyline,
   stopDestinationPoint,
 } from "@/lib/my-route";
 import { quickHelpHref } from "@/lib/team-connect";
@@ -109,7 +112,33 @@ export default function DailyRoute({ mode = "pro" }) {
     () => (route?.stops || []).filter((row) => isMobileRouteStop(row)),
     [route],
   );
-  const dests = mobileStops.map((row, index) => ({ pos: row.stop.position, label: String(index + 1) }));
+  const dayRoutes = useMemo(() => roadRoutesFromStops(listedStops), [listedStops]);
+  const previewRouteLine = useMemo(() => (preview ? routePolyline(preview) : null), [preview]);
+  const mapRoutes = useMemo(() => {
+    if (previewRouteLine) return [previewRouteLine];
+    return dayRoutes;
+  }, [previewRouteLine, dayRoutes]);
+  const dests = useMemo(() => {
+    if (preview?.destination && previewRouteLine) {
+      // Preview response omits GPS origin for privacy; use road geometry endpoints as markers.
+      const out = [];
+      if (preview.route?.[0]) out.push({ pos: preview.route[0], label: "A", role: "origin" });
+      out.push({ pos: preview.destination, label: "B", role: "destination" });
+      return out;
+    }
+    return mobileStops.map((row, index) => ({ pos: row.stop.position, label: String(index + 1) }));
+  }, [preview, previewRouteLine, mobileStops]);
+  const focusLeg = useMemo(() => {
+    if (preview && isRoadLeg(preview)) return preview;
+    if (preview && preview.available === false) return preview;
+    const withRoad = listedStops.filter((row) => isRoadLeg(row.leg));
+    if (previewTargetId) {
+      const selected = listedStops.find((row) => row.stop?.id === previewTargetId);
+      if (selected?.leg) return selected.leg;
+    }
+    return withRoad[0]?.leg || listedStops.find((row) => row.leg)?.leg || null;
+  }, [preview, listedStops, previewTargetId]);
+  const routeReady = mapRoutes.length > 0 || (focusLeg && isRoadLeg(focusLeg));
   const viewingToday = date === today;
   const futureDay = date > today;
 
@@ -225,8 +254,54 @@ export default function DailyRoute({ mode = "pro" }) {
         </p>
       )}
 
-      {dests.length > 0 ? (
-        <LiveMap dests={dests} height={320} testid="route-map" tag="Day destinations" />
+      {dests.length > 0 || mapRoutes.length > 0 ? (
+        <div className="space-y-3" data-testid="route-map-panel">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-nb-mute">{previewRouteLine ? "Driving route preview" : "Illustrative preview · day stops"}</p>
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${routeReady ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}
+              data-testid="route-ready-badge"
+            >
+              {routeReady ? "Route ready" : "ETA pending"}
+            </span>
+          </div>
+          <LiveMap
+            dests={dests}
+            routes={mapRoutes}
+            height={320}
+            testid="route-map"
+            tag={previewRouteLine ? "Driving route preview" : mapRoutes.length ? "Road route" : "Day destinations"}
+            fitKey={`${date}:${personId}:${preview?.appointmentId || ""}:${mapRoutes.length}`}
+          />
+          {focusLeg && isRoadLeg(focusLeg) && (
+            <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-sky-100" data-testid="route-leg-metrics">
+              <div>
+                <p className="text-[11px] text-nb-mute">Drive time</p>
+                <p className="text-lg font-semibold" data-testid="route-metric-drive">{focusLeg.minutes} min</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-nb-mute">Distance</p>
+                <p className="text-lg font-semibold" data-testid="route-metric-distance">{formatKm(focusLeg.km) || "—"}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-nb-mute">Leave by</p>
+                <p className="text-lg font-semibold" data-testid="route-metric-depart">{focusLeg.depart || "—"}</p>
+              </div>
+              <p className="col-span-3 flex items-center justify-center gap-1 text-[11px] text-nb-mute">
+                ETA updated on request
+                <button type="button" className="inline-flex h-7 w-7 items-center justify-center rounded-full hover:bg-sky-50" onClick={load} data-testid="route-metrics-refresh" aria-label="Refresh estimates">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+                {freshnessLabel(focusLeg.computedAt || route?.computedAt) ? ` · as of ${freshnessLabel(focusLeg.computedAt || route?.computedAt)}` : ""}
+              </p>
+            </div>
+          )}
+          {focusLeg && !isRoadLeg(focusLeg) && (
+            <p className="rounded-2xl bg-amber-50 p-3 text-sm text-amber-900" data-testid="route-eta-unavailable">
+              Driving ETA unavailable. Destination pins and external Maps stay available — try Refresh estimates.
+            </p>
+          )}
+        </div>
       ) : (
         <div className="grid h-48 place-items-center rounded-[28px] bg-gradient-to-br from-sky-50 to-nb-mint px-4 text-center text-sm text-nb-mute" data-testid="route-map">
           {viewingToday ? "No mobile destinations today" : "No mobile destination pins for this day."}
@@ -268,13 +343,18 @@ export default function DailyRoute({ mode = "pro" }) {
             )}
           </div>
           {previewError && <p className="text-sm text-amber-900" data-testid="route-preview-error">{previewError}</p>}
-          {preview && (
+          {preview && isRoadLeg(preview) && (
             <div className="rounded-2xl bg-sky-50 p-3 text-sm" data-testid="route-preview-result">
               <p className="font-semibold">About {preview.minutes} min · {formatKm(preview.km) || "distance unavailable"}</p>
               <p className="mt-1 text-nb-mute">Leave by {preview.depart} · arrive about {preview.arrive}</p>
               <p className="mt-1 text-xs text-nb-mute">{providerLabel(preview.provider)} · {preview.trafficNote}</p>
               {freshnessLabel(preview.computedAt) && <p className="mt-1 text-xs text-nb-mute">Calculated {freshnessLabel(preview.computedAt)} · not a confirmed arrival</p>}
             </div>
+          )}
+          {preview && !isRoadLeg(preview) && (
+            <p className="text-sm text-amber-900" data-testid="route-preview-unavailable">
+              {preview.message || "Driving ETA unavailable"}. Your itinerary and Open Maps actions still work.
+            </p>
           )}
         </div>
       )}
@@ -324,7 +404,7 @@ export default function DailyRoute({ mode = "pro" }) {
             </div>
             {row.stop.addressLine && <p className="mt-1 text-sm text-nb-mute">{row.stop.addressLine}</p>}
             {!row.stop.addressLine && row.stop.area && <p className="mt-1 text-sm text-nb-mute">{row.stop.area}</p>}
-            {row.leg && (
+            {row.leg && isRoadLeg(row.leg) && (
               <p className="mt-2 text-sm text-nb-mute" data-testid={`route-leg-${row.stop.id}`}>
                 Drive about {row.leg.minutes} min
                 {formatKm(row.leg.km) ? ` · ${formatKm(row.leg.km)}` : ""}
@@ -333,7 +413,18 @@ export default function DailyRoute({ mode = "pro" }) {
                 {" · "}{providerLabel(row.leg.provider)}
               </p>
             )}
-            {row.leg && <p className="mt-1 text-xs text-nb-mute">{etaCopy(row.leg.provider)}{freshnessLabel(row.leg.computedAt || route?.computedAt) ? ` · as of ${freshnessLabel(row.leg.computedAt || route?.computedAt)}` : ""}</p>}
+            {row.leg && isRoadLeg(row.leg) && (
+              <p className="mt-1 text-xs text-nb-mute">
+                {etaCopy(row.leg.provider)}
+                {row.leg.estimateType === "traffic-aware" ? " · current traffic (not a forecast)" : ""}
+                {freshnessLabel(row.leg.computedAt || route?.computedAt) ? ` · as of ${freshnessLabel(row.leg.computedAt || route?.computedAt)}` : ""}
+              </p>
+            )}
+            {row.leg && !isRoadLeg(row.leg) && (
+              <p className="mt-2 text-sm text-amber-900" data-testid={`route-leg-unavailable-${row.stop.id}`}>
+                Driving ETA unavailable
+              </p>
+            )}
             <p className="mt-1 text-xs text-nb-mute">
               Setup {route.rules.setupMin} min · cleanup {route.rules.cleanupMin} min · travel buffer {route.rules.travelBufferMin} min
             </p>

@@ -4,7 +4,16 @@ import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import { addDays, todayISO } from "@/lib/domain";
 
-vi.mock("@/components/LiveMap", () => ({ LiveMap: () => createElement("div", { "data-testid": "route-map-live" }) }));
+vi.mock("@/components/LiveMap", () => ({
+  LiveMap: (props) => {
+    globalThis.__ROUTE_MAP_PROPS = props;
+    return createElement("div", {
+      "data-testid": "route-map-live",
+      "data-route-count": String((props.routes || []).length),
+      "data-route-points": String((props.routes?.[0] || []).length),
+    });
+  },
+}));
 vi.mock("@/store/DemoStore", () => ({
   useDemo: () => ({
     practitionerId: "p-nabitu-kahindo",
@@ -82,6 +91,12 @@ test("cycles multiple future mobile destinations", async () => {
 
 test("renders realistic API stops even when locationType is missing", async () => {
   const today = todayISO();
+  const roadCoords = [
+    [-113.5, 53.54],
+    [-113.498, 53.54],
+    [-113.498, 53.545],
+    [-113.51, 53.55],
+  ];
   const { host, root } = await renderRoute(
     [],
     {
@@ -92,7 +107,20 @@ test("renders realistic API stops even when locationType is missing", async () =
         },
         {
           stop: { id: "a-legacy", time: "13:00", duration: 60, ref: "NT-11", status: "assigned", position: { lat: 53.55, lng: -113.51 }, addressLine: "11 Legacy Ave" },
-          leg: { minutes: 22, km: 7.1, depart: "11:15", arrive: "11:37", provider: "mapbox", computedAt: "2026-06-16T17:00:00Z" },
+          leg: {
+            available: true,
+            minutes: 22,
+            km: 7.1,
+            depart: "11:15",
+            arrive: "11:37",
+            provider: "mapbox",
+            estimateType: "standard",
+            durationSec: 1320,
+            distanceM: 7100,
+            geometry: { type: "LineString", coordinates: roadCoords },
+            route: roadCoords.map(([lng, lat]) => ({ lat, lng })),
+            computedAt: "2026-06-16T17:00:00Z",
+          },
         },
       ],
       gaps: [],
@@ -105,12 +133,45 @@ test("renders realistic API stops even when locationType is missing", async () =
   expect(host.querySelector("[data-testid='route-stop-a-legacy']")).toBeTruthy();
   expect(host.querySelector("[data-testid='route-leg-a-legacy']")?.textContent).toContain("22 min");
   expect(host.querySelector("[data-testid='route-leg-a-legacy']")?.textContent).toContain("7.1 km");
+  expect(host.querySelector("[data-testid='route-metric-drive']")?.textContent).toContain("22");
+  expect(host.querySelector("[data-testid='route-metric-distance']")?.textContent).toContain("7.1");
+  expect(host.querySelector("[data-testid='route-metric-depart']")?.textContent).toContain("11:15");
+  expect(host.querySelector("[data-testid='route-ready-badge']")?.textContent).toMatch(/Route ready/i);
+  expect(host.querySelector("[data-testid='route-map-live']")?.getAttribute("data-route-count")).toBe("1");
+  expect(Number(host.querySelector("[data-testid='route-map-live']")?.getAttribute("data-route-points"))).toBeGreaterThan(2);
+  expect(globalThis.__ROUTE_MAP_PROPS.routes[0].length).toBe(4);
   expect(host.querySelector("[data-testid='route-warning']")?.textContent).toContain("tight");
   expect(host.querySelector("[data-testid='route-nav-app-google-a-home']")).toBeTruthy();
   expect(host.querySelector("[data-testid='route-nav-app-apple-a-home']")).toBeTruthy();
   expect(host.querySelector("[data-testid='route-nav-app-waze-a-home']")).toBeTruthy();
   expect(host.querySelector("[data-testid='route-location-preview']")).toBeTruthy();
   expect(host.textContent).toMatch(/My\s*Route/);
+  act(() => root.unmount());
+  host.remove();
+});
+
+test("shows Driving ETA unavailable without drawing a fake route", async () => {
+  const { host, root } = await renderRoute(
+    [],
+    {
+      stops: [
+        {
+          stop: { id: "a-home", time: "10:00", duration: 60, ref: "NT-10", locationType: "home", status: "assigned", position: { lat: 53.54, lng: -113.5 }, addressLine: "10 Home St" },
+          leg: null,
+        },
+        {
+          stop: { id: "a-next", time: "13:00", duration: 60, ref: "NT-11", locationType: "home", status: "assigned", position: { lat: 53.55, lng: -113.51 }, addressLine: "11 Next Ave" },
+          leg: { available: false, provider: "unavailable", minutes: null, km: null, geometry: null, route: null, message: "Driving ETA unavailable", computedAt: "2026-06-16T17:00:00Z" },
+        },
+      ],
+      gaps: [],
+      rules: { setupMin: 10, cleanupMin: 15, travelBufferMin: 10 },
+      warnings: [],
+    },
+  );
+  expect(host.querySelector("[data-testid='route-leg-unavailable-a-next']")?.textContent).toMatch(/Driving ETA unavailable/i);
+  expect(host.querySelector("[data-testid='route-map-live']")?.getAttribute("data-route-count")).toBe("0");
+  expect(host.querySelector("[data-testid='route-nav-app-google-a-next']")).toBeTruthy();
   act(() => root.unmount());
   host.remove();
 });
