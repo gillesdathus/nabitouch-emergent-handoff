@@ -41,12 +41,13 @@ def test_trial_service_is_exactly_ten_minutes_at_zero():
     assert service["prices"] == {"10": 0}
     assert service["taxable"] is False
     assert service["mobile"] is True
-    assert service["clinic"] is True
+    assert service["clinic"] is False
     assert is_trial_service(service) is True
     assert trial_duration_ok(10) is True
     assert trial_duration_ok(60) is False
     assert booking_block_reason(service, 10, "home") is None
     assert booking_block_reason(service, 10, "office") is None
+    assert booking_block_reason(service, 10, "clinic") == "This service is not offered in clinic"
     assert booking_block_reason({**service, "mobile": False}, 10, "home") == "This service is not offered at home"
 
 
@@ -108,10 +109,11 @@ def test_campaign_template_is_standalone_trial_not_flash_addon():
     }
     assert campaign_live(live, at) is True
     assert "home" in row["locationTypes"]
-    assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "clinic") is True
+    assert "clinic" not in row["locationTypes"]
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "clinic") is False
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "home") is True
-    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "clinic") is False
-    assert campaign_fits(live, live["bookingStart"], "10:00", 60, TRIAL_SERVICE_SLUG, "clinic") is False
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "home") is False
+    assert campaign_fits(live, live["bookingStart"], "10:00", 60, TRIAL_SERVICE_SLUG, "home") is False
     assert reserve_decision({**live, "status": "paused"}, {}, at, 0) != "reserved"
     pub = public_campaign({**live, "public": True}, at)
     assert pub is not None
@@ -147,8 +149,10 @@ def test_trial_audience_uses_regular_treatment_history_not_registration():
         "locationTypes": ["clinic"], "maxRedemptions": 5,
     })
     assert clinic_only["locationTypes"] == list(TRIAL_LOCATION_TYPES)
+    assert "clinic" not in clinic_only["locationTypes"]
     assert trial_locations_need_home_fix(["clinic"]) is True
-    assert trial_locations_need_home_fix(["home", "clinic"]) is False
+    assert trial_locations_need_home_fix(["home", "clinic"]) is True
+    assert trial_locations_need_home_fix(["home", "office"]) is False
 
 
 def test_disabled_or_expired_campaign_is_not_bookable():

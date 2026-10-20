@@ -390,10 +390,9 @@ def parse_campaign_fields(payload, *, current=None):
     if kind == "complimentary":
         locations = locations if isinstance(locations, list) and locations else ["clinic"]
     elif kind == "trial":
-        locations = locations if isinstance(locations, list) and locations else list(TRIAL_LOCATION_TYPES)
-        # Never persist a clinic-only trial — home visits are an approved campaign rule.
-        if not any(loc in ("home", "office", "hotel", "event") for loc in locations):
-            locations = list(TRIAL_LOCATION_TYPES)
+        from trial import normalize_trial_locations
+        # Trial campaigns are mobile-only; never persist clinic as a venue.
+        locations = normalize_trial_locations(locations if isinstance(locations, list) else None)
     elif not isinstance(locations, list):
         locations = []
     expiry = stamp(payload.get("expiresAt") or current.get("expiresAt"))
