@@ -328,16 +328,25 @@ export function welcomeOfferListed(promo, placement) {
 }
 
 export function promoBannerCopy(promo) {
-  if (!promo) return { headline: "Welcome offer", body: "" };
+  if (!promo) return { headline: "Your First Massage, 20% Off.", body: "", cta: "Book my first massage" };
   const value = Number(promo.value) || 0;
   const cap = promo.maxDiscount != null ? Number(promo.maxDiscount) : null;
   const defaultBody = promo.type === "percent"
-    ? `${value}% off the treatment price of a qualifying first booking${cap != null ? `, up to $${cap}` : ""}. Travel and GST are calculated separately.`
+    ? `Book your first eligible regular massage through the Nabitouch app and enjoy ${value}% off${cap != null ? ` (up to $${cap})` : ""}. Travel and GST are calculated separately.`
     : `${money(value)} off the treatment price of a qualifying first booking. Travel and GST are calculated separately.`;
   return {
-    headline: promo.bannerHeadline || promo.name || "Welcome offer",
+    headline: promo.bannerHeadline || promo.name || "Your First Massage, 20% Off.",
     body: promo.bannerBody || defaultBody,
+    cta: promo.ctaLabel || "Book my first massage",
   };
+}
+
+export function trialCampaignListed(campaign, placement) {
+  if (!campaign || campaign.offerKind !== "trial") return false;
+  if (campaign.soldOut) return false;
+  if (placement === "home" && campaign.showHome === false) return false;
+  if (placement === "offers" && campaign.showOffers === false) return false;
+  return true;
 }
 
 export function promoEligibility(promo, client, slug) {

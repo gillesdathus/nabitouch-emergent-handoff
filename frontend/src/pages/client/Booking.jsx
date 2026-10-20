@@ -172,17 +172,21 @@ export default function Booking() {
   }, [service?.id, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // In-clinic stays off until owner activates it; never leave a stale clinic draft selected.
+  // Trial campaigns may still reserve clinic time when a street address exists.
   useEffect(() => {
     if (!idx?.settings) return;
-    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic)) {
+    const trialDraft = Boolean(draft.campaignId && isTrialService(service));
+    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic) && !trialDraft) {
       patchDraft({ locationType: "home" });
     }
-  }, [idx?.settings, draft.locationType]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [idx?.settings, draft.locationType, draft.campaignId, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zr = draft.locationType !== "clinic" && draft.address ? zoneFor(draft.address, state.zones) : null;
   const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx?.settings, locationType: draft.locationType });
-  const shown = step === 5 && serverQuote ? serverQuote : q;
-  const quotePayload = step === 5 ? {
+  const trialFlowEarly = Boolean(draft.campaignId && isTrialService(service));
+  const reviewAt = trialFlowEarly ? 4 : 5;
+  const shown = step === reviewAt && serverQuote ? serverQuote : q;
+  const quotePayload = step === reviewAt ? {
     useCredit,
     winbackCode,
     followupCode,
@@ -213,14 +217,29 @@ export default function Booking() {
     return () => { stop = true; };
   }, [quoteKey, api]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
+  const clinicReady = Boolean(String(idx.settings?.clinic?.address || "").trim());
+  const whereOk = draft.locationType === "clinic"
+    ? (trialFlow ? clinicReady : clinicBookable(idx.settings.clinic))
+    : (!!zr?.zone && draft.address?.clientConfirmed === true);
+  const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
+  const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
+  const guestProfileOk = trialFlowEarly || !g.createProfile || (g.dob && (g.password || "").length >= 8);
+  const youOk = me ? trialExtrasOk : (guestContactOk && trialExtrasOk && guestProfileOk);
   const ok = [
-    (draft.locationType === "clinic" ? clinicBookable(idx.settings.clinic) : (!!zr?.zone && draft.address?.clientConfirmed === true)),
+    whereOk,
     !!service && !!service.prices[String(draft.duration)],
     !!draft.date && !!draft.time,
-    !!me || (g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone && (!g.createProfile || (g.dob && (g.password || "").length >= 8))),
+    youOk,
     trialFlow || !!paymentChoice(draft, idx.settings),
     true,
   ];
+  const whereBlockedReason = !whereOk
+    ? (draft.locationType === "clinic"
+      ? (trialFlow
+        ? "The clinic address is not ready for this free trial yet. Book a regular massage instead, or try again shortly."
+        : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
+      : "Confirm a service address in our Edmonton zones to continue.")
+    : "";
   const go = (n) => {
     patchDraft(n === 0 ? { step: n, forceWhere: true } : { step: n, forceWhere: false });
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
@@ -238,7 +257,7 @@ export default function Booking() {
       const payNow = trialFlow ? undefined : paymentChoice(draft, idx.settings);
       const clinicPin = idx.settings.clinic || {};
       const address = draft.locationType === "clinic" ? { line: clinicPin.address, zoneId: null, ...(Number.isFinite(Number(clinicPin.lat)) && Number.isFinite(Number(clinicPin.lng)) && clinicPin.lat !== "" && clinicPin.lng !== "" ? { lat: Number(clinicPin.lat), lng: Number(clinicPin.lng) } : {}) } : { ...draft.address, zoneId: zr?.zone?.id, notes: draft.addressNotes };
-      const client = me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, preferredName: "", email: g.email, phone: g.phone, dob: g.dob, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, hasProfile: g.createProfile, language: "English", contactMethod: "Text", addresses: [{ ...address, id: "ad-1", label: LOCATION_TYPES.find((l) => l.id === draft.locationType).label.replace("My ", "") }], insurance: draft.pendingInsurance ? [draft.pendingInsurance] : [], favorites: [draft.serviceSlug], preferredPractitioners: [], emergencyContact: "", photo: null };
+      const client = me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, preferredName: "", email: g.email, phone: g.phone, dob: g.dob, insuranceStatus: g.insuranceStatus || undefined, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, hasProfile: g.createProfile, language: "English", contactMethod: "Text", addresses: [{ ...address, id: "ad-1", label: LOCATION_TYPES.find((l) => l.id === draft.locationType).label.replace("My ", "") }], insurance: draft.pendingInsurance ? [draft.pendingInsurance] : [], favorites: [draft.serviceSlug], preferredPractitioners: [], emergencyContact: "", photo: null };
       if (!me && g.createProfile) {
         try { await register({ email: g.email, password: g.password, firstName: g.firstName, lastName: g.lastName, phone: g.phone, dob: g.dob, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, profile: { addresses: client.addresses, insurance: client.insurance, favorites: client.favorites } }); }
         catch (e) { toast.error(apiError(e)); return; }
@@ -283,22 +302,33 @@ export default function Booking() {
           </div>
         )}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Link to="/me" data-testid="confirmation-view-visit-btn" className="nb-btn-primary">View my visit</Link>
-          <Link to="/" data-testid="confirmation-home-btn" className="nb-btn-ghost h-12">Back home</Link>
+          <Link to="/me" data-testid="confirmation-view-visit-btn" className="nb-btn-primary">{trialVisit ? "View appointment" : "View my visit"}</Link>
+          <Link to={trialVisit ? "/me" : "/"} data-testid="confirmation-home-btn" className="nb-btn-ghost h-12">{trialVisit ? "Back to My Nabitouch" : "Back home"}</Link>
         </div>
       </div>
     );
   }
 
-  const Body = [StepWhere, StepService, StepWhen, StepYou, StepPay][step];
+  const flowSteps = trialFlow ? ["Where", "Service", "When", "You", "Review"] : STEPS;
+  const reviewStep = trialFlow ? 4 : 5;
+  const Body = trialFlow
+    ? [StepWhere, StepService, StepWhen, StepYou][step]
+    : [StepWhere, StepService, StepWhen, StepYou, StepPay][step];
+  const advance = () => {
+    if (trialFlow && step === 3) go(reviewStep);
+    else go(step + 1);
+  };
   return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_340px]" data-testid={trialFlow ? "booking-trial-flow" : "booking-regular-flow"}>
       <div className="min-w-0">
         <div className="mb-8" data-testid="booking-progress">
-          <div className="mb-3 flex items-center justify-between text-xs font-medium text-nb-mute"><span>Step {step + 1} of 6 · <b className="text-nb-ink">{STEPS[step]}</b></span><span>{shown.welcomeOffer && <span className="text-nb-teal">First-booking welcome offer — confirmed when you submit</span>}</span></div>
-          <Stepper steps={STEPS} current={step} testid="booking-stepper" onStep={(index) => { if (!(index > step && !ok.slice(0, index).every(Boolean))) go(index); }} />
-          <div className="sr-only">{STEPS.map((label, index) => (
-            <button key={label} type="button" disabled={index > step && !ok.slice(0, index).every(Boolean)} onClick={() => go(index)} aria-label={`Step ${index + 1}: ${label}`} data-testid={`booking-step-indicator-${index}`}>{label}</button>
+          <div className="mb-3 flex items-center justify-between text-xs font-medium text-nb-mute"><span>Step {Math.min(step, reviewStep) + 1} of {flowSteps.length} · <b className="text-nb-ink">{flowSteps[Math.min(step, reviewStep)]}</b></span><span>{shown.welcomeOffer && <span className="text-nb-teal">First-booking welcome offer — confirmed when you submit</span>}{trialFlow && <span className="text-nb-teal">Free 10-minute trial · $0</span>}</span></div>
+          <Stepper steps={flowSteps} current={Math.min(step, reviewStep)} testid="booking-stepper" onStep={(index) => {
+            const target = trialFlow && index === 4 ? reviewStep : index;
+            if (!(target > step && !ok.slice(0, Math.min(target, 4)).every(Boolean))) go(target);
+          }} />
+          <div className="sr-only">{flowSteps.map((label, index) => (
+            <button key={label} type="button" disabled={index > step && !ok.slice(0, index).every(Boolean)} onClick={() => go(trialFlow && index === 4 ? reviewStep : index)} aria-label={`Step ${index + 1}: ${label}`} data-testid={`booking-step-indicator-${index}`}>{label}</button>
           ))}</div>
           {service && step !== 1 && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-3" data-testid="booking-selected-service">
@@ -314,9 +344,9 @@ export default function Booking() {
         </div>
         <AnimatePresence mode="wait">
           <motion.div key={step} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
-            {step < 5 ? <Body /> : (
+            {step < reviewStep ? <Body /> : (
               <div data-testid="step-review">
-                <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">Review & confirm</h2>
+                <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & confirm"}</h2>
                 <div className="nb-card divide-y divide-sky-100">
                   {[[User, `${service.name} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", 1],
                     [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, draft.practitionerId ? idx.practitioners[draft.practitionerId].name : "Request only — a practitioner is not assigned yet", 2],
@@ -334,10 +364,14 @@ export default function Booking() {
             )}
           </motion.div>
         </AnimatePresence>
-        <div className="safe-bottom sticky bottom-[64px] z-20 -mx-5 mt-10 flex gap-3 border-t border-sky-100 bg-white/95 px-5 py-4 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0">
-          {step > 0 && <button onClick={() => go(step - 1)} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
-          {step < 5 ? <button disabled={!ok[step]} onClick={() => go(step + 1)} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
-            : <button disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : serverQuote ? "Request this visit" : "Confirming the price…"}</button>}
+        <div className="safe-bottom sticky bottom-[64px] z-20 -mx-5 mt-10 flex flex-col gap-2 border-t border-sky-100 bg-white/95 px-5 py-4 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0">
+          <div className="flex gap-3">
+            {step > 0 && <button onClick={() => go(trialFlow && step === reviewStep ? 3 : step - 1)} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
+            {step < reviewStep ? <button disabled={!ok[Math.min(step, 4)]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
+              : <button disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>}
+          </div>
+          {whereBlockedReason && step === 0 && !ok[0] && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: undefined })}>Book a regular massage</Link></p>}
+          {!ok[Math.min(step, 4)] && step > 0 && step < reviewStep && <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>}
         </div>
       </div>
       <aside className="hidden lg:block">
@@ -360,7 +394,7 @@ export default function Booking() {
                   </button>
                 </div>
                 {draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}
-                <div className="mt-4"><Breakdown q={step === 5 && serverQuote ? serverQuote : q} settlement={step === 5 ? settlement : null} compact /></div>
+                <div className="mt-4"><Breakdown q={step === reviewStep && serverQuote ? serverQuote : q} settlement={step === reviewStep ? settlement : null} compact /></div>
               </>
             ) : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>

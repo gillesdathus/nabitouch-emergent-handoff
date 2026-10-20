@@ -8,6 +8,7 @@ import { money, staffActor } from "@/lib/domain";
 
 const PLACEMENTS = [
   { id: "home", label: "Home" },
+  { id: "offers", label: "Offers" },
   { id: "account", label: "Account / Me" },
   { id: "booking", label: "Booking" },
   { id: "services", label: "Services" },

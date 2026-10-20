@@ -11,6 +11,7 @@ const EMPTY = {
   offerKind: "percent", complimentaryMinutes: 10, locationTypes: [],
   followUp: { enabled: false, percent: 20, validDays: 14, autoIssueOnComplete: true },
   maxRedemptions: 5, perClientLimit: 1, audience: "all", minDuration: 60, public: true, stackable: false, code: "",
+  showHome: true, showOffers: true,
 };
 const FILTERS = ["all", "draft", "scheduled", "active", "completed", "archived"];
 const STEPS = ["Details", "Offer", "Schedule", "Audience", "Review"];
@@ -294,6 +295,18 @@ export default function Campaigns() {
                   </select>
                 </label>
                 <label className="block text-sm">Uses per client<input className="nb-input" type="number" min="1" value={editor.perClientLimit} onChange={(event) => setEditor({ ...editor, perClientLimit: Number(event.target.value) })} /></label>
+                <div className="space-y-2 rounded-2xl bg-sky-50 p-4" data-testid="campaign-placements">
+                  <p className="text-sm font-semibold">Where this offer appears</p>
+                  <p className="text-xs text-nb-mute">Hiding a banner does not pause or disable the campaign.</p>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={editor.showHome !== false} onChange={(event) => setEditor({ ...editor, showHome: event.target.checked })} data-testid="campaign-show-home" />
+                    Show on Home
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={editor.showOffers !== false} onChange={(event) => setEditor({ ...editor, showOffers: event.target.checked })} data-testid="campaign-show-offers" />
+                    Show on Offers
+                  </label>
+                </div>
               </div>}
               {step === 4 && <div className="space-y-2 rounded-3xl bg-sky-50 p-4 text-sm" data-testid="campaign-review">
                 <p className="text-lg font-semibold">{editor.title || "Untitled campaign"}</p>

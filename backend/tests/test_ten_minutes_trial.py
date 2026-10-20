@@ -5,7 +5,17 @@ import pytest
 import requests
 
 from pricing import launch_welcome_offer, quote, welcome_history_blocks
-from recovery import apply_campaign_price, campaign_fits, campaign_live, launch_ten_minutes_on_us, reserve_decision
+from recovery import (
+    apply_campaign_price,
+    audience_ok,
+    campaign_fits,
+    campaign_live,
+    has_regular_treatment_history,
+    launch_ten_minutes_on_us,
+    parse_campaign_fields,
+    public_campaign,
+    reserve_decision,
+)
 from trial import (
     TRIAL_DURATION_MIN,
     TRIAL_SERVICE_SLUG,
@@ -70,12 +80,48 @@ def test_campaign_template_is_standalone_trial_not_flash_addon():
     assert row["complimentaryMinutes"] == TRIAL_DURATION_MIN
     assert row["status"] == "draft"
     assert row["followUp"]["enabled"] is False
+    assert row["showHome"] is True
+    assert row["showOffers"] is True
     assert campaign_live(row, AT) is False
-    live = {**row, "status": "live", "expiresAt": (AT + timedelta(days=1)).isoformat()}
+    at = datetime.now(timezone.utc)
+    live = {
+        **row,
+        "status": "live",
+        "publishAt": (at - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+        "expiresAt": (at + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+    }
+    assert campaign_live(live, at) is True
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, TRIAL_SERVICE_SLUG, "clinic") is True
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, "swedish", "clinic") is False
     assert campaign_fits(live, live["bookingStart"], "10:00", 60, TRIAL_SERVICE_SLUG, "clinic") is False
-    assert reserve_decision({**live, "status": "paused"}, {}, AT, 0) != "reserved"
+    assert reserve_decision({**live, "status": "paused"}, {}, at, 0) != "reserved"
+    pub = public_campaign({**live, "public": True}, at)
+    assert pub is not None
+    assert pub["headline"].startswith("Try Nabitouch")
+    assert pub["ctaLabel"] == "Claim my free 10 minutes"
+    assert pub["showHome"] is True
+    assert pub["showOffers"] is True
+    hidden = public_campaign({**live, "public": True, "showHome": False, "showOffers": False}, at)
+    assert hidden is not None
+    assert hidden["showHome"] is False
+    assert hidden["showOffers"] is False
+
+
+def test_trial_audience_uses_regular_treatment_history_not_registration():
+    campaign = {**launch_ten_minutes_on_us(), "audience": "new"}
+    trial_only = [{"status": "completed", "appointmentKind": "trial", "serviceSlug": TRIAL_SERVICE_SLUG}]
+    assert has_regular_treatment_history(trial_only) is False
+    assert audience_ok(campaign, {"onlineBookings": 1, "_welcomeHistory": trial_only}) is True
+    assert has_regular_treatment_history([{"status": "completed", "serviceSlug": "swedish"}]) is True
+    assert audience_ok(campaign, {"onlineBookings": 0, "_welcomeHistory": [{"status": "completed", "serviceSlug": "swedish"}]}) is False
+    fields = parse_campaign_fields({
+        "title": "Trial", "offerKind": "trial", "bookingStart": "2030-01-15", "windowStart": "10:00",
+        "windowEnd": "12:00", "expiresAt": "2030-01-20T00:00:00+00:00", "publishAt": "2030-01-01T00:00:00+00:00",
+        "showHome": False, "showOffers": True, "maxRedemptions": 5,
+    })
+    assert fields["showHome"] is False
+    assert fields["showOffers"] is True
+    assert fields["offerKind"] == "trial"
 
 
 def test_disabled_or_expired_campaign_is_not_bookable():

@@ -8,7 +8,7 @@ import { resolvePractitionerId } from '@/lib/practitionerIdentity';
 const Ctx = createContext(null);
 const TrainingBridge = createContext(null);
 const LS = { client: 'nt_demo_client', pract: 'nt_demo_pract', owner: 'nt_demo_owner' };
-const emptyDraft = () => ({ step: 0, locationType: 'home', address: null, addressQuery: '', addressNotes: '', forceWhere: false, serviceId: null, serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, checkoutSessionId: null, checkoutAmountCents: null, invoiceId: null, depositCents: null, idempotencyKey: undefined, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', marketingConsent: false } });
+const emptyDraft = () => ({ step: 0, locationType: 'home', address: null, addressQuery: '', addressNotes: '', forceWhere: false, serviceId: null, serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, checkoutSessionId: null, checkoutAmountCents: null, invoiceId: null, depositCents: null, idempotencyKey: undefined, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', insuranceStatus: '', marketingConsent: false } });
 
 export function DemoProvider({ children }) {
   const [state, setState] = useState(null);

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CatalogueImage } from "@/components/ui-kit";
 import { EmptyState, PageHeader, Reveal } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
+import { promoBannerCopy, trialCampaignListed, welcomeOfferListed } from "@/lib/domain";
 
 function left(expiresAt, serverTime, fetchedAt) {
   if (!expiresAt || !serverTime) return 0;
@@ -20,7 +21,7 @@ function clock(ms) {
 }
 
 export default function Offers() {
-  const { api, patchDraft, user } = useDemo();
+  const { api, patchDraft, user, state } = useDemo();
   const [campaigns, setCampaigns] = useState([]);
   const [offers, setOffers] = useState([]);
   const [serverTime, setServerTime] = useState("");
@@ -55,26 +56,44 @@ export default function Offers() {
     }
   };
 
-  const trialOffers = campaigns.filter((row) => row.offerKind === "trial");
-  const flashOffers = campaigns.filter((row) => row.offerKind !== "trial");
+  const welcome = (state.promotions || []).find((promo) => promo.id === "promo-welcome");
+  const welcomeVisible = welcomeOfferListed(welcome, "offers");
+  const welcomeCopy = promoBannerCopy(welcome);
+  const trialOffers = campaigns.filter((row) => trialCampaignListed(row, "offers"));
+  const flashOffers = campaigns.filter((row) => row.offerKind !== "trial" && row.showOffers !== false);
+  const empty = trialOffers.length === 0 && flashOffers.length === 0 && !welcomeVisible && offers.length === 0;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-5 pt-6" data-testid="client-offers">
+      <PageHeader eyebrow="Offers" title="Ways to start with Nabitouch" sub="Free introductory trial and first-booking savings appear here when they are live." />
+
+      {welcomeVisible && (
+        <Reveal className="nb-card overflow-hidden" data-testid="welcome-offer-card">
+          <article className="p-5">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-nb-blue">20% off</p>
+            <p className="mt-1 text-lg font-semibold" data-testid="welcome-offer-title">{welcomeCopy.headline}</p>
+            <p className="mt-1 text-sm text-nb-mute" data-testid="welcome-offer-body">{welcomeCopy.body}</p>
+            <p className="mt-2 text-sm text-nb-mute">Applies to your first eligible regular app booking. The 10-minute trial does not use this offer.</p>
+            <Link to="/book" className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm" data-testid="welcome-offer-cta">{welcomeCopy.cta}</Link>
+          </article>
+        </Reveal>
+      )}
+
       {trialOffers.length > 0 && (
         <section className="space-y-3" data-testid="trial-offers">
-          <PageHeader eyebrow="Meet Nabitouch" title="10 Minutes. On Us." sub="Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." />
           {trialOffers.map((row, index) => {
             const ms = left(row.expiresAt, serverTime, fetchedAt);
             const expired = ms <= 0;
             return (
               <Reveal key={row.id} i={index} className="nb-card overflow-hidden">
                 <article data-testid={`offer-${row.id}`} className="p-5">
-                  <p className="text-lg font-semibold" data-testid={`trial-title-${row.id}`}>{row.headline || row.title || "10 Minutes. On Us."}</p>
-                  <p className="text-sm text-nb-mute" data-testid={`trial-subhead-${row.id}`}>{row.subhead || "Free 10-minute neck-and-shoulder massage."}</p>
-                  <p className="mt-1 text-sm text-nb-mute">{row.body || row.description || "Meet your massage therapist and experience Nabitouch."}</p>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-nb-teal">Free trial</p>
+                  <p className="mt-1 text-lg font-semibold" data-testid={`trial-title-${row.id}`}>{row.headline || "Try Nabitouch. 10 Minutes. On Us."}</p>
+                  <p className="text-sm text-nb-mute" data-testid={`trial-subhead-${row.id}`}>{row.subhead || "Experience a free 10-minute neck-and-shoulder massage."}</p>
+                  <p className="mt-1 text-sm text-nb-mute">{row.body || row.description || "Meet your therapist, feel the difference, and discover Nabitouch."}</p>
                   <p className="mt-2 text-sm text-nb-mute">$0 · {row.durationMinutes || row.complimentaryMinutes || 10} min · neck and shoulders · {(row.locationTypes || ["clinic"]).join(", ")}</p>
                   <p className="text-sm" data-testid={`offer-spots-${row.id}`}>{row.soldOut ? "Fully booked" : expired ? "Offer ended" : `${row.remaining} openings left`}</p>
-                  {!expired && !row.soldOut && (
+                  {!expired && !row.soldOut ? (
                     <Link
                       to="/book"
                       className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm"
@@ -86,9 +105,14 @@ export default function Offers() {
                         locationType: (row.locationTypes || ["clinic"])[0] || "clinic",
                         practitionerId: row.practitionerId || undefined,
                         date: row.bookingStart,
+                        step: 0,
                         idempotencyKey: `cmp-${row.id}-${Date.now()}`,
                       })}
-                    >Book your free trial</Link>
+                    >{row.ctaLabel || "Claim my free 10 minutes"}</Link>
+                  ) : (
+                    <p className="mt-3 text-sm text-nb-mute" data-testid={`offer-unavailable-${row.id}`}>
+                      This trial is not available right now. <Link to="/book" className="font-semibold text-nb-blue underline">Book a regular massage</Link>
+                    </p>
                   )}
                 </article>
               </Reveal>
@@ -96,9 +120,12 @@ export default function Offers() {
           })}
         </section>
       )}
-      <PageHeader eyebrow="Flash booking" title="Last-minute openings" sub="Times and remaining spots come from Nabitouch. The countdown displays the server expiry." />
-      {flashOffers.length === 0 && trialOffers.length === 0 && <EmptyState icon={Zap} title="No live offers right now" body="When an opening is published it appears here first." testid="offers-empty" />}
-      {flashOffers.length === 0 && trialOffers.length > 0 && <p className="text-sm text-nb-mute" data-testid="flash-offers-empty">No flash openings right now.</p>}
+
+      {(flashOffers.length > 0 || (trialOffers.length === 0 && !welcomeVisible)) && (
+        <PageHeader eyebrow="Flash booking" title="Last-minute openings" sub="Times and remaining spots come from Nabitouch. The countdown displays the server expiry." />
+      )}
+      {empty && <EmptyState icon={Zap} title="No live offers right now" body="When an opening is published it appears here first." testid="offers-empty" />}
+      {flashOffers.length === 0 && (trialOffers.length > 0 || welcomeVisible) && <p className="text-sm text-nb-mute" data-testid="flash-offers-empty">No flash openings right now.</p>}
       {flashOffers.map((row, index) => {
         const ms = left(row.expiresAt, serverTime, fetchedAt);
         const expired = ms <= 0;

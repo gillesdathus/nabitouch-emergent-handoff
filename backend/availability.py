@@ -241,6 +241,11 @@ def practitioner_bookable(person, schedule):
 
 
 def qualified(person, service):
+    from trial import is_trial_service
+
+    # Trial is bound to a campaign practitioner; legacy specialty lists often omit the trial slug.
+    if is_trial_service(service):
+        return True
     specialties = person.get("specialties")
     if specialties is None:
         return True
@@ -693,9 +698,25 @@ def clinic_is_bookable(clinic):
     return True
 
 
-def clinic_visit_address(clinic, notes=""):
-    """Keep the clinic street address. Coordinates are used only after that same address was confirmed."""
-    if not clinic_is_bookable(clinic):
+def clinic_has_address(clinic):
+    """Street address present and valid — used for campaign-scoped clinic trials without enabling general in-clinic booking."""
+    try:
+        validate_clinic(clinic)
+    except ValueError:
+        return False
+    return bool(str((clinic or {}).get("address") or "").strip())
+
+
+def clinic_visit_address(clinic, notes="", *, trial=False):
+    """Keep the clinic street address. Coordinates are used only after that same address was confirmed.
+
+    Trial campaigns may reserve clinic time when a street address exists even if general
+    in-clinic booking stays disabled for the catalogue.
+    """
+    if trial:
+        if not clinic_has_address(clinic):
+            raise ValueError("The clinic address is not ready for trial booking")
+    elif not clinic_is_bookable(clinic):
         raise ValueError("In-clinic booking is not available")
     address = {"line": str((clinic or {}).get("address") or "").strip(), "zoneId": None, "notes": str(notes or "")[:240], "navigation": "unavailable"}
     if (clinic or {}).get("coordinatesVerified") is not True:
@@ -1230,14 +1251,21 @@ def _table_drive(table):
 async def recommend_slots(db, coll, locate_visit, payload, production):
     from pricing import money, zone_travel
 
+    from trial import is_trial_service
+
     settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
     clinic = settings.get("clinic") or {}
     location = payload.get("locationType") or "home"
-    if location == "clinic" and clinic.get("enabled") is not True:
-        raise HTTPException(400, "In-clinic booking is not available")
+    service = await coll("services").find_one({"slug": payload.get("serviceSlug")}, {"_id": 0})
+    trial_visit = is_trial_service(service) or bool(payload.get("campaignId"))
+    if location == "clinic":
+        if trial_visit:
+            if not clinic_has_address(clinic):
+                raise HTTPException(400, "The clinic address is not ready for trial booking")
+        elif clinic.get("enabled") is not True:
+            raise HTTPException(400, "In-clinic booking is not available")
     if clinic.get("mobileEnabled") is False and location != "clinic":
         raise HTTPException(400, "Mobile booking is not available")
-    service = await coll("services").find_one({"slug": payload.get("serviceSlug")}, {"_id": 0})
     duration = payload.get("duration")
     blocked = booking_block_reason(service, duration, location)
     if blocked:
@@ -1277,7 +1305,9 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
         if not practitioner_bookable(person, schedule):
             continue
         appointments = await coll("appointments").find({"practitionerId": person["id"], "date": day}, {"_id": 0}).to_list(100)
-        for start in candidate_starts(None if location == "clinic" and schedule is None else schedule, day, duration, service.get("slug")):
+        # Trial hours follow the practitioner's open week; do not require the trial slug on each weekly row.
+        hours_slug = None if trial_visit else service.get("slug")
+        for start in candidate_starts(None if location == "clinic" and schedule is None else schedule, day, duration, hours_slug):
             if location != "clinic":
                 previous, following = neighbors(appointments, day, start, duration)
                 if previous:
@@ -1292,7 +1322,7 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
                 appointments=appointments, rules=rules, drives=_table_drive(table) if location != "clinic" else (lambda _a, _b: (0, "clinic")),
                 location_type="home" if location != "clinic" else "home", now=now, production=production if location != "clinic" else False,
             )
-            if location == "clinic" and schedule is not None and not interval_open(schedule, day, start, duration, service.get("slug")):
+            if location == "clinic" and schedule is not None and not interval_open(schedule, day, start, duration, hours_slug):
                 continue
             if probe["ok"]:
                 checked.append({**probe, "time": hhmm(start), "practitionerId": person["id"]})
@@ -1316,14 +1346,35 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
     }
 
 
-async def assert_public_slot(db, coll, *, settings, production, practitioner_id, day, time, duration, address, location_type, service, exclude_id=None):
+async def assert_public_slot(db, coll, *, settings, production, practitioner_id, day, time, duration, address, location_type, service, exclude_id=None, trial=False):
     """Reject a booking that is outside a real opening. Legacy demo data with no schedules is unchanged."""
+    from trial import is_trial_service
+
     clinic = (settings or {}).get("clinic") or {}
-    if location_type == "clinic" and not clinic_is_bookable(clinic):
-        raise HTTPException(400, "In-clinic booking is not available")
+    trial_visit = trial or is_trial_service(service)
+    if location_type == "clinic":
+        if trial_visit:
+            if not clinic_has_address(clinic):
+                raise HTTPException(400, "The clinic address is not ready for trial booking")
+        elif not clinic_is_bookable(clinic):
+            raise HTTPException(400, "In-clinic booking is not available")
     if location_type != "clinic" and clinic.get("mobileEnabled") is False:
         raise HTTPException(400, "Mobile booking is not available")
     if location_type == "clinic":
+        # Clinic visits still need an open schedule window for the assigned practitioner.
+        if not practitioner_id:
+            return
+        schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
+        person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0})
+        if not practitioner_bookable(person, schedule):
+            raise HTTPException(409, "That practitioner is not available")
+        start = minutes(time)
+        hours_slug = None if trial_visit else (service or {}).get("slug")
+        if schedule is not None and not interval_open(schedule, day, start, int(duration), hours_slug):
+            raise HTTPException(409, "That time is not open")
+        appointments = await coll("appointments").find({"practitionerId": practitioner_id, "date": day}, {"_id": 0}).to_list(100)
+        if overlaps_appointment(appointments, day, start, int(duration), exclude_id):
+            raise HTTPException(409, "That time was just booked")
         return
     schedule_count = await db.nt_schedules.count_documents({})
     enforced = adjacent_travel_enforced(settings, production)

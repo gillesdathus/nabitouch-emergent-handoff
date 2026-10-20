@@ -56,7 +56,7 @@ from recovery import (
     release_campaign, release_campaign_for_appointment, reserve_campaign, validate_fee,
 )
 from pricing import (
-    BLOCKING_STATUSES, client_matches_person, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
+    BLOCKING_STATUSES, client_matches_person, ensure_welcome_offer, haversine_km, identity_keys, minutes, money, overlaps, quote, zone_for, zone_travel,
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
@@ -240,6 +240,7 @@ async def lifespan(_app):
     await ensure_messaging(db)
     await ensure_giftcards(db)
     await ensure_trial_service(db)
+    await ensure_welcome_offer(db)
     await ensure_plans(db)
     await ensure_safety(db)
     await ensure_devices(db)
@@ -1531,7 +1532,7 @@ async def resolve_booking(payload, user):
     if location == "clinic":
         clinic = settings.get("clinic") or {}
         try:
-            address = clinic_visit_address(clinic, address.get("notes"))
+            address = clinic_visit_address(clinic, address.get("notes"), trial=trial_visit)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     else:
@@ -1549,7 +1550,7 @@ async def resolve_booking(payload, user):
     await assert_public_slot(
         db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id or "",
         day=fields["date"], time=fields["time"], duration=int(duration), address=address,
-        location_type=location, service=service,
+        location_type=location, service=service, trial=trial_visit,
     )
     clients = coll("clients")
     client = await clients.find_one({"id": incoming.get("id")}, NO_ID) if incoming.get("id") else None
@@ -1647,7 +1648,7 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
     pricing = dict(ctx["quoted"])
     if payload.get("campaignId") and not ctx["useCredit"] and not ctx["winbackCode"] and not ctx.get("followupCode") and not pricing.get("welcomeOffer"):
         offer = await campaign_quote(
-            db, payload["campaignId"], ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
+            db, payload["campaignId"], ctx["person"] or ctx["client"], ctx["fields"]["date"], ctx["fields"]["time"], ctx["duration"], ctx["service"]["slug"], ctx["location"],
         )
         if offer:
             pricing["campaignTitle"] = offer["title"]
@@ -1758,8 +1759,9 @@ async def create_booking(request: Request, payload: dict = Body(...)):
                 await clients.update_one({"id": client_id}, {"$inc": {"onlineBookings": -1}})
             raise HTTPException(409, "Campaigns do not combine with package credits, welcome-back, or follow-up codes")
         try:
+            audience_client = {**(client or {}), "_welcomeHistory": (person or {}).get("_welcomeHistory")}
             campaign_reservation = await reserve_campaign(
-                db, payload["campaignId"], client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"], location,
+                db, payload["campaignId"], audience_client, payload.get("idempotencyKey"), fields["date"], fields["time"], int(duration), service["slug"], location,
             )
         except HTTPException:
             await release_promotions(claimed_ids)

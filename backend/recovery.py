@@ -237,8 +237,30 @@ def campaign_fits(campaign, day, start, duration, service_slug=None, location_ty
     return True
 
 
+def has_regular_treatment_history(appointments):
+    """True when the person already had a non-trial visit that counts as a regular treatment client."""
+    from trial import is_trial_appointment
+
+    for appt in appointments or []:
+        if is_trial_appointment(appt):
+            continue
+        status = str((appt or {}).get("status") or "")
+        if not status or status in {"cancelled", "refunded"}:
+            continue
+        return True
+    return False
+
+
 def audience_ok(campaign, client):
     mode = campaign.get("audience") or "all"
+    kind = campaign.get("offerKind") or "percent"
+    # Introductory trial: prior regular treatments (not account registration, not prior trial) block.
+    if mode == "new" and kind in ("trial", "complimentary") and (campaign.get("code") or "").upper() == "TENMIN":
+        history = (client or {}).get("_welcomeHistory")
+        if history is not None:
+            return not has_regular_treatment_history(history)
+        visits = int((client or {}).get("onlineBookings") or 0)
+        return visits <= 0
     visits = int((client or {}).get("onlineBookings") or 0)
     if mode == "new":
         return visits <= 0
@@ -315,6 +337,8 @@ def launch_ten_minutes_on_us():
         "public": True,
         "stackable": False,
         "code": "TENMIN",
+        "showHome": True,
+        "showOffers": True,
         # First-regular-booking welcome offer is preserved; do not auto-issue a competing coupon.
         "followUp": normalize_follow_up({"enabled": False, "percent": 20, "validDays": 14, "autoIssueOnComplete": False}),
         "sendingEnabled": False,
@@ -408,6 +432,9 @@ def parse_campaign_fields(payload, *, current=None):
         "code": str(payload.get("code") if "code" in payload else current.get("code") or "")[:40],
         "followUp": follow_up,
         "sendingEnabled": False,
+        # Placement toggles are independent of live/draft status (hide banner ≠ disable campaign).
+        "showHome": bool(payload.get("showHome")) if "showHome" in payload else bool(current.get("showHome", True)),
+        "showOffers": bool(payload.get("showOffers")) if "showOffers" in payload else bool(current.get("showOffers", True)),
     }
 
 
@@ -520,9 +547,15 @@ def public_campaign(campaign, at):
         "minDuration": campaign.get("minDuration") or 0,
         "soldOut": remaining == 0,
         "followUp": campaign.get("followUp") or {"enabled": False},
-        "headline": "10 Minutes. On Us." if kind == "trial" else None,
-        "subhead": "Free 10-minute neck-and-shoulder massage." if kind == "trial" else None,
-        "body": "Meet your massage therapist and experience Nabitouch." if kind == "trial" else None,
+        "headline": ("Try Nabitouch. 10 Minutes. On Us." if kind == "trial" else None),
+        "subhead": ("Experience a free 10-minute neck-and-shoulder massage." if kind == "trial" else None),
+        "body": (
+            "Experience a free 10-minute neck-and-shoulder massage. Meet your therapist, feel the difference, and discover Nabitouch."
+            if kind == "trial" else None
+        ),
+        "ctaLabel": ("Claim my free 10 minutes" if kind == "trial" else None),
+        "showHome": campaign.get("showHome") is not False,
+        "showOffers": campaign.get("showOffers") is not False,
     }
 
 

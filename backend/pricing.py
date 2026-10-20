@@ -127,7 +127,7 @@ def launch_welcome_offer():
     return {
         "id": "promo-welcome",
         "code": "WELCOME20",
-        "name": "First-booking welcome offer",
+        "name": "Your First Massage, 20% Off.",
         "type": "percent",
         "value": 20,
         "maxDiscount": 40,
@@ -142,10 +142,37 @@ def launch_welcome_offer():
         "approval": "approved",
         "appliesTo": "treatment",
         "requiresMarketingConsent": False,
-        "placements": ["home", "account", "booking", "services"],
-        "bannerHeadline": None,
-        "bannerBody": None,
+        "placements": ["home", "account", "booking", "services", "offers"],
+        "bannerHeadline": "Your First Massage, 20% Off.",
+        "bannerBody": "Book your first eligible regular massage through the Nabitouch app and enjoy 20% off.",
+        "ctaLabel": "Book my first massage",
     }
+
+
+async def ensure_welcome_offer(db):
+    """Idempotent upsert of WELCOME20 so Home/Offers can surface it without a manual seed."""
+    row = launch_welcome_offer()
+    existing = await db.nt_promotions.find_one({"id": "promo-welcome"}, {"_id": 0})
+    if not existing:
+        await db.nt_promotions.insert_one(dict(row))
+        return row, True
+    # Preserve owner toggles (enabled/approval/placements) while restoring missing public copy fields.
+    patch = {}
+    if not existing.get("bannerHeadline"):
+        patch["bannerHeadline"] = row["bannerHeadline"]
+    if not existing.get("bannerBody"):
+        patch["bannerBody"] = row["bannerBody"]
+    if not existing.get("ctaLabel"):
+        patch["ctaLabel"] = row["ctaLabel"]
+    places = existing.get("placements")
+    if isinstance(places, list) and "offers" not in places:
+        patch["placements"] = list(places) + ["offers"]
+    if existing.get("name") in (None, "", "First-booking welcome offer"):
+        patch["name"] = row["name"]
+    if patch:
+        await db.nt_promotions.update_one({"id": "promo-welcome"}, {"$set": patch})
+        existing = {**existing, **patch}
+    return existing, False
 
 
 def promo_shows(promo, placement):

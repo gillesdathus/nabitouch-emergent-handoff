@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from billing import lines_from_pricing
-from pricing import identity_keys, launch_welcome_offer, quote, welcome_history_blocks
+from pricing import identity_keys, launch_welcome_offer, promo_shows, quote, welcome_history_blocks
 from rewards import preview_redemption
 
 
@@ -52,7 +52,12 @@ def test_swedish_welcome_total_is_100_80():
 
 def test_welcome_offer_has_placements_and_edit_does_not_rewrite_invoice_lines():
     offer = launch_welcome_offer()
-    assert "home" in offer["placements"] and "account" in offer["placements"]
+    assert "home" in offer["placements"] and "account" in offer["placements"] and "offers" in offer["placements"]
+    assert offer["bannerHeadline"] == "Your First Massage, 20% Off."
+    assert offer["ctaLabel"] == "Book my first massage"
+    assert promo_shows(offer, "home") is True
+    assert promo_shows(offer, "offers") is True
+    assert promo_shows({**offer, "placements": ["account"]}, "offers") is False
     snapshot = {
         "base": 120, "addons": 0, "addonList": [], "discount": 24, "travel": 0, "tax": 4.8, "total": 100.8,
         "promoId": "promo-welcome", "promoName": "First-booking welcome offer", "promoCode": "WELCOME20",
