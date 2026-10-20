@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
@@ -9,7 +9,7 @@ import { Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
 import { BOTTOM_NAV, PUBLIC_NAV, showsMarketingFooter } from "@/lib/navigation";
-import { visibleUnreadFromInbox } from "@/lib/team-connect";
+import { UNREAD_REFRESH_EVENT, visibleStaffUnreadFromInbox, visibleUnreadFromInbox } from "@/lib/team-connect";
 import { cn } from "@/lib/utils";
 import { registerPush } from "@/lib/nativeShell";
 
@@ -333,37 +333,86 @@ export function StaffShell({ role }) {
 
 function StaffShellInner({ role }) {
   const cfg = STAFF[role];
+  const loc = useLocation();
   const { idx, practitionerId, user, api } = useDemo();
   const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
   const [unread, setUnread] = useState(0);
   const [teamUnread, setTeamUnread] = useState(0);
+  const visitSeq = useRef(0);
+  const teamSeq = useRef(0);
   useEffect(() => { registerPush().catch(() => {}); }, []);
+
   useEffect(() => {
     if (role !== "pro") return undefined;
     let stop = false;
-    const load = () => api.inbox()
-      .then((body) => { if (!stop) setUnread(visibleUnreadFromInbox(body)); })
-      .catch(() => { if (!stop) setUnread(0); });
+    const load = () => {
+      const seq = ++visitSeq.current;
+      api.inbox()
+        .then((body) => { if (!stop && seq === visitSeq.current) setUnread(visibleUnreadFromInbox(body)); })
+        .catch(() => { if (!stop && seq === visitSeq.current) setUnread(0); });
+    };
     load();
     const timer = setInterval(load, 20000);
-    return () => { stop = true; clearInterval(timer); };
-  }, [api, role, practitionerId]);
+    const onRefresh = (event) => {
+      const scope = event?.detail?.scope || "all";
+      if (scope === "all" || scope === "visit") load();
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener(UNREAD_REFRESH_EVENT, onRefresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+      window.removeEventListener(UNREAD_REFRESH_EVENT, onRefresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [role, practitionerId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     let stop = false;
-    const load = () => api.teamInbox?.()
-      .then((body) => { if (!stop) setTeamUnread(Number(body?.unread || 0)); })
-      .catch(() => { if (!stop) setTeamUnread(0); });
+    const load = () => {
+      const seq = ++teamSeq.current;
+      if (!api.teamInbox) {
+        if (seq === teamSeq.current) setTeamUnread(0);
+        return;
+      }
+      api.teamInbox()
+        .then((body) => { if (!stop && seq === teamSeq.current) setTeamUnread(visibleStaffUnreadFromInbox(body)); })
+        .catch(() => { if (!stop && seq === teamSeq.current) setTeamUnread(0); });
+    };
     load();
     const timer = setInterval(load, 20000);
-    return () => { stop = true; clearInterval(timer); };
-  }, [api, role]);
+    const onRefresh = (event) => {
+      const scope = event?.detail?.scope || "all";
+      if (scope === "all" || scope === "team") load();
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener(UNREAD_REFRESH_EVENT, onRefresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+      window.removeEventListener(UNREAD_REFRESH_EVENT, onRefresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [role]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh when entering messaging surfaces so badges catch up after mark-read.
+  useEffect(() => {
+    const path = loc.pathname || "";
+    if (role === "pro" && path.startsWith("/pro/messages")) {
+      window.dispatchEvent(new CustomEvent(UNREAD_REFRESH_EVENT, { detail: { scope: "visit" } }));
+    }
+    if (path.includes("/team")) {
+      window.dispatchEvent(new CustomEvent(UNREAD_REFRESH_EVENT, { detail: { scope: "team" } }));
+    }
+  }, [loc.pathname, role]);
+
+  const teamHome = role === "owner" ? "/owner/team" : role === "desk" ? "/desk/team" : "/pro/team";
   const badges = {
     ...(role === "pro" && unread > 0 ? { "/pro/messages": unread } : {}),
-    ...(teamUnread > 0 ? {
-      [role === "owner" ? "/owner/team" : role === "desk" ? "/desk/team" : "/pro/team"]: teamUnread,
-      [role === "owner" ? "/owner/team/messages" : role === "desk" ? "/desk/team/messages" : "/pro/team/messages"]: teamUnread,
-    } : {}),
+    ...(teamUnread > 0 ? { [teamHome]: teamUnread } : {}),
   };
   return (
     <div className="min-h-screen overflow-x-clip">

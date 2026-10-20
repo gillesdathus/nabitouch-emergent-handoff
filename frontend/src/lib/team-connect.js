@@ -44,6 +44,14 @@ export const QUICK_HELP_CATEGORIES = [
   { id: "other", title: "Other Assistance", detail: "Anything else for on-duty staff" },
 ];
 
+/** Shell / pages listen for this after mark-read so badges clear without waiting for the poll. */
+export const UNREAD_REFRESH_EVENT = "nabitouch:unread-refresh";
+
+export function notifyUnreadRefresh(scope = "all") {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(UNREAD_REFRESH_EVENT, { detail: { scope } }));
+}
+
 export function teamBase(role) {
   if (role === "owner") return "/owner/team";
   if (role === "desk") return "/desk/team";
@@ -67,13 +75,43 @@ export function teamNavFor(role) {
   return items;
 }
 
-/** Align nav badge with threads still open for the practitioner inbox. */
+function sumCounts(values) {
+  return values.reduce((sum, n) => sum + (Number(n) || 0), 0);
+}
+
+/**
+ * Visit-chat unread. Prefer detail maps when present (including zero after clear)
+ * so a stale top-level total cannot keep the badge lit.
+ */
 export function visibleUnreadFromInbox(body) {
-  const byAppointment = body?.byAppointment || {};
-  const fromMap = Object.values(byAppointment).reduce((sum, n) => sum + (Number(n) || 0), 0);
-  const fromThreads = (body?.threads || []).reduce((sum, row) => sum + (Number(row?.unread) || 0), 0);
-  const reported = Number(body?.unread || 0);
-  if (fromMap > 0) return fromMap;
-  if (fromThreads > 0) return fromThreads;
-  return reported;
+  if (!body || typeof body !== "object") return 0;
+  if (body.byAppointment && typeof body.byAppointment === "object") {
+    return sumCounts(Object.values(body.byAppointment));
+  }
+  if (Array.isArray(body.threads)) {
+    return sumCounts(body.threads.map((row) => row?.unread));
+  }
+  return Number(body.unread || 0);
+}
+
+/** Staff Team Connect unread from GET /api/team/inbox. */
+export function visibleStaffUnreadFromInbox(body) {
+  if (!body || typeof body !== "object") return 0;
+  if (body.byThread && typeof body.byThread === "object") {
+    return sumCounts(Object.values(body.byThread));
+  }
+  if (Array.isArray(body.threads)) {
+    return sumCounts(body.threads.map((row) => row?.unread));
+  }
+  return Number(body.unread || 0);
+}
+
+/** Build Quick Help deep link with optional category + appointmentId. */
+export function quickHelpHref(role, { category, appointmentId } = {}) {
+  const base = teamPath(role, "help");
+  const params = new URLSearchParams();
+  if (category) params.set("category", category);
+  if (appointmentId) params.set("appointmentId", appointmentId);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }

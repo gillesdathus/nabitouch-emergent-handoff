@@ -9,6 +9,7 @@ import { todayISO, fmtTime, fmtDate, endTime, OPEN, ACTIVE, addDays } from "@/li
 import { PractitionerSetupRequired, PractitionerUnauthorized, usePractitionerProfile } from "@/components/PractitionerRouteGuard";
 import { ProfileReminder } from "@/components/practitioner/ProfileReminder";
 import { formatKm, freshnessLabel, isMobileRouteStop, providerLabel } from "@/lib/my-route";
+import { quickHelpHref } from "@/lib/team-connect";
 import { etaCopy } from "@/lib/tracking/providers";
 
 const ready = (a) => a.readiness?.allReady === true && OPEN.includes(a.status) && a.status !== "in_session";
@@ -189,7 +190,11 @@ export default function Today() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2" data-testid="pro-team-shortcuts">
-        <Link to="/pro/team/help" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="pro-today-quick-help">
+        <Link
+          to={quickHelpHref("pro", { category: next && OPEN.includes(next.status) ? "running_late" : undefined, appointmentId: next && OPEN.includes(next.status) ? next.id : undefined })}
+          className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky"
+          data-testid="pro-today-quick-help"
+        >
           <LifeBuoy className="h-5 w-5 shrink-0 text-nb-teal" />
           <span><span className="font-semibold">Quick Help</span><span className="block text-xs text-nb-mute">Running late, vehicle, safety, supplies</span></span>
         </Link>

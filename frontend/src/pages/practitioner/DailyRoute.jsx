@@ -14,6 +14,7 @@ import {
   providerLabel,
   stopDestinationPoint,
 } from "@/lib/my-route";
+import { quickHelpHref } from "@/lib/team-connect";
 
 const CANCELLED = new Set(["cancelled", "no_show", "refunded"]);
 
@@ -181,7 +182,12 @@ export default function DailyRoute({ mode = "pro" }) {
   };
 
   const visitPath = (id) => (mode === "pro" ? `/pro/visit/${id}` : `/owner/appointments`);
-  const helpPath = mode === "pro" ? "/pro/team/help" : "/owner/team/help";
+  const helpRole = mode === "pro" ? "pro" : "owner";
+  const helpFocusId = previewTargetId || listedStops.find((row) => OPEN.includes(row.stop?.status || "assigned"))?.stop?.id || "";
+  const helpPath = quickHelpHref(helpRole, {
+    category: helpFocusId ? "running_late" : undefined,
+    appointmentId: helpFocusId || undefined,
+  });
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 pb-8" data-testid="daily-route-page">

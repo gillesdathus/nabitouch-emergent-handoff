@@ -9,6 +9,7 @@ import { clinicBookable, clinicSavePayload, staffActor } from "@/lib/domain";
 import { dollarsToCents } from "@/lib/billing";
 import { OPEN } from "@/lib/domain";
 import { AddonsEditor, CancellationFeeEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
+import { DutyRosterPicker } from "@/components/team/DutyRosterPicker";
 
 const ZoneStreetMap = lazy(() => import("@/components/maps/ZoneStreetMap"));
 const HAS_MAPBOX = String(process.env.REACT_APP_MAPBOX_PUBLIC_TOKEN || "").startsWith("pk.");
@@ -169,24 +170,36 @@ export default function Zones() {
             />
           </label>
         </div>
-        <label>
-          <span className="nb-label">Primary on-duty user ids (comma-separated)</span>
-          <input
-            className="nb-input"
-            defaultValue={((st.teamConnect || {}).dutyPrimaryUserIds || []).join(", ")}
-            data-testid="settings-tc-primary"
-            onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3, routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15, dutyPrimaryUserIds: e.target.value.split(",").map((x) => x.trim()).filter(Boolean), dutyBackupUserIds: (st.teamConnect || {}).dutyBackupUserIds || [] } }, "Team Connect duty roster saved")}
-          />
-        </label>
-        <label>
-          <span className="nb-label">Backup user ids (comma-separated)</span>
-          <input
-            className="nb-input"
-            defaultValue={((st.teamConnect || {}).dutyBackupUserIds || []).join(", ")}
-            data-testid="settings-tc-backup"
-            onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3, routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15, dutyPrimaryUserIds: (st.teamConnect || {}).dutyPrimaryUserIds || [], dutyBackupUserIds: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) } }, "Team Connect backup roster saved")}
-          />
-        </label>
+        <DutyRosterPicker
+          label="Primary on-duty staff"
+          selectedIds={(st.teamConnect || {}).dutyPrimaryUserIds || []}
+          excludeIds={(st.teamConnect || {}).dutyBackupUserIds || []}
+          testid="settings-tc-primary"
+          onChange={(ids) => save({
+            teamConnect: {
+              ...(st.teamConnect || {}),
+              urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3,
+              routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15,
+              dutyPrimaryUserIds: ids,
+              dutyBackupUserIds: ((st.teamConnect || {}).dutyBackupUserIds || []).filter((id) => !ids.includes(id)),
+            },
+          }, "Team Connect duty roster saved")}
+        />
+        <DutyRosterPicker
+          label="Backup staff"
+          selectedIds={(st.teamConnect || {}).dutyBackupUserIds || []}
+          excludeIds={(st.teamConnect || {}).dutyPrimaryUserIds || []}
+          testid="settings-tc-backup"
+          onChange={(ids) => save({
+            teamConnect: {
+              ...(st.teamConnect || {}),
+              urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3,
+              routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15,
+              dutyBackupUserIds: ids,
+              dutyPrimaryUserIds: ((st.teamConnect || {}).dutyPrimaryUserIds || []).filter((id) => !ids.includes(id)),
+            },
+          }, "Team Connect backup roster saved")}
+        />
       </div>
       <SectionHead eyebrow="Booking Protection" title="Insurance prepay (owner controlled)" className="mt-10" />
       <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-booking-protection">

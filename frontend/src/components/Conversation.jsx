@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MessageCircle, Send } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { EmptyState } from "@/components/tide";
+import { notifyUnreadRefresh } from "@/lib/team-connect";
 
 function stamp(value) {
   if (!value) return "";
@@ -39,7 +40,11 @@ export function Conversation({ appointmentId, viewerRole, title, counterpart, on
     api.messagePresets().then((body) => { if (alive) setPresets(body.presets || []); }).catch(() => {});
     load();
     api.markMessagesRead(appointmentId)
-      .then(() => { if (alive && onReadRef.current) onReadRef.current(); })
+      .then(() => {
+        if (!alive) return;
+        notifyUnreadRefresh("visit");
+        if (onReadRef.current) onReadRef.current();
+      })
       .catch(() => {});
     const poll = setInterval(load, 8000);
     let source;
