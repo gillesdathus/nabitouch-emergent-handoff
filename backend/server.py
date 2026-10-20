@@ -1542,6 +1542,8 @@ async def resolve_booking(payload, user):
     trial_visit = bool(trial_campaign) or is_trial_service(service)
     if trial_visit and not trial_duration_ok(duration):
         raise HTTPException(400, "The trial visit is exactly 10 minutes")
+    if trial_visit and location == "clinic":
+        raise HTTPException(400, "The free trial is a mobile visit. Choose a home, office, hotel, or event address.")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fields.get("date") or "")) or not re.fullmatch(r"\d{2}:\d{2}", str(fields.get("time") or "")):
         raise HTTPException(400, "Choose a date and time")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
@@ -1550,8 +1552,10 @@ async def resolve_booking(payload, user):
     zone, km = None, 0
     if location == "clinic":
         clinic = settings.get("clinic") or {}
+        if clinic.get("enabled") is not True:
+            raise HTTPException(400, "In-clinic booking is not available")
         try:
-            address = clinic_visit_address(clinic, address.get("notes"), trial=trial_visit)
+            address = clinic_visit_address(clinic, address.get("notes"), trial=False)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     else:

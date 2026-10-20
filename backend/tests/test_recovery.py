@@ -159,13 +159,13 @@ def test_ten_minutes_template_stays_draft_and_allows_home():
     assert row["practitionerId"] == "p-nabitu-kahindo"
     assert row["maxRedemptions"] == 30
     assert "home" in row["locationTypes"]
-    assert "clinic" in row["locationTypes"]
+    assert "clinic" not in row["locationTypes"]
     assert row["followUp"]["enabled"] is False
     assert campaign_live(row, AT) is False
     live = {**row, "status": "live", "expiresAt": later(24)}
-    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "ten-minutes-on-us", "clinic") is True
+    assert campaign_fits(live, live["bookingStart"], "10:00", 10, "ten-minutes-on-us", "clinic") is False
     assert campaign_fits(live, live["bookingStart"], "10:00", 10, "ten-minutes-on-us", "home") is True
-    assert campaign_fits(live, live["bookingStart"], "10:00", 60, "ten-minutes-on-us", "clinic") is False
+    assert campaign_fits(live, live["bookingStart"], "10:00", 60, "ten-minutes-on-us", "home") is False
     free = apply_campaign_price({"base": 0, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "trial", "complimentaryMinutes": 10, "title": row["title"]}, 0.05)
     assert free["total"] == 0 and free["travel"] == 0 and free["campaignOfferKind"] == "trial"
     complimentary = apply_campaign_price({"base": 45, "addons": 10, "travel": 15, "discount": 0}, {"offerKind": "complimentary", "complimentaryMinutes": 10, "title": "Legacy"}, 0.05)

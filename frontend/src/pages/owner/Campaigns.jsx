@@ -251,8 +251,9 @@ export default function Campaigns() {
                 </label>
                 {editor.offerKind === "trial" && (
                   <p className="text-xs text-nb-mute" data-testid="campaign-trial-note">
-                    Free standalone 10-minute neck-and-shoulder visit at $0. Does not consume the first-booking welcome offer.
-                    Capacity, audience, location, and channel stay editable below — set them before going live. This does not activate Nabitu&apos;s booking status.
+                    Free standalone 10-minute neck-and-shoulder mobile visit at $0 (home, office, hotel, or event). Not a clinic appointment.
+                    Does not consume the first-booking welcome offer. Capacity, audience, and channel stay editable below — set them before going live.
+                    This does not activate Nabitu&apos;s booking status.
                   </p>
                 )}
                 <label className="block text-sm">Service

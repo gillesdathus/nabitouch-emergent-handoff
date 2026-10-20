@@ -9,10 +9,9 @@ TRIAL_DURATION_MIN = 10
 TRIAL_TREATMENT_SCOPE = "neck_shoulders"
 TRIAL_CAMPAIGN_CODE = "TENMIN"
 DEFAULT_TRIAL_PRACTITIONER_ID = "p-nabitu-kahindo"
-# Normal mobile booking locations. Clinic may also be offered when in-clinic booking is open;
-# it must never be the only allowed location for this campaign.
-TRIAL_LOCATION_TYPES = ["home", "office", "hotel", "event", "clinic"]
-TRIAL_MOBILE_LOCATION_TYPES = ["home", "office", "hotel", "event"]
+# Official operating model: Nabitouch trial visits are mobile-only (no clinic venue).
+TRIAL_LOCATION_TYPES = ["home", "office", "hotel", "event"]
+TRIAL_MOBILE_LOCATION_TYPES = list(TRIAL_LOCATION_TYPES)
 
 
 def launch_trial_service():
@@ -32,7 +31,7 @@ def launch_trial_service():
         "prices": {str(TRIAL_DURATION_MIN): 0},
         "img": "/img/swedish.jpg",
         "mobile": True,
-        "clinic": True,
+        "clinic": False,
         "enabled": True,
         "taxable": False,
         "kind": "trial",
@@ -103,7 +102,7 @@ async def ensure_trial_service(db):
                 "taxable": False,
                 "kind": "trial",
                 "treatmentScope": TRIAL_TREATMENT_SCOPE,
-                "clinic": True,
+                "clinic": False,
                 "mobile": True,
                 "enabled": True,
                 "publication": "published",
@@ -114,27 +113,38 @@ async def ensure_trial_service(db):
     await db.nt_services.insert_one(dict(row))
 
 
-def trial_locations_need_home_fix(locations):
-    """True when a trial campaign still carries the unapproved clinic-only restriction."""
+def normalize_trial_locations(locations):
+    """Return approved mobile location types only — never clinic."""
     if not isinstance(locations, list) or not locations:
+        return list(TRIAL_LOCATION_TYPES)
+    mobile = [loc for loc in locations if loc in TRIAL_MOBILE_LOCATION_TYPES]
+    return mobile or list(TRIAL_LOCATION_TYPES)
+
+
+def trial_locations_need_home_fix(locations):
+    """True when a trial campaign still carries clinic or excludes mobile destinations."""
+    if not isinstance(locations, list) or not locations:
+        return True
+    if any(loc == "clinic" for loc in locations):
         return True
     return not any(loc in TRIAL_MOBILE_LOCATION_TYPES for loc in locations)
 
 
 async def ensure_trial_campaign_locations(db):
-    """Expand live/draft trial campaigns that still exclude home / mobile visits.
+    """Normalize live/draft trial campaigns to mobile-only destinations.
 
-    Does not invent fees or capacity. Only removes the unapproved clinic-only lock.
+    Does not invent fees or capacity. Removes unapproved clinic venue locks.
     """
     rows = await db.nt_campaigns.find({"offerKind": "trial"}, {"_id": 0, "id": 1, "locationTypes": 1, "code": 1}).to_list(50)
     patched = 0
     for row in rows or []:
         locations = row.get("locationTypes")
-        if not trial_locations_need_home_fix(locations):
+        desired = normalize_trial_locations(locations)
+        if list(locations or []) == desired:
             continue
         await db.nt_campaigns.update_one(
             {"id": row["id"]},
-            {"$set": {"locationTypes": list(TRIAL_LOCATION_TYPES)}},
+            {"$set": {"locationTypes": desired}},
         )
         patched += 1
     return patched

@@ -171,11 +171,11 @@ export default function Booking() {
     setParams(next, { replace: true });
   }, [service?.id, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // In-clinic stays off until owner activates it; never leave a stale clinic draft selected.
-  // Trials default to mobile visits — do not keep a clinic location when clinic booking is closed.
+  // In-clinic stays off until owner activates it. Trial visits are always mobile-only.
   useEffect(() => {
     if (!idx?.settings) return;
-    if (draft.locationType === "clinic" && !clinicBookable(idx.settings.clinic)) {
+    const trialDraft = Boolean(draft.campaignId && isTrialService(service));
+    if (draft.locationType === "clinic" && (trialDraft || !clinicBookable(idx.settings.clinic))) {
       patchDraft({ locationType: "home" });
     }
   }, [idx?.settings, draft.locationType, draft.campaignId, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -217,9 +217,8 @@ export default function Booking() {
   }, [quoteKey, api]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
   const clinic = idx.settings?.clinic || {};
-  const clinicReady = Boolean(clinic.addressReady === true || String(clinic.address || "").trim());
   const whereOk = draft.locationType === "clinic"
-    ? (trialFlow ? clinicReady : clinicBookable(clinic))
+    ? (!trialFlow && clinicBookable(clinic))
     : (!!zr?.zone && draft.address?.clientConfirmed === true);
   const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
@@ -238,7 +237,7 @@ export default function Booking() {
   const whereBlockedReason = !whereOk
     ? (draft.locationType === "clinic"
       ? (trialFlow
-        ? "In-clinic booking is not open right now. Choose a mobile visit above for your free trial, or book a regular massage."
+        ? "The free trial is a mobile visit. Choose a home, office, hotel, or event address."
         : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
       : "Confirm a service address in our Edmonton zones to continue.")
     : "";
