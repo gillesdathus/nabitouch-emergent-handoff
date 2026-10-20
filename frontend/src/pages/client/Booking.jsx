@@ -226,9 +226,11 @@ export default function Booking() {
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
   const guestProfileOk = trialFlowEarly || !g.createProfile || (g.dob && (g.password || "").length >= 8);
   const youOk = me ? trialExtrasOk : (guestContactOk && trialExtrasOk && guestProfileOk);
+  const durationKey = String(draft.duration);
+  const durationPriced = !!service && Object.prototype.hasOwnProperty.call(service.prices || {}, durationKey);
   const ok = [
     whereOk,
-    !!service && !!service.prices[String(draft.duration)],
+    durationPriced,
     !!draft.date && !!draft.time,
     youOk,
     trialFlow || !!paymentChoice(draft, idx.settings),
