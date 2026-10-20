@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { LifeBuoy, ShieldAlert, TriangleAlert, UserCheck } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 import { EmptyState, Notice, PageHeader, Reveal, Segmented } from "@/components/tide";
+import { ShieldChrome } from "@/components/shield/ShieldChrome";
 
 const OUTCOMES = [["resume", "Resume visit"], ["resume_session", "Resume session"], ["leave", "Practitioner leaves"], ["cancel", "Cancel visit"]];
 const stamp = (iso) => new Date(iso).toLocaleString("en-CA", { timeZone: "America/Edmonton", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -70,16 +72,16 @@ function EventCard({ e, onChange }) {
 
 export default function Safety() {
   const { user } = useDemo();
+  const { pathname } = useLocation();
+  const inShield = pathname.startsWith("/owner/safety");
   const [filter, setFilter] = useState("open");
   const [data, setData] = useState(undefined);
   const [allowed, setAllowed] = useState(null);
   useEffect(() => { api.safetyMe().then((r) => setAllowed(r.manager)).catch(() => setAllowed(false)); }, []);
   const load = useCallback(() => allowed !== true ? Promise.resolve() : api.safetyEvents(filter === "all" ? "" : filter).then(setData).catch((e) => setData({ error: apiError(e), events: [] })), [filter, allowed]);
   useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
-  if (allowed === false) return <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page"><PageHeader eyebrow="Practitioner safety" title="Safety alerts" /><Notice testid="safety-not-manager">Safety alerts are shared with the owner and the staff the owner names as safety managers. Ask the owner to add you if you should receive them.</Notice></div>;
-  return (
-    <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page">
-      <PageHeader eyebrow="Practitioner safety" title="Safety alerts" sub={data?.open ? `${data.open} open alert${data.open > 1 ? "s" : ""}` : "In-app alerts from practitioners in the field."} />
+  const body = (
+    <>
       <Notice icon={ShieldAlert} tone="warn" testid="safety-not-dispatch">{data?.assistLabel || "These are in-app alerts only. They are not emergency dispatch."}</Notice>
       {user?.role === "owner" && <Managers />}
       {user?.role === "owner" && <PushStatus />}
@@ -90,6 +92,24 @@ export default function Safety() {
         {data?.events?.map((e, i) => <Reveal key={e.id} i={i}><EventCard e={e} onChange={load} /></Reveal>)}
         {data && !data.error && data.events.length === 0 && <EmptyState icon={ShieldAlert} testid="safety-empty" title="Nothing here" body="Alerts from practitioners appear here as they happen." />}
       </div>
+    </>
+  );
+  if (allowed === false) {
+    const denied = <Notice testid="safety-not-manager">Safety alerts are shared with the owner and the staff the owner names as safety managers. Ask the owner to add you if you should receive them.</Notice>;
+    if (inShield) return <ShieldChrome title="Safety alerts" testid="safety-page">{denied}</ShieldChrome>;
+    return <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page"><PageHeader eyebrow="Practitioner safety" title="Safety alerts" />{denied}</div>;
+  }
+  if (inShield) {
+    return (
+      <ShieldChrome title="Safety alerts" sub={data?.open ? `${data.open} open alert${data.open > 1 ? "s" : ""}` : "In-app alerts from practitioners in the field."} testid="safety-page">
+        {body}
+      </ShieldChrome>
+    );
+  }
+  return (
+    <div className="mx-auto max-w-3xl space-y-6" data-testid="safety-page">
+      <PageHeader eyebrow="Practitioner safety" title="Safety alerts" sub={data?.open ? `${data.open} open alert${data.open > 1 ? "s" : ""}` : "In-app alerts from practitioners in the field."} />
+      {body}
     </div>
   );
 }

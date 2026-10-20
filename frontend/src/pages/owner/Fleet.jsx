@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Archive, Car, History, Plus, Search, Shield, UserRound } from "lucide-react";
+import { Archive, Car, History, Plus, Search, UserRound } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 import { restrictedFlag } from "@/lib/feature-flags";
-import { EmptyState, Notice, PageHeader, Reveal } from "@/components/tide";
+import { EmptyState, Notice, Reveal, SaveFeedback, StatusBadge } from "@/components/tide";
+import { ShieldChrome } from "@/components/shield/ShieldChrome";
 
 const BLANK = {
   vin: "", make: "", model: "", year: "", trim: "", color: "", licensePlate: "",
@@ -12,15 +14,17 @@ const BLANK = {
 };
 
 function statusTone(status) {
-  if (status === "active") return "bg-teal-50 text-teal-800";
-  if (status === "unavailable") return "bg-amber-50 text-amber-900";
-  return "bg-slate-100 text-slate-600";
+  if (status === "active") return "success";
+  if (status === "unavailable") return "warn";
+  return "neutral";
 }
 
-function VehicleForm({ initial, practitioners, onSaved, onCancel }) {
+export function VehicleForm({ initial, onSaved, onCancel, navigateOnCreate }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({ ...BLANK, ...initial });
   const [busy, setBusy] = useState(false);
   const [decodeNote, setDecodeNote] = useState("");
+  const [feedback, setFeedback] = useState({ state: "idle", message: "" });
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const decode = async () => {
@@ -49,7 +53,13 @@ function VehicleForm({ initial, practitioners, onSaved, onCancel }) {
   };
 
   const save = async () => {
+    if (busy) return;
+    if (!form.make?.trim() || !form.model?.trim() || !form.licensePlate?.trim()) {
+      setFeedback({ state: "error", message: "Make, model, and license plate are required." });
+      return;
+    }
     setBusy(true);
+    setFeedback({ state: "saving", message: "Saving vehicle…" });
     try {
       const body = {
         ...form,
@@ -60,9 +70,16 @@ function VehicleForm({ initial, practitioners, onSaved, onCancel }) {
       const saved = initial?.id
         ? await api.fleetUpdateVehicle(initial.id, body)
         : await api.fleetCreateVehicle({ ...body, applyVinDecode: Boolean(form.vin) });
+      const vehicle = saved?.vehicle || saved;
+      setFeedback({ state: "success", message: initial?.id ? "Vehicle saved." : "Vehicle added." });
       toast.success(initial?.id ? "Vehicle saved" : "Vehicle added");
-      onSaved(saved);
+      if (!initial?.id && navigateOnCreate && vehicle?.id) {
+        navigate(`/owner/fleet/${vehicle.id}`, { replace: true });
+        return;
+      }
+      onSaved?.(vehicle);
     } catch (err) {
+      setFeedback({ state: "error", message: apiError(err) });
       toast.error(apiError(err));
     } finally {
       setBusy(false);
@@ -73,6 +90,7 @@ function VehicleForm({ initial, practitioners, onSaved, onCancel }) {
     <div className="nb-card space-y-3 p-5" data-testid="fleet-vehicle-form">
       <p className="font-semibold">{initial?.id ? "Edit vehicle" : "Add vehicle"}</p>
       <p className="text-xs text-nb-mute">VIN decode fills make, model, year, and trim when available. Colour, plate, insurance, and registration are never provided by VIN lookup.</p>
+      <SaveFeedback state={feedback.state} message={feedback.message} testid="fleet-save-feedback" />
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs sm:col-span-2"><span className="mb-1 block text-nb-mute">VIN</span>
           <div className="flex gap-2">
@@ -108,7 +126,6 @@ function VehicleForm({ initial, practitioners, onSaved, onCancel }) {
         <button type="button" disabled={busy} onClick={save} className="nb-btn-primary h-11 flex-1" data-testid="fleet-save">{busy ? "Saving…" : "Save vehicle"}</button>
         <button type="button" disabled={busy} onClick={onCancel} className="nb-btn-ghost h-11 px-4" data-testid="fleet-cancel">Cancel</button>
       </div>
-      {!practitioners && null}
     </div>
   );
 }
@@ -119,6 +136,7 @@ function AssignPanel({ vehicle, practitioners, onDone }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const save = async () => {
+    if (busy || !practitionerId) return;
     setBusy(true);
     try {
       await api.fleetAssignVehicle(vehicle.id, { practitionerId, kind, note });
@@ -164,96 +182,6 @@ function HistoryPanel({ vehicleId }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-function VehicleCard({ vehicle, practitioners, onChanged }) {
-  const [edit, setEdit] = useState(false);
-  const [assign, setAssign] = useState(false);
-  const [history, setHistory] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const person = practitioners.find((p) => p.id === vehicle.assignment?.practitionerId);
-
-  const archive = async () => {
-    if (!window.confirm("Archive this vehicle? Active assignments will end.")) return;
-    try {
-      await api.fleetArchiveVehicle(vehicle.id);
-      toast.success("Vehicle archived");
-      onChanged();
-    } catch (err) {
-      toast.error(apiError(err));
-    }
-  };
-
-  const onPhoto = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setUploading(true);
-    try {
-      await api.fleetAddPhoto(vehicle.id, file);
-      toast.success("Vehicle photo added");
-      onChanged();
-    } catch (err) {
-      toast.error(apiError(err));
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  if (edit) {
-    return (
-      <VehicleForm
-        initial={vehicle}
-        practitioners={practitioners}
-        onCancel={() => setEdit(false)}
-        onSaved={() => { setEdit(false); onChanged(); }}
-      />
-    );
-  }
-
-  return (
-    <div className="nb-card p-5" data-testid={`fleet-vehicle-${vehicle.id}`}>
-      <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl tint-lagoon text-nb-blue"><Car className="h-5 w-5" /></span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold" data-testid={`fleet-vehicle-label-${vehicle.id}`}>{vehicle.label}</p>
-            <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusTone(vehicle.status)}`}>{vehicle.status}</span>
-          </div>
-          <p className="mt-1 text-xs text-nb-mute">
-            {vehicle.licensePlate ? `Plate ${vehicle.licensePlate}` : "No plate on file"}
-            {vehicle.vin ? ` · VIN …${String(vehicle.vin).slice(-4)}` : ""}
-            {vehicle.registrationJurisdiction ? ` · ${vehicle.registrationJurisdiction}` : ""}
-          </p>
-          {person && <p className="mt-1 flex items-center gap-1 text-xs text-nb-ink"><UserRound className="h-3.5 w-3.5" />{person.name} · {vehicle.assignment?.kind || "assigned"}</p>}
-          {!person && <p className="mt-1 text-xs text-nb-mute">Not assigned</p>}
-          {vehicle.description && <p className="mt-2 text-sm">{vehicle.description}</p>}
-          {(vehicle.photos || []).length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {vehicle.photos.map((photo) => (
-                <img key={photo.id} src={api.fleetPhotoUrl(photo.id)} alt={photo.caption || "Vehicle"} className="h-16 w-24 rounded-xl object-cover" data-testid={`fleet-photo-${photo.id}`} />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2 border-t border-sky-100 pt-3">
-        <button type="button" onClick={() => setEdit(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-edit-${vehicle.id}`}>Edit</button>
-        <button type="button" onClick={() => setAssign((v) => !v)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-open-assign-${vehicle.id}`}>Assign</button>
-        <button type="button" onClick={() => setHistory((v) => !v)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-open-history-${vehicle.id}`}><History className="mr-1 inline h-3.5 w-3.5" />History</button>
-        <label className="nb-btn-ghost h-9 cursor-pointer px-3 text-xs">
-          {uploading ? "Uploading…" : "Add photo"}
-          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploading} onChange={onPhoto} data-testid={`fleet-photo-input-${vehicle.id}`} />
-        </label>
-        {vehicle.status !== "archived" && (
-          <button type="button" onClick={archive} className="nb-btn-ghost h-9 px-3 text-xs text-rose-700" data-testid={`fleet-archive-${vehicle.id}`}><Archive className="mr-1 inline h-3.5 w-3.5" />Archive</button>
-        )}
-      </div>
-      {assign && <AssignPanel vehicle={vehicle} practitioners={practitioners} onDone={() => { setAssign(false); onChanged(); }} />}
-      {history && <HistoryPanel vehicleId={vehicle.id} />}
-      <VehicleDocs vehicleId={vehicle.id} />
-    </div>
   );
 }
 
@@ -320,11 +248,183 @@ function VehicleDocs({ vehicleId }) {
   );
 }
 
+function VehicleCard({ vehicle, practitioners }) {
+  const person = practitioners.find((p) => p.id === vehicle.assignment?.practitionerId);
+  return (
+    <Link to={`/owner/fleet/${vehicle.id}`} className="nb-card block p-5 transition-colors hover:bg-sky-50/60" data-testid={`fleet-vehicle-${vehicle.id}`}>
+      <div className="flex items-start gap-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl tint-lagoon text-nb-blue"><Car className="h-5 w-5" /></span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold" data-testid={`fleet-vehicle-label-${vehicle.id}`}>{vehicle.label}</p>
+            <StatusBadge tone={statusTone(vehicle.status)}>{vehicle.status}</StatusBadge>
+          </div>
+          <p className="mt-1 text-xs text-nb-mute">
+            {vehicle.licensePlate ? `Plate ${vehicle.licensePlate}` : "No plate on file"}
+            {vehicle.vin ? ` · VIN …${String(vehicle.vin).slice(-4)}` : ""}
+            {vehicle.registrationJurisdiction ? ` · ${vehicle.registrationJurisdiction}` : ""}
+          </p>
+          {person && <p className="mt-1 flex items-center gap-1 text-xs text-nb-ink"><UserRound className="h-3.5 w-3.5" />{person.name} · {vehicle.assignment?.kind || "assigned"}</p>}
+          {!person && <p className="mt-1 text-xs text-nb-mute">Not assigned</p>}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function FleetOff() {
+  return (
+    <ShieldChrome title="Fleet" sub="Vehicle registry for mobile visit identification." testid="fleet-page-off">
+      <Notice testid="fleet-flag-off">Security Shield fleet is turned off in this environment (SECURITY_SHIELD_FLEET_ENABLED). Clinical document uploads stay separate and remain off.</Notice>
+    </ShieldChrome>
+  );
+}
+
+export function FleetNew() {
+  const { idx } = useDemo();
+  const navigate = useNavigate();
+  const enabled = restrictedFlag(idx?.settings, "securityShieldFleetEnabled");
+  if (!enabled) return <FleetOff />;
+  return (
+    <ShieldChrome title="Add vehicle" sub="Identify the car or van used for mobile visits. Clients later see make, colour, and plate — never VIN or documents." testid="fleet-new-page">
+      <VehicleForm navigateOnCreate onCancel={() => navigate("/owner/fleet")} onSaved={() => navigate("/owner/fleet")} />
+    </ShieldChrome>
+  );
+}
+
+export function FleetDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { state, idx } = useDemo();
+  const enabled = restrictedFlag(idx?.settings, "securityShieldFleetEnabled");
+  const practitioners = state.practitioners || [];
+  const [vehicle, setVehicle] = useState(undefined);
+  const [edit, setEdit] = useState(false);
+  const [assign, setAssign] = useState(false);
+  const [history, setHistory] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(() => {
+    if (!enabled || !id) return Promise.resolve();
+    return api.fleetVehicle(id)
+      .then((r) => setVehicle(r.vehicle || r))
+      .catch((err) => {
+        setVehicle(null);
+        toast.error(apiError(err));
+      });
+  }, [enabled, id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!enabled) return <FleetOff />;
+  if (vehicle === undefined) {
+    return <ShieldChrome title="Vehicle" testid="fleet-detail-loading"><p className="text-sm text-nb-mute">Loading vehicle…</p></ShieldChrome>;
+  }
+  if (!vehicle) {
+    return (
+      <ShieldChrome title="Vehicle" testid="fleet-detail-missing">
+        <EmptyState title="Vehicle not found" body="It may have been archived or the link is out of date." action={<Link to="/owner/fleet" className="nb-btn-primary h-11 px-5">Back to fleet</Link>} />
+      </ShieldChrome>
+    );
+  }
+
+  const person = practitioners.find((p) => p.id === vehicle.assignment?.practitionerId);
+
+  const archive = async () => {
+    if (!window.confirm("Archive this vehicle? Active assignments will end.")) return;
+    try {
+      await api.fleetArchiveVehicle(vehicle.id);
+      toast.success("Vehicle archived");
+      navigate("/owner/fleet");
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const onPhoto = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    try {
+      await api.fleetAddPhoto(vehicle.id, file);
+      toast.success("Vehicle photo added");
+      await load();
+    } catch (err) {
+      toast.error(apiError(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (edit) {
+    return (
+      <ShieldChrome title="Edit vehicle" testid="fleet-detail-edit">
+        <VehicleForm
+          initial={vehicle}
+          onCancel={() => setEdit(false)}
+          onSaved={() => { setEdit(false); load(); }}
+        />
+      </ShieldChrome>
+    );
+  }
+
+  return (
+    <ShieldChrome
+      title={vehicle.label || "Vehicle"}
+      sub="Registry detail for Track Visit identity. Dispatch stays under Manage → Dispatch."
+      right={<Link to="/owner/fleet" className="nb-btn-ghost h-10 px-3 text-sm" data-testid="fleet-back">Back</Link>}
+      testid="fleet-detail-page"
+    >
+      <div className="nb-card p-5" data-testid={`fleet-vehicle-${vehicle.id}`}>
+        <div className="flex items-start gap-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl tint-lagoon text-nb-blue"><Car className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-semibold" data-testid={`fleet-vehicle-label-${vehicle.id}`}>{vehicle.label}</p>
+              <StatusBadge tone={statusTone(vehicle.status)}>{vehicle.status}</StatusBadge>
+            </div>
+            <p className="mt-1 text-xs text-nb-mute">
+              {vehicle.licensePlate ? `Plate ${vehicle.licensePlate}` : "No plate on file"}
+              {vehicle.vin ? ` · VIN …${String(vehicle.vin).slice(-4)}` : ""}
+              {vehicle.registrationJurisdiction ? ` · ${vehicle.registrationJurisdiction}` : ""}
+            </p>
+            {person && <p className="mt-1 flex items-center gap-1 text-xs text-nb-ink"><UserRound className="h-3.5 w-3.5" />{person.name} · {vehicle.assignment?.kind || "assigned"}</p>}
+            {!person && <p className="mt-1 text-xs text-nb-mute">Not assigned</p>}
+            {vehicle.description && <p className="mt-2 text-sm">{vehicle.description}</p>}
+            {(vehicle.photos || []).length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {vehicle.photos.map((photo) => (
+                  <img key={photo.id} src={api.fleetPhotoUrl(photo.id)} alt={photo.caption || "Vehicle"} className="h-16 w-24 rounded-xl object-cover" data-testid={`fleet-photo-${photo.id}`} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-sky-100 pt-3">
+          <button type="button" onClick={() => setEdit(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-edit-${vehicle.id}`}>Edit</button>
+          <button type="button" onClick={() => setAssign((v) => !v)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-open-assign-${vehicle.id}`}>Assign</button>
+          <button type="button" onClick={() => setHistory((v) => !v)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`fleet-open-history-${vehicle.id}`}><History className="mr-1 inline h-3.5 w-3.5" />History</button>
+          <label className="nb-btn-ghost h-9 cursor-pointer px-3 text-xs">
+            {uploading ? "Uploading…" : "Add photo"}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploading} onChange={onPhoto} data-testid={`fleet-photo-input-${vehicle.id}`} />
+          </label>
+          {vehicle.status !== "archived" && (
+            <button type="button" onClick={archive} className="nb-btn-ghost h-9 px-3 text-xs text-rose-700" data-testid={`fleet-archive-${vehicle.id}`}><Archive className="mr-1 inline h-3.5 w-3.5" />Archive</button>
+          )}
+        </div>
+        {assign && <AssignPanel vehicle={vehicle} practitioners={practitioners} onDone={() => { setAssign(false); load(); }} />}
+        {history && <HistoryPanel vehicleId={vehicle.id} />}
+        <VehicleDocs vehicleId={vehicle.id} />
+      </div>
+    </ShieldChrome>
+  );
+}
+
 export default function Fleet() {
   const { state, idx } = useDemo();
   const enabled = restrictedFlag(idx?.settings, "securityShieldFleetEnabled");
   const [vehicles, setVehicles] = useState(undefined);
-  const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [q, setQ] = useState("");
   const practitioners = state.practitioners || [];
@@ -348,56 +448,69 @@ export default function Fleet() {
     return list.filter((v) => [v.label, v.licensePlate, v.vin, v.color, v.make, v.model].join(" ").toLowerCase().includes(needle));
   }, [vehicles, q]);
 
-  if (!enabled) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-6" data-testid="fleet-page-off">
-        <PageHeader eyebrow="Security Shield" title="Fleet" sub="Vehicle registry for mobile visit identification." />
-        <Notice testid="fleet-flag-off">Security Shield fleet is turned off in this environment (SECURITY_SHIELD_FLEET_ENABLED). Clinical document uploads stay separate and remain off.</Notice>
-      </div>
-    );
-  }
+  if (!enabled) return <FleetOff />;
+
+  const empty = vehicles && vehicles.length === 0;
+  const noMatch = vehicles && vehicles.length > 0 && filtered.length === 0;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6" data-testid="fleet-page">
-      <PageHeader
-        eyebrow="Security Shield"
-        title="Fleet"
-        sub="Add vehicles, assign them to practitioners, and keep identity details accurate for Track Visit. This is not a dispatch board."
-        action={
-          <button type="button" onClick={() => setCreating(true)} className="nb-btn-primary h-10 px-4 text-sm" data-testid="fleet-add">
-            <Plus className="mr-1 inline h-4 w-4" />Add vehicle
-          </button>
-        }
-      />
+    <ShieldChrome
+      title="Fleet"
+      sub="Add vehicles, assign them to practitioners, and keep identity details accurate for Track Visit."
+      right={!empty ? (
+        <Link to="/owner/fleet/new" className="nb-btn-primary inline-flex h-10 items-center px-4 text-sm" data-testid="fleet-add">
+          <Plus className="mr-1 inline h-4 w-4" />Add vehicle
+        </Link>
+      ) : undefined}
+      testid="fleet-page"
+    >
       <Notice testid="fleet-vs-live">
-        <Shield className="mr-1 inline h-3.5 w-3.5" />
-        Live Fleet under Operations still shows trips on the road. This page is the vehicle registry only.
+        Dispatch under Manage shows trips on the road. This page is the vehicle registry only.
       </Notice>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="relative min-w-[12rem] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-nb-mute" />
-          <input className="nb-input h-10 w-full pl-9 text-sm" placeholder="Search plate, make, colour…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="fleet-search" />
-        </label>
-        <button type="button" onClick={() => setShowArchived((v) => !v)} className={showArchived ? "nb-chip-on h-10 text-xs" : "nb-chip-off h-10 text-xs"} data-testid="fleet-toggle-archived">
-          {showArchived ? "Hiding archived" : "Show archived"}
-        </button>
-      </div>
-      {creating && (
-        <Reveal>
-          <VehicleForm practitioners={practitioners} onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); load(); }} />
-        </Reveal>
-      )}
+
       {vehicles === undefined && <p className="text-sm text-nb-mute">Loading fleet…</p>}
-      {vehicles && filtered.length === 0 && (
-        <EmptyState title="No vehicles yet" body="Add the cars and vans practitioners use for mobile visits. Clients will later see make, colour, and plate on Track Visit — never VIN or documents." />
+
+      {empty && (
+        <EmptyState
+          icon={Car}
+          title="No vehicles yet"
+          body="Add the cars and vans practitioners use for mobile visits. Clients will later see make, colour, and plate on Track Visit — never VIN or documents."
+          action={(
+            <Link to="/owner/fleet/new" className="nb-btn-primary inline-flex h-11 items-center px-5" data-testid="fleet-add">
+              <Plus className="mr-1 h-4 w-4" />Add vehicle
+            </Link>
+          )}
+          testid="fleet-empty"
+        />
       )}
-      <div className="space-y-3">
-        {filtered.map((vehicle) => (
-          <Reveal key={vehicle.id}>
-            <VehicleCard vehicle={vehicle} practitioners={practitioners} onChanged={load} />
-          </Reveal>
-        ))}
-      </div>
-    </div>
+
+      {!empty && vehicles && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative min-w-[12rem] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-nb-mute" />
+              <input className="nb-input h-10 w-full pl-9 text-sm" placeholder="Search plate, make, colour…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="fleet-search" />
+            </label>
+            <button type="button" onClick={() => setShowArchived((v) => !v)} className={showArchived ? "nb-chip-on h-10 text-xs" : "nb-chip-off h-10 text-xs"} data-testid="fleet-toggle-archived">
+              {showArchived ? "Hiding archived" : "Show archived"}
+            </button>
+          </div>
+          {noMatch && (
+            <EmptyState
+              title="No vehicles match"
+              body="Clear the search or show archived vehicles."
+              testid="fleet-search-empty"
+            />
+          )}
+          <div className="space-y-3">
+            {filtered.map((vehicle) => (
+              <Reveal key={vehicle.id}>
+                <VehicleCard vehicle={vehicle} practitioners={practitioners} />
+              </Reveal>
+            ))}
+          </div>
+        </>
+      )}
+    </ShieldChrome>
   );
 }

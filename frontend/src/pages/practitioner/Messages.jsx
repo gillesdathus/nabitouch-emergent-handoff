@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, MessageCircle } from "lucide-react";
 import { SectionHead, PageSkeleton, StatusPill } from "@/components/ui-kit";
@@ -13,6 +13,7 @@ export default function ProMessages() {
   const { loading, capable, me, practitionerId, error } = usePractitionerProfile();
   const [aid, setAid] = useState("");
   const [unread, setUnread] = useState(0);
+  const [byAppointment, setByAppointment] = useState({});
 
   const visits = useMemo(() => {
     return (state.appointments || [])
@@ -20,20 +21,47 @@ export default function ProMessages() {
       .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   }, [state.appointments, practitionerId]);
 
+  const refreshInbox = useCallback(() => {
+    return api.inbox?.()
+      .then((body) => {
+        setUnread(Number(body?.unread || 0));
+        setByAppointment(body?.byAppointment || {});
+      })
+      .catch(() => {
+        setUnread(0);
+        setByAppointment({});
+      });
+  }, [api]);
+
   useEffect(() => {
     if (!visits.length) {
       setAid("");
       return;
     }
-    if (!aid || !visits.some((row) => row.id === aid)) setAid(visits[0].id);
-  }, [visits, aid]);
+    if (aid && visits.some((row) => row.id === aid)) return;
+    const unreadIds = Object.keys(byAppointment || {}).filter((id) => Number(byAppointment[id]) > 0);
+    const preferred = unreadIds.find((id) => visits.some((row) => row.id === id));
+    setAid(preferred || visits[0].id);
+  }, [visits, aid, byAppointment]);
 
   useEffect(() => {
     let stop = false;
-    api.inbox?.().then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); }).catch(() => {});
-    const timer = setInterval(() => {
-      api.inbox?.().then((body) => { if (!stop) setUnread(Number(body?.unread || 0)); }).catch(() => {});
-    }, 20000);
+    const load = () => {
+      api.inbox?.()
+        .then((body) => {
+          if (stop) return;
+          setUnread(Number(body?.unread || 0));
+          setByAppointment(body?.byAppointment || {});
+        })
+        .catch(() => {
+          if (!stop) {
+            setUnread(0);
+            setByAppointment({});
+          }
+        });
+    };
+    load();
+    const timer = setInterval(load, 20000);
     return () => { stop = true; clearInterval(timer); };
   }, [api, practitionerId]);
 
@@ -57,18 +85,28 @@ export default function ProMessages() {
           <label className="block text-sm">
             <span className="nb-label">Visit</span>
             <select className="nb-input" value={selected?.id || ""} onChange={(event) => setAid(event.target.value)} data-testid="pro-messages-appt-select">
-              {visits.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.ref} · {idx.clients[row.clientId]?.firstName || "Client"} · {fmtDate(row.date)} {fmtTime(row.time)}
-                </option>
-              ))}
+              {visits.map((row) => {
+                const count = Number(byAppointment[row.id] || 0);
+                return (
+                  <option key={row.id} value={row.id}>
+                    {count > 0 ? `(${count}) ` : ""}{row.ref} · {idx.clients[row.clientId]?.firstName || "Client"} · {fmtDate(row.date)} {fmtTime(row.time)}
+                  </option>
+                );
+              })}
             </select>
           </label>
           {selected && (
             <div className="space-y-3">
               <div className="nb-card flex items-center justify-between gap-3 p-4">
                 <div>
-                  <p className="font-semibold">{idx.clients[selected.clientId]?.firstName || "Client"} · {idx.services[selected.serviceSlug]?.name || "Visit"}</p>
+                  <p className="font-semibold">
+                    {Number(byAppointment[selected.id] || 0) > 0 && (
+                      <span className="mr-2 inline-flex rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid="pro-messages-thread-unread">
+                        {byAppointment[selected.id]}
+                      </span>
+                    )}
+                    {idx.clients[selected.clientId]?.firstName || "Client"} · {idx.services[selected.serviceSlug]?.name || "Visit"}
+                  </p>
                   <p className="text-xs text-nb-mute">{fmtDate(selected.date)} {fmtTime(selected.time)} · {selected.locationType === "clinic" ? "Clinic" : "Mobile"}</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -81,6 +119,7 @@ export default function ProMessages() {
                 viewerRole="practitioner"
                 title={selected.ref}
                 counterpart={idx.clients[selected.clientId]?.firstName || "Client"}
+                onRead={refreshInbox}
               />
             </div>
           )}

@@ -1219,6 +1219,8 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
         )
         await ensure_slot(extra["practitionerId"], appt["date"], appt["time"], appt["duration"], appt_id)
         upd["practitionerId"] = extra["practitionerId"]
+        # Keep denormalized message ownership in sync so unread badges do not orphan to the prior practitioner.
+        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": extra["practitionerId"]}})
         if appt.get("trip"):
             upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": now_iso()}
         await end_tracking(appt_id)
