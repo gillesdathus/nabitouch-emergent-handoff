@@ -4,7 +4,7 @@ import { MessageSquare, Plus } from "lucide-react";
 import { EmptyState, ModuleNavigation } from "@/components/tide";
 import { CreateStaffChat } from "@/components/team/CreateStaffChat";
 import { TeamInboxRow, TeamSearchField, UnreadBadge } from "@/components/team/TeamConnectUI";
-import { teamNavFor, teamPath, visibleUnreadFromInbox } from "@/lib/team-connect";
+import { teamNavFor, teamPath, visibleStaffUnreadFromInbox, visibleUnreadFromInbox } from "@/lib/team-connect";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
 
@@ -40,7 +40,11 @@ export default function TeamMessages({ role = "pro" }) {
       .then((body) => setInbox(body || {}))
       .catch(() => setInbox({ unread: 0, byAppointment: {}, threads: [] }));
     api.teamThreads?.(query)
-      .then((body) => setStaff({ threads: body?.threads || [], unread: Number(body?.unread || 0) }))
+      .then((body) => setStaff({
+        threads: body?.threads || [],
+        unread: Number(body?.unread || 0),
+        byThread: body?.byThread,
+      }))
       .catch(() => setStaff({ threads: [], unread: 0 }));
   };
 
@@ -73,7 +77,7 @@ export default function TeamMessages({ role = "pro" }) {
 
   const visitUnread = visibleUnreadFromInbox(inbox);
   const byAppointment = inbox.byAppointment || {};
-  const staffUnread = Number(staff.unread || 0);
+  const staffUnread = visibleStaffUnreadFromInbox(staff);
   const meId = user?.id;
 
   const visitHref = (id) => {

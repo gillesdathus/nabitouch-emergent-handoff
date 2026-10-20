@@ -114,7 +114,8 @@ test("shows road travel and leave-by from route leg", async () => {
   // Next is a1 (first open) — first stop messaging
   expect(host.querySelector("[data-testid='pro-next-first-stop']")?.textContent).toMatch(/First stop|My Route/i);
   expect(host.querySelector("[data-testid='pro-open-my-route']")).toBeTruthy();
-  expect(host.querySelector("[data-testid='pro-today-quick-help']")).toBeTruthy();
+  expect(host.querySelector("[data-testid='pro-today-quick-help']")?.getAttribute("href")).toContain("category=running_late");
+  expect(host.querySelector("[data-testid='pro-today-quick-help']")?.getAttribute("href")).toContain("appointmentId=a1");
   expect(host.querySelector("[data-testid='pro-availability-switch']")).toBeTruthy();
   act(() => root.unmount());
   host.remove();

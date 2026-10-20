@@ -37,14 +37,21 @@ export default function TeamHelp({ role = "pro" }) {
   const { state, practitionerId } = useDemo();
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const initial = params.get("category") || "";
-  const [category, setCategory] = useState(initial || loadDraft().category || "");
-  const [note, setNote] = useState(loadDraft().note || "");
-  const [appointmentId, setAppointmentId] = useState(loadDraft().appointmentId || "");
+  const draft = loadDraft();
+  const paramCategory = params.get("category") || "";
+  const paramAppointment = params.get("appointmentId") || "";
+  const [category, setCategory] = useState(paramCategory || draft.category || "");
+  const [note, setNote] = useState(draft.note || "");
+  const [appointmentId, setAppointmentId] = useState(paramAppointment || draft.appointmentId || "");
   const [shareLocation, setShareLocation] = useState(false);
   const [consent, setConsent] = useState(false);
   const [coords, setCoords] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (paramCategory) setCategory(paramCategory);
+    if (paramAppointment) setAppointmentId(paramAppointment);
+  }, [paramCategory, paramAppointment]);
 
   useEffect(() => {
     saveDraft({ category, note, appointmentId });
