@@ -4,7 +4,7 @@ export const TEAM_AREAS = [
   {
     id: "messages",
     title: "Messages",
-    detail: "Client visit chats now. Staff and group messaging arrives next.",
+    detail: "Client visit chats plus invitation-only staff and group messaging.",
     path: "messages",
     tint: "tint-ice",
     phase: 2,

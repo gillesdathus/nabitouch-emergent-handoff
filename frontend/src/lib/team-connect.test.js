@@ -5,6 +5,7 @@ test("team paths stay under staff workspaces", () => {
   expect(teamBase("desk")).toBe("/desk/team");
   expect(teamBase("owner")).toBe("/owner/team");
   expect(teamPath("pro", "help")).toBe("/pro/team/help");
+  expect(teamPath("pro", "messages/sth-abc")).toBe("/pro/team/messages/sth-abc");
 });
 
 test("team areas cover the four primary modules", () => {

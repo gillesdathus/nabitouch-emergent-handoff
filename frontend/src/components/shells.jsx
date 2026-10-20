@@ -337,6 +337,7 @@ function StaffShellInner({ role }) {
   const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
   const [unread, setUnread] = useState(0);
+  const [teamUnread, setTeamUnread] = useState(0);
   useEffect(() => { registerPush().catch(() => {}); }, []);
   useEffect(() => {
     if (role !== "pro") return undefined;
@@ -348,7 +349,22 @@ function StaffShellInner({ role }) {
     const timer = setInterval(load, 20000);
     return () => { stop = true; clearInterval(timer); };
   }, [api, role, practitionerId]);
-  const badges = role === "pro" && unread > 0 ? { "/pro/messages": unread } : {};
+  useEffect(() => {
+    let stop = false;
+    const load = () => api.teamInbox?.()
+      .then((body) => { if (!stop) setTeamUnread(Number(body?.unread || 0)); })
+      .catch(() => { if (!stop) setTeamUnread(0); });
+    load();
+    const timer = setInterval(load, 20000);
+    return () => { stop = true; clearInterval(timer); };
+  }, [api, role]);
+  const badges = {
+    ...(role === "pro" && unread > 0 ? { "/pro/messages": unread } : {}),
+    ...(teamUnread > 0 ? {
+      [role === "owner" ? "/owner/team" : role === "desk" ? "/desk/team" : "/pro/team"]: teamUnread,
+      [role === "owner" ? "/owner/team/messages" : role === "desk" ? "/desk/team/messages" : "/pro/team/messages"]: teamUnread,
+    } : {}),
+  };
   return (
     <div className="min-h-screen overflow-x-clip">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sky-100 bg-white px-4 py-6 lg:flex">

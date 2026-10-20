@@ -95,6 +95,7 @@ const Messages = lazy(() => import("@/pages/reception/Messages"));
 const Thread = lazy(() => import("@/pages/messages/Thread"));
 const TeamHome = lazy(() => import("@/pages/team/TeamHome"));
 const TeamMessages = lazy(() => import("@/pages/team/TeamMessages"));
+const TeamThread = lazy(() => import("@/pages/team/TeamThread"));
 const TeamHelp = lazy(() => import("@/pages/team/TeamHelp"));
 const TeamRequests = lazy(() => import("@/pages/team/TeamRequests"));
 const TeamSupplies = lazy(() => import("@/pages/team/TeamSupplies"));
@@ -164,6 +165,7 @@ export default function App() {
                     <Route path="/pro/messages" element={<ProMessages />} />
                     <Route path="/pro/team" element={<TeamHome role="pro" />} />
                     <Route path="/pro/team/messages" element={<TeamMessages role="pro" />} />
+                    <Route path="/pro/team/messages/:threadId" element={<TeamThread role="pro" />} />
                     <Route path="/pro/team/help" element={<TeamHelp role="pro" />} />
                     <Route path="/pro/team/requests" element={<TeamRequests role="pro" />} />
                     <Route path="/pro/team/supplies" element={<TeamSupplies role="pro" />} />
@@ -215,6 +217,7 @@ export default function App() {
                   <Route path="/owner/recovery" element={<ProRecovery />} />
                   <Route path="/owner/team" element={<TeamHome role="owner" />} />
                   <Route path="/owner/team/messages" element={<TeamMessages role="owner" />} />
+                  <Route path="/owner/team/messages/:threadId" element={<TeamThread role="owner" />} />
                   <Route path="/owner/team/help" element={<TeamHelp role="owner" />} />
                   <Route path="/owner/team/requests" element={<TeamRequests role="owner" />} />
                   <Route path="/owner/team/supplies" element={<TeamSupplies role="owner" />} />
@@ -230,6 +233,7 @@ export default function App() {
                   <Route path="/desk/safety" element={<SafetyAlerts />} />
                   <Route path="/desk/team" element={<TeamHome role="desk" />} />
                   <Route path="/desk/team/messages" element={<TeamMessages role="desk" />} />
+                  <Route path="/desk/team/messages/:threadId" element={<TeamThread role="desk" />} />
                   <Route path="/desk/team/help" element={<TeamHelp role="desk" />} />
                   <Route path="/desk/team/requests" element={<TeamRequests role="desk" />} />
                   <Route path="/desk/team/supplies" element={<TeamSupplies role="desk" />} />

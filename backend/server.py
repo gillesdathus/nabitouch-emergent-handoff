@@ -75,6 +75,7 @@ from notifications import (
     enqueue_email_test, freeze_delivery, enqueue_due_email_reminders, reconcile_pending_email_receipts,
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
+from team_messaging import build_team_messaging_router, ensure_team_messaging
 from giftcards import build_giftcard_router, ensure_giftcards
 from trial import (
     TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG, ensure_trial_campaign_locations, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
@@ -254,6 +255,7 @@ async def lifespan(_app):
     await ensure_legacy(db)
     await ensure_notifications(db)
     await ensure_messaging(db)
+    await ensure_team_messaging(db)
     await ensure_giftcards(db)
     await ensure_plans(db)
     await ensure_safety(db)
@@ -2786,6 +2788,7 @@ from training import build_training_router
 app.include_router(build_training_router(client, require))
 app.include_router(build_rewards_router(db, coll, add_audit, require, user_from))
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
+app.include_router(build_team_messaging_router(db, user_from, add_audit))
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))
