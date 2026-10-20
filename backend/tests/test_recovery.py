@@ -132,7 +132,9 @@ def test_consent_unsubscribe_and_fees_stay_off():
     assert fee["enabled"] is False and fee["automaticCollection"] is False
     assert fee["text"] == FEE_TEXT
     with pytest.raises(ValueError):
-        validate_fee({**fee, "enabled": True})
+        validate_fee({**fee, "automaticCollection": True})
+    saved = validate_fee({**fee, "enabled": True, "fixedFee": 25, "effectiveOn": "2026-11-01T00:00:00+00:00"})
+    assert saved["enabled"] is True and saved["automaticCollection"] is False
     appointment = {"createdAt": "2026-01-01T00:00:00+00:00", "pricing": {"total": 120}}
     configured = {**fee, "enabled": True, "automaticCollection": False, "effectiveOn": "2026-11-01T00:00:00+00:00", "fixedFee": 25}
     assert fee_amount({"cancellationFee": configured}, appointment) == 0

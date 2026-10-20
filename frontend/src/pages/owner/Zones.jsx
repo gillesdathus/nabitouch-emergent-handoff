@@ -8,7 +8,7 @@ import { AddressPicker } from "@/components/AddressPicker";
 import { clinicBookable, clinicSavePayload, staffActor } from "@/lib/domain";
 import { dollarsToCents } from "@/lib/billing";
 import { OPEN } from "@/lib/domain";
-import { AddonsEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
+import { AddonsEditor, CancellationFeeEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
 
 const ZoneStreetMap = lazy(() => import("@/components/maps/ZoneStreetMap"));
 const HAS_MAPBOX = String(process.env.REACT_APP_MAPBOX_PUBLIC_TOKEN || "").startsWith("pk.");
@@ -188,16 +188,25 @@ export default function Zones() {
           />
         </label>
       </div>
-      <SectionHead eyebrow="Booking Protection" title="Policy configuration (collection stays off)" className="mt-10" />
+      <SectionHead eyebrow="Booking Protection" title="Insurance prepay (owner controlled)" className="mt-10" />
       <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-booking-protection">
-        <p className="text-xs text-nb-mute">Recommended defaults are stored for review. Cancellation and no-show fees remain disabled until separately authorized. Insurance prepay modes do not activate card collection until you enable them here and card checkout is on.</p>
+        <p className="text-xs text-nb-mute">When enabled, insurance bookings can collect the configured prepay at checkout (requires card checkout). Self-pay deposits still follow Payment Policy.</p>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={Boolean((st.bookingProtection || {}).insurancePrepayEnabled)}
+            data-testid="settings-bp-insurance-enabled"
+            onChange={(e) => save({ bookingProtection: { insurancePrepayMode: (st.bookingProtection || {}).insurancePrepayMode || "travel_only", selfPayDepositPercent: (st.bookingProtection || {}).selfPayDepositPercent ?? 25, insurancePrepayEnabled: e.target.checked } }, e.target.checked ? "Insurance prepay enabled" : "Insurance prepay disabled")}
+          />
+          Enable insurance prepay collection
+        </label>
         <label>
           <span className="nb-label">Insurance prepay mode</span>
           <select
             className="nb-input"
             defaultValue={(st.bookingProtection || {}).insurancePrepayMode || "travel_only"}
             data-testid="settings-bp-insurance-mode"
-            onChange={(e) => save({ bookingProtection: { ...(st.bookingProtection || {}), insurancePrepayMode: e.target.value, insurancePrepayEnabled: false, selfPayDepositPercent: (st.bookingProtection || {}).selfPayDepositPercent ?? 25 } }, "Booking Protection settings saved")}
+            onChange={(e) => save({ bookingProtection: { ...(st.bookingProtection || {}), insurancePrepayMode: e.target.value, insurancePrepayEnabled: Boolean((st.bookingProtection || {}).insurancePrepayEnabled), selfPayDepositPercent: (st.bookingProtection || {}).selfPayDepositPercent ?? 25 } }, "Booking Protection settings saved")}
           >
             <option value="travel_only">Travel fee only (recommended)</option>
             <option value="higher_of">Higher of travel fee or treatment deposit</option>
@@ -205,11 +214,19 @@ export default function Zones() {
             <option value="none">No upfront payment when explicitly allowed</option>
           </select>
         </label>
-        <p className="text-xs text-amber-800">insurancePrepayEnabled stays false in this build — activate later with explicit approval.</p>
       </div>
-      <SectionHead eyebrow="Flash Booking Protection" title="Grace period defaults (not live penalties)" className="mt-10" />
+      <SectionHead eyebrow="Flash Booking Protection" title="Grace windows for short-lead bookings" className="mt-10" />
       <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-flash-protection">
-        <p className="text-xs text-nb-mute">Proposed grace windows for same-day bookings. Penalties stay off; display-only until you authorize enforcement.</p>
+        <p className="text-xs text-nb-mute">When enabled, new bookings capture a grace deadline. Cancels inside the window assess $0; after that, staff-reviewed fees may apply. No automatic card charge.</p>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={Boolean((st.flashProtection || {}).enabled)}
+            data-testid="settings-fp-enabled"
+            onChange={(e) => save({ flashProtection: { graceOver3hMinutes: 15, grace1to3hMinutes: 10, graceUnder1hMinutes: 5, ...(st.flashProtection || {}), enabled: e.target.checked } }, e.target.checked ? "Flash Protection enabled" : "Flash Protection disabled")}
+          />
+          Enable Flash Booking Protection grace windows
+        </label>
         <div className="grid gap-3 sm:grid-cols-3">
           {[
             ["graceOver3hMinutes", "Over 3 hours", 15],
@@ -223,7 +240,7 @@ export default function Zones() {
                 className="nb-input"
                 defaultValue={(st.flashProtection || {})[key] ?? fallback}
                 data-testid={`settings-fp-${key}`}
-                onBlur={(e) => save({ flashProtection: { enabled: false, graceOver3hMinutes: 15, grace1to3hMinutes: 10, graceUnder1hMinutes: 5, ...(st.flashProtection || {}), [key]: Number(e.target.value) || fallback } }, "Flash Protection grace saved")}
+                onBlur={(e) => save({ flashProtection: { enabled: Boolean((st.flashProtection || {}).enabled), graceOver3hMinutes: 15, grace1to3hMinutes: 10, graceUnder1hMinutes: 5, ...(st.flashProtection || {}), [key]: Number(e.target.value) || fallback } }, "Flash Protection grace saved")}
               />
             </label>
           ))}
@@ -231,6 +248,7 @@ export default function Zones() {
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <CancellationPolicyEditor policy={st.cancellationPolicy || {}} />
+        <CancellationFeeEditor fee={st.cancellationFee || {}} />
         <ReminderDaysEditor days={st.credentialReminderDays} />
       </div>
       <SectionHead eyebrow="Insurance integrations" title="Not connected" className="mt-10" />

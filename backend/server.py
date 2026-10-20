@@ -53,7 +53,11 @@ from availability import (
     assert_public_slot, build_schedule_router, clinic_is_bookable, clinic_visit_address, draft_schedule, gps_origin, merge_clinic, note_cancellation, public_cancellation, public_clinic, point_of, validate_clinic, visit_navigation_point,
     validate_policy, validate_scheduling, visible_to,
 )
-from payment_policy import due_for_booking, resolve_payment_policy
+from booking_protection import (
+    assess_cancellation, due_for_booking_with_protection, flash_snapshot,
+    resolve_booking_protection, resolve_flash_protection,
+)
+from payment_policy import resolve_payment_policy
 from recovery import (
     apply_campaign_price, audience_ok, award_campaign, build_recovery_router, campaign_quote,
     campaign_redemption_count, consume_recovery_hold, release_campaign, release_campaign_for_appointment,
@@ -1287,6 +1291,16 @@ async def transition(appt_id: str, body: TransitionIn, request: Request):
             await note_cancellation(db, coll, appt)
         except Exception:
             logging.getLogger(__name__).error("Opening match failed")
+        try:
+            settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
+            assessment = assess_cancellation(settings, appt, kind="cancel")
+            await coll("appointments").update_one(
+                {"id": appt_id},
+                {"$set": {"cancellationAssessment": assessment}},
+            )
+            appt = {**appt, "cancellationAssessment": assessment}
+        except Exception:
+            logging.getLogger(__name__).error("Cancellation assessment failed")
     return appt
 
 
@@ -1725,7 +1739,11 @@ async def resolve_booking(payload, user):
         settings.get("paymentPolicy"), production=is_production(), explicit=isinstance(settings.get("paymentPolicy"), dict) and bool(settings.get("paymentPolicy")),
     )
     try:
-        due = due_for_booking(quoted["total"], payment_policy, fields)
+        due = due_for_booking_with_protection(
+            quoted["total"], payment_policy, fields,
+            booking_protection=settings.get("bookingProtection"),
+            travel_dollars=quoted.get("travel") or 0,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {
@@ -1781,13 +1799,26 @@ async def preview_booking_quote(request: Request, payload: dict = Body(...)):
             "campaignId": payload.get("campaignId"),
         }
     try:
-        due = due_for_booking(pricing["total"], ctx["paymentPolicy"], ctx["fields"]) if float(pricing.get("total") or 0) > 0 else None
+        due = (
+            due_for_booking_with_protection(
+                pricing["total"], ctx["paymentPolicy"], ctx["fields"],
+                booking_protection=(ctx.get("settings") or {}).get("bookingProtection"),
+                travel_dollars=pricing.get("travel") or 0,
+            )
+            if float(pricing.get("total") or 0) > 0 else None
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {
         "pricing": pricing, "provisional": True, "welcomeOffer": bool(pricing.get("welcomeOffer")), "packageCredit": bool(pricing.get("packageCredit")),
         "settlement": due, "paymentPolicy": ctx.get("paymentPolicy"), "trialVisit": bool(ctx.get("trialVisit")),
         "paymentRequired": False if ctx.get("trialVisit") else bool(due and due.get("dueNowCents")),
+        "flashProtection": flash_snapshot(
+            datetime.now(timezone.utc).isoformat(),
+            ctx["fields"].get("date"),
+            ctx["fields"].get("time"),
+            (ctx.get("settings") or {}).get("flashProtection"),
+        ),
     }
 
 
@@ -1982,7 +2013,14 @@ async def create_booking(request: Request, payload: dict = Body(...)):
                      "eligible": claim_eligible(appt["pricing"], settings.get("gst", 0.05)) if is_ins else 0,
                      "approved": 0, "insurerPayment": "none", "insurerPaid": 0, "history": []}
     try:
-        due = None if trial_visit or float(quoted.get("total") or 0) <= 0 else due_for_booking(quoted["total"], ctx["paymentPolicy"], fields)
+        due = (
+            None if trial_visit or float(quoted.get("total") or 0) <= 0
+            else due_for_booking_with_protection(
+                quoted["total"], ctx["paymentPolicy"], fields,
+                booking_protection=settings.get("bookingProtection"),
+                travel_dollars=quoted.get("travel") or 0,
+            )
+        )
     except ValueError as exc:
         await release_promotions(claimed_ids)
         await release_campaign(db, campaign_reservation)
@@ -1998,8 +2036,13 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             "totalCents": due["totalCents"], "dueNowCents": due["dueNowCents"], "remainingCents": due["remainingCents"],
             "paidCents": 0, "refundedCents": 0, "status": due["status"], "prepaid": False,
         }
+        if due.get("insurancePrepayMode"):
+            appt["paymentDue"]["insurancePrepayMode"] = due["insurancePrepayMode"]
         if due["choice"] == "cash":
             appt["selfMethod"] = "cash"
+    flash = flash_snapshot(ts, fields.get("date"), fields.get("time"), settings.get("flashProtection"))
+    if flash:
+        appt["flashProtection"] = flash
     appt = with_settle(appt)
     try:
         await coll("appointments").insert_one(dict(appt))
@@ -2681,32 +2724,15 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         if "bookingProtection" in doc:
-            raw = doc["bookingProtection"] if isinstance(doc["bookingProtection"], dict) else {}
-            mode = raw.get("insurancePrepayMode") or "travel_only"
-            if mode not in ("travel_only", "higher_of", "travel_plus_deposit", "none"):
-                raise HTTPException(400, "Choose a valid insurance prepay mode")
-            # Keep collection off until separately authorized.
-            doc["bookingProtection"] = {
-                "selfPayDepositPercent": max(0, min(100, int(raw.get("selfPayDepositPercent") or 25))),
-                "insurancePrepayMode": mode,
-                "insurancePrepayEnabled": False,
-            }
+            try:
+                doc["bookingProtection"] = resolve_booking_protection(doc["bookingProtection"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
         if "flashProtection" in doc:
-            raw = doc["flashProtection"] if isinstance(doc["flashProtection"], dict) else {}
-            def _mins(key, default):
-                try:
-                    value = int(raw.get(key) if raw.get(key) is not None else default)
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(400, "Grace minutes must be whole numbers") from exc
-                if value < 0 or value > 120:
-                    raise HTTPException(400, "Grace minutes are out of range")
-                return value
-            doc["flashProtection"] = {
-                "enabled": False,
-                "graceOver3hMinutes": _mins("graceOver3hMinutes", 15),
-                "grace1to3hMinutes": _mins("grace1to3hMinutes", 10),
-                "graceUnder1hMinutes": _mins("graceUnder1hMinutes", 5),
-            }
+            try:
+                doc["flashProtection"] = resolve_flash_protection(doc["flashProtection"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
     elif name == "practitioners":
         if role not in ("owner", "practitioner") or (role == "practitioner" and doc_id != sub):
             raise HTTPException(403, "Not permitted")

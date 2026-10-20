@@ -128,6 +128,8 @@ def _public(row, viewer_id=None, *, include_location=False):
         "location": location,
         "history": history,
         "updates": list(row.get("updates") or []),
+        "shieldRelated": bool(row.get("shieldRelated")),
+        "shieldHref": row.get("shieldHref") or None,
     }
 
 
@@ -352,6 +354,24 @@ def build_assist_router(db, coll, user_from, add_audit):
         }
         if not key:
             doc.pop("idempotencyKey", None)
+        # Phase 8: vehicle / safety Quick Help links into Security Shield when flags are on.
+        shield_related = category in ("vehicle_issue", "safety_concern")
+        if shield_related:
+            try:
+                from config import (
+                    security_shield_fleet_enabled, security_shield_docs_enabled,
+                    security_shield_safety_sampling_enabled,
+                )
+                shield_on = (
+                    security_shield_fleet_enabled()
+                    or security_shield_docs_enabled()
+                    or security_shield_safety_sampling_enabled()
+                )
+            except Exception:
+                shield_on = False
+            if shield_on:
+                doc["shieldRelated"] = True
+                doc["shieldHref"] = "/owner/shield" if category == "vehicle_issue" else "/owner/shield/visits"
         try:
             await db.nt_assist_requests.insert_one(dict(doc))
         except DuplicateKeyError:
@@ -361,6 +381,22 @@ def build_assist_router(db, coll, user_from, add_audit):
             raise
         doc.pop("_id", None)
         await add_audit(user.get("name") or "Staff", f"Quick Help {ref} · {category}", doc["id"])
+        if doc.get("shieldRelated"):
+            try:
+                await db.nt_notifications.insert_one({
+                    "id": "ntf-" + uuid.uuid4().hex[:12],
+                    "kind": "team_shield_assist",
+                    "audience": ["owner", "desk"] + [f"user:{uid}" for uid in responders + backups],
+                    "title": CATEGORIES[category]["title"],
+                    "body": f"{ref}: {CATEGORIES[category]['title']} — open Security Shield if fleet or safety follow-up is needed.",
+                    "at": stamp,
+                    "read": False,
+                    "teamConnect": True,
+                    "href": doc.get("shieldHref") or "/owner/shield",
+                    "assistRequestId": doc["id"],
+                })
+            except Exception:
+                pass
         return {
             "request": _public(doc, user.get("id"), include_location=True),
             "duplicate": False,

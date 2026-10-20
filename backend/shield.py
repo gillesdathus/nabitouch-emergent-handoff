@@ -285,14 +285,32 @@ async def run_renewal_scan(db, coll, add_audit=None):
             try:
                 await db.nt_shield_reminders.insert_one(dict(notice))
                 sent += 1
+                audience = ["owner"]
+                if doc_type == "driver_licence" and row.get("practitionerId"):
+                    audience.append(f"practitioner:{row.get('practitionerId')}")
+                # Phase 8: fan out to Team Connect on-duty roster when configured.
+                try:
+                    from assist_requests import resolve_team_connect
+                    settings = await db.nt_settings.find_one({"id": "app"}, {"_id": 0, "teamConnect": 1}) or {}
+                    duty = resolve_team_connect(settings)
+                    for uid in (duty.get("dutyPrimaryUserIds") or []) + (duty.get("dutyBackupUserIds") or []):
+                        tag = f"user:{uid}"
+                        if tag not in audience:
+                            audience.append(tag)
+                    if duty.get("dutyPrimaryUserIds") or duty.get("dutyBackupUserIds"):
+                        audience.append("desk")
+                except Exception:
+                    log.exception("Team Connect shield audience failed")
                 await db.nt_notifications.insert_one({
                     "id": "ntf-" + uuid.uuid4().hex[:12],
                     "kind": "shield_renewal",
-                    "audience": ["owner", f"practitioner:{row.get('practitionerId')}"] if doc_type == "driver_licence" else ["owner"],
+                    "audience": audience,
                     "title": "Document renewal",
                     "body": notice["body"],
                     "at": now_iso(),
                     "read": False,
+                    "teamConnect": True,
+                    "href": "/owner/shield/renewals",
                 })
             except Exception:
                 log.exception("Shield reminder insert failed")
