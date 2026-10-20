@@ -98,7 +98,9 @@ const TeamMessages = lazy(() => import("@/pages/team/TeamMessages"));
 const TeamThread = lazy(() => import("@/pages/team/TeamThread"));
 const TeamHelp = lazy(() => import("@/pages/team/TeamHelp"));
 const TeamRequests = lazy(() => import("@/pages/team/TeamRequests"));
+const TeamRequestDetail = lazy(() => import("@/pages/team/TeamRequestDetail"));
 const TeamSupplies = lazy(() => import("@/pages/team/TeamSupplies"));
+const TeamClientComms = lazy(() => import("@/pages/team/TeamClientComms"));
 
 function Gate({ children }) {
   const { state, error, user } = useDemo();
@@ -168,6 +170,7 @@ export default function App() {
                     <Route path="/pro/team/messages/:threadId" element={<TeamThread role="pro" />} />
                     <Route path="/pro/team/help" element={<TeamHelp role="pro" />} />
                     <Route path="/pro/team/requests" element={<TeamRequests role="pro" />} />
+                    <Route path="/pro/team/requests/:requestId" element={<TeamRequestDetail role="pro" />} />
                     <Route path="/pro/team/supplies" element={<TeamSupplies role="pro" />} />
                     <Route path="/pro/route" element={<ProRoute mode="pro" />} />
                     <Route path="/pro/recovery" element={<ProRecovery />} />
@@ -220,7 +223,9 @@ export default function App() {
                   <Route path="/owner/team/messages/:threadId" element={<TeamThread role="owner" />} />
                   <Route path="/owner/team/help" element={<TeamHelp role="owner" />} />
                   <Route path="/owner/team/requests" element={<TeamRequests role="owner" />} />
+                  <Route path="/owner/team/requests/:requestId" element={<TeamRequestDetail role="owner" />} />
                   <Route path="/owner/team/supplies" element={<TeamSupplies role="owner" />} />
+                  <Route path="/owner/team/client-comms" element={<TeamClientComms role="owner" />} />
                 </Route>
                 <Route element={<StaffShell role="desk" />}>
                   <Route path="/desk" element={<Desk />} />
@@ -236,7 +241,9 @@ export default function App() {
                   <Route path="/desk/team/messages/:threadId" element={<TeamThread role="desk" />} />
                   <Route path="/desk/team/help" element={<TeamHelp role="desk" />} />
                   <Route path="/desk/team/requests" element={<TeamRequests role="desk" />} />
+                  <Route path="/desk/team/requests/:requestId" element={<TeamRequestDetail role="desk" />} />
                   <Route path="/desk/team/supplies" element={<TeamSupplies role="desk" />} />
+                  <Route path="/desk/team/client-comms" element={<TeamClientComms role="desk" />} />
                 </Route>
                 <Route path="/train" element={<TrainingWorkspace />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

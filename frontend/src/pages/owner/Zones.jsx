@@ -144,6 +144,91 @@ export default function Zones() {
         <div className="nb-card flex items-center gap-3 p-4 text-sm"><span className="flex-1"><b>GST rate</b><span className="block text-xs text-nb-mute">Confirm tax treatment with your accountant</span></span>{editing === "gst" ? <><input type="number" value={gst} onChange={(e) => setGst(e.target.value)} className="h-9 w-20 rounded-xl border border-sky-200 px-2" data-testid="settings-gst-input" /><button type="button" onClick={() => { setGst(st.gst * 100); setEditing(""); }} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button><button onClick={() => finish({ gst: Number(gst) / 100 }, `GST set to ${gst}%`)} data-testid="settings-gst-save" className="nb-btn-primary h-9 px-4 text-xs">Save</button></> : <><span data-testid="settings-gst-value">{st.gst * 100}%</span><button type="button" onClick={() => { setGst(st.gst * 100); setEditing("gst"); }} className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-gst-edit">Edit</button></>}</div>
         <AddonsEditor addons={st.addons || []} />
       </div>
+      <SectionHead eyebrow="Team Connect" title="On-duty assistance routing" className="mt-10" />
+      <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-team-connect">
+        <p className="text-xs text-nb-mute">Primary on-duty staff receive Quick Help first; backup is used after the server escalation window. This is not practitioner bookability.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label>
+            <span className="nb-label">Urgent ack (minutes)</span>
+            <input
+              type="number"
+              className="nb-input"
+              defaultValue={(st.teamConnect || {}).urgentAckMinutes ?? 3}
+              data-testid="settings-tc-urgent"
+              onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: Number(e.target.value) || 3, routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15, dutyPrimaryUserIds: (st.teamConnect || {}).dutyPrimaryUserIds || [], dutyBackupUserIds: (st.teamConnect || {}).dutyBackupUserIds || [] } }, "Team Connect escalation saved")}
+            />
+          </label>
+          <label>
+            <span className="nb-label">Routine ack (minutes)</span>
+            <input
+              type="number"
+              className="nb-input"
+              defaultValue={(st.teamConnect || {}).routineAckMinutes ?? 15}
+              data-testid="settings-tc-routine"
+              onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3, routineAckMinutes: Number(e.target.value) || 15, dutyPrimaryUserIds: (st.teamConnect || {}).dutyPrimaryUserIds || [], dutyBackupUserIds: (st.teamConnect || {}).dutyBackupUserIds || [] } }, "Team Connect escalation saved")}
+            />
+          </label>
+        </div>
+        <label>
+          <span className="nb-label">Primary on-duty user ids (comma-separated)</span>
+          <input
+            className="nb-input"
+            defaultValue={((st.teamConnect || {}).dutyPrimaryUserIds || []).join(", ")}
+            data-testid="settings-tc-primary"
+            onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3, routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15, dutyPrimaryUserIds: e.target.value.split(",").map((x) => x.trim()).filter(Boolean), dutyBackupUserIds: (st.teamConnect || {}).dutyBackupUserIds || [] } }, "Team Connect duty roster saved")}
+          />
+        </label>
+        <label>
+          <span className="nb-label">Backup user ids (comma-separated)</span>
+          <input
+            className="nb-input"
+            defaultValue={((st.teamConnect || {}).dutyBackupUserIds || []).join(", ")}
+            data-testid="settings-tc-backup"
+            onBlur={(e) => save({ teamConnect: { ...(st.teamConnect || {}), urgentAckMinutes: (st.teamConnect || {}).urgentAckMinutes ?? 3, routineAckMinutes: (st.teamConnect || {}).routineAckMinutes ?? 15, dutyPrimaryUserIds: (st.teamConnect || {}).dutyPrimaryUserIds || [], dutyBackupUserIds: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) } }, "Team Connect backup roster saved")}
+          />
+        </label>
+      </div>
+      <SectionHead eyebrow="Booking Protection" title="Policy configuration (collection stays off)" className="mt-10" />
+      <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-booking-protection">
+        <p className="text-xs text-nb-mute">Recommended defaults are stored for review. Cancellation and no-show fees remain disabled until separately authorized. Insurance prepay modes do not activate card collection until you enable them here and card checkout is on.</p>
+        <label>
+          <span className="nb-label">Insurance prepay mode</span>
+          <select
+            className="nb-input"
+            defaultValue={(st.bookingProtection || {}).insurancePrepayMode || "travel_only"}
+            data-testid="settings-bp-insurance-mode"
+            onChange={(e) => save({ bookingProtection: { ...(st.bookingProtection || {}), insurancePrepayMode: e.target.value, insurancePrepayEnabled: false, selfPayDepositPercent: (st.bookingProtection || {}).selfPayDepositPercent ?? 25 } }, "Booking Protection settings saved")}
+          >
+            <option value="travel_only">Travel fee only (recommended)</option>
+            <option value="higher_of">Higher of travel fee or treatment deposit</option>
+            <option value="travel_plus_deposit">Travel fee plus treatment deposit</option>
+            <option value="none">No upfront payment when explicitly allowed</option>
+          </select>
+        </label>
+        <p className="text-xs text-amber-800">insurancePrepayEnabled stays false in this build — activate later with explicit approval.</p>
+      </div>
+      <SectionHead eyebrow="Flash Booking Protection" title="Grace period defaults (not live penalties)" className="mt-10" />
+      <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-flash-protection">
+        <p className="text-xs text-nb-mute">Proposed grace windows for same-day bookings. Penalties stay off; display-only until you authorize enforcement.</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            ["graceOver3hMinutes", "Over 3 hours", 15],
+            ["grace1to3hMinutes", "1–3 hours", 10],
+            ["graceUnder1hMinutes", "Under 1 hour", 5],
+          ].map(([key, label, fallback]) => (
+            <label key={key}>
+              <span className="nb-label">{label}</span>
+              <input
+                type="number"
+                className="nb-input"
+                defaultValue={(st.flashProtection || {})[key] ?? fallback}
+                data-testid={`settings-fp-${key}`}
+                onBlur={(e) => save({ flashProtection: { enabled: false, graceOver3hMinutes: 15, grace1to3hMinutes: 10, graceUnder1hMinutes: 5, ...(st.flashProtection || {}), [key]: Number(e.target.value) || fallback } }, "Flash Protection grace saved")}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <CancellationPolicyEditor policy={st.cancellationPolicy || {}} />
         <ReminderDaysEditor days={st.credentialReminderDays} />

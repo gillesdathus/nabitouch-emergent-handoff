@@ -76,6 +76,9 @@ from notifications import (
 )
 from messaging import build_messaging_router, ensure_messaging, record_trip_notice
 from team_messaging import build_team_messaging_router, ensure_team_messaging
+from assist_requests import build_assist_router, ensure_assist_requests, resolve_team_connect
+from client_comms import build_client_comms_router, ensure_client_comms
+from supplies import build_supplies_router, ensure_supplies
 from giftcards import build_giftcard_router, ensure_giftcards
 from trial import (
     TRIAL_DURATION_MIN, TRIAL_LOCATION_TYPES, TRIAL_SERVICE_SLUG, ensure_trial_campaign_locations, ensure_trial_service, is_trial_appointment, is_trial_offer, is_trial_service,
@@ -256,6 +259,9 @@ async def lifespan(_app):
     await ensure_notifications(db)
     await ensure_messaging(db)
     await ensure_team_messaging(db)
+    await ensure_assist_requests(db)
+    await ensure_client_comms(db)
+    await ensure_supplies(db)
     await ensure_giftcards(db)
     await ensure_plans(db)
     await ensure_safety(db)
@@ -2273,7 +2279,7 @@ PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility"
                 "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval",
                 "placements", "bannerHeadline", "bannerBody"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
-SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp"}
+SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp", "teamConnect", "bookingProtection", "flashProtection"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
 
 
@@ -2669,6 +2675,38 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
                 doc["rewards"] = validate_rewards(doc["rewards"])
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
+        if "teamConnect" in doc:
+            try:
+                doc["teamConnect"] = resolve_team_connect({"teamConnect": doc["teamConnect"]})
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        if "bookingProtection" in doc:
+            raw = doc["bookingProtection"] if isinstance(doc["bookingProtection"], dict) else {}
+            mode = raw.get("insurancePrepayMode") or "travel_only"
+            if mode not in ("travel_only", "higher_of", "travel_plus_deposit", "none"):
+                raise HTTPException(400, "Choose a valid insurance prepay mode")
+            # Keep collection off until separately authorized.
+            doc["bookingProtection"] = {
+                "selfPayDepositPercent": max(0, min(100, int(raw.get("selfPayDepositPercent") or 25))),
+                "insurancePrepayMode": mode,
+                "insurancePrepayEnabled": False,
+            }
+        if "flashProtection" in doc:
+            raw = doc["flashProtection"] if isinstance(doc["flashProtection"], dict) else {}
+            def _mins(key, default):
+                try:
+                    value = int(raw.get(key) if raw.get(key) is not None else default)
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "Grace minutes must be whole numbers") from exc
+                if value < 0 or value > 120:
+                    raise HTTPException(400, "Grace minutes are out of range")
+                return value
+            doc["flashProtection"] = {
+                "enabled": False,
+                "graceOver3hMinutes": _mins("graceOver3hMinutes", 15),
+                "grace1to3hMinutes": _mins("grace1to3hMinutes", 10),
+                "graceUnder1hMinutes": _mins("graceUnder1hMinutes", 5),
+            }
     elif name == "practitioners":
         if role not in ("owner", "practitioner") or (role == "practitioner" and doc_id != sub):
             raise HTTPException(403, "Not permitted")
@@ -2789,6 +2827,9 @@ app.include_router(build_training_router(client, require))
 app.include_router(build_rewards_router(db, coll, add_audit, require, user_from))
 app.include_router(build_messaging_router(db, coll, user_from, add_audit, reception_perms))
 app.include_router(build_team_messaging_router(db, user_from, add_audit))
+app.include_router(build_assist_router(db, coll, user_from, add_audit))
+app.include_router(build_client_comms_router(db, coll, user_from, add_audit))
+app.include_router(build_supplies_router(db, coll, user_from, add_audit))
 app.include_router(build_media_router(db, user_from))
 app.include_router(build_giftcard_router(db, coll, add_audit, user_from, reception_perms))
 app.include_router(build_readiness_router(db, coll, user_from, add_audit))

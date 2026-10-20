@@ -57,10 +57,14 @@ export function teamPath(role, area = "") {
 
 export function teamNavFor(role) {
   const base = teamBase(role);
-  return [
+  const items = [
     { to: base, label: "Home", end: true },
     ...TEAM_AREAS.map((area) => ({ to: `${base}/${area.path}`, label: area.title })),
   ];
+  if (role === "desk" || role === "owner") {
+    items.push({ to: `${base}/client-comms`, label: "Client msgs" });
+  }
+  return items;
 }
 
 /** Align nav badge with threads still open for the practitioner inbox. */
