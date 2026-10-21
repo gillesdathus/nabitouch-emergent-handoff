@@ -32,13 +32,16 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
   const confirmed = resolved && value?.clientConfirmed === true;
   const showCard = resolved && !editing && !clinic;
 
+  // Sync optional fields only when the resolved address identity changes.
+  // Do not depend on unit/postal/access — keystrokes call onChange and would
+  // otherwise wipe a postal the client typed before Confirm (Slice 5 E2E).
   useEffect(() => {
     if (value?.line && !editing) {
       setUnit(value.unit || "");
       setPostal(value.postal || "");
       setAccess(value.access || "");
     }
-  }, [value?.line, value?.unit, value?.postal, value?.access, value?.mapboxId, editing]);
+  }, [value?.line, value?.mapboxId, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open || q.trim().length < 3 || showCard) {

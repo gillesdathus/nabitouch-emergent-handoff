@@ -228,7 +228,7 @@ export default function Visit() {
       {timed && clock.snap && (appt.status === "in_session" || clock.snap.cleanup) && <NextBookingCard snap={clock.snap} idx={idx} />}
       {(timed || queued.length > 0) && <SyncStrip apptId={appt.id} error={clock.error} lastSync={clock.lastSync} onRetry={() => { reloadClock(); refresh(); }} />}
 
-      <StickyActionBar testid="visit-sticky-actions" liftAt="lg" className="relative">
+      <StickyActionBar testid="visit-sticky-actions" liftAt="lg">
         <AnimatePresence>{flash && <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2"><SuccessMark size={64} /></motion.div>}</AnimatePresence>
         {primary && <motion.button key={primary.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} disabled={pending || gated} onClick={() => tap(primary)} data-testid={`lifecycle-${primary.label.toLowerCase().replace(/[^a-z]+/g, "-")}-btn`} className={`h-16 w-full text-lg ${gated ? "nb-btn rounded-full bg-slate-100 text-slate-500 ring-1 ring-slate-200" : "nb-btn-primary"}`}>{pending ? "Saving…" : queued.length ? "Waiting to sync…" : gated ? (readiness ? "Waiting for intake & consent" : "Checking consent…") : primary.label}</motion.button>}
       </StickyActionBar>

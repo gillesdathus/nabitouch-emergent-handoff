@@ -1,6 +1,8 @@
 # Installed PWA address & booking checklist (Slice 5)
 
-**Status:** Outstanding — not executed on physical/remote devices in this Slice 5 run.
+**Status:** Outstanding deployment blocker — not executed on physical/remote installed PWAs.
+
+Browser/Playwright journeys (desktop 1280×800 and mobile 390×700) completed against Docker QA + local Vite, but **browser emulation does not count** as installed-PWA verification.
 
 Use this checklist on Android and iOS **installed** PWAs (not desktop responsive mode alone).
 

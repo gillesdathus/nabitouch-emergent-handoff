@@ -176,6 +176,34 @@ test("GPS coverage uses geoCheck with coordinates only", async () => {
   vi.unstubAllGlobals();
 });
 
+test("suite keystrokes do not wipe a typed postal before confirm", async () => {
+  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
+  api.geoCheck.mockResolvedValue({
+    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
+    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "local-downtown",
+  });
+  api.geoConfirm.mockResolvedValue({
+    accepted: true, confidence: "address", line: "10150 104 St NW, Edmonton, AB",
+    postalNormalized: "T5J 2R4", lat: 53.54, lng: -113.49, mapboxId: "local-downtown", travel: 0,
+  });
+  const view = mount(<Harness />);
+  const input = view.host.querySelector("[data-testid=address-input]");
+  await act(async () => { input.focus(); type(input, "104 St NW"); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+  const option = await view.find("address-option-0");
+  await act(async () => { option.click(); });
+  await view.find("address-confirm-card");
+  const postal = view.host.querySelector("[data-testid=address-postal-input]");
+  const unit = view.host.querySelector("[data-testid=address-unit-input]");
+  await act(async () => { type(postal, "T5J 2R4"); });
+  await act(async () => { type(unit, "4"); });
+  expect(view.host.querySelector("[data-testid=address-postal-input]").value).toBe("T5J 2R4");
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(api.geoConfirm).toHaveBeenCalledWith(expect.objectContaining({ postal: "T5J 2R4", unit: "4" }));
+  expect((await view.find("address-confirmed")).textContent).toMatch(/confirmed this civic address/);
+  view.cleanup();
+});
+
 test("requires an explicit confirm and does not treat an approximate match as verified", async () => {
   api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
   api.geoCheck.mockResolvedValue({

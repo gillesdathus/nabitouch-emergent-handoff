@@ -18,17 +18,23 @@ function mount(ui) {
 
 test("StickyActionBar uses shared nb-sticky-actions token classes (no hardcoded bottom offsets)", () => {
   const view = mount(createElement(StickyActionBar, { testid: "booking-actions" }, "Continue"));
-  const el = view.host.querySelector("[data-testid=booking-actions]");
+  // Portaled to document.body so shell overflow cannot trap fixed positioning.
+  const el = document.querySelector("[data-testid=booking-actions]");
+  const spacer = view.host.querySelector("[data-testid=booking-actions-spacer]");
+  expect(el).toBeTruthy();
   expect(el.className).toMatch(/nb-sticky-actions/);
   expect(el.className).toMatch(/nb-sticky-actions--md/);
   expect(el.className).not.toMatch(/bottom-\[64px\]/);
   expect(el.className).not.toMatch(/bottom-\[72px\]/);
+  expect(view.host.contains(el)).toBe(false);
+  expect(spacer).toBeTruthy();
+  expect(spacer.className).toMatch(/nb-sticky-actions-spacer/);
   view.cleanup();
 });
 
 test("staff variant lifts at the lg breakpoint", () => {
   const view = mount(createElement(StickyActionBar, { liftAt: "lg", testid: "visit-actions" }, "Save"));
-  const el = view.host.querySelector("[data-testid=visit-actions]");
+  const el = document.querySelector("[data-testid=visit-actions]");
   expect(el.className).toMatch(/nb-sticky-actions--lg/);
   view.cleanup();
 });

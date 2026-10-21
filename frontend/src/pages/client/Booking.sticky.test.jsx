@@ -103,10 +103,11 @@ beforeEach(() => {
 test("booking primary actions use StickyActionBar / nb-sticky-actions tokens", async () => {
   const view = mount();
   await act(async () => { await Promise.resolve(); });
-  const bar = view.host.querySelector("[data-testid=booking-sticky-actions]");
+  const bar = document.querySelector("[data-testid=booking-sticky-actions]");
   expect(bar).toBeTruthy();
   expect(bar.className).toMatch(/nb-sticky-actions/);
   expect(bar.className).not.toMatch(/bottom-\[64px\]/);
-  expect(view.host.querySelector("[data-testid=booking-next-btn]")).toBeTruthy();
+  expect(view.host.contains(bar)).toBe(false);
+  expect(document.querySelector("[data-testid=booking-next-btn]")).toBeTruthy();
   view.cleanup();
 });

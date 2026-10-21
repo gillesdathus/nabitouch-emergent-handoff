@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { apiError } from "@/lib/api";
 import { PromoBanner } from "@/components/client";
 import { SuccessMark, ClientTracker } from "@/components/ui-kit";
+import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay } from "./BookingSteps";
 import { StickyActionBar } from "@/components/StickyActionBar";
@@ -30,6 +31,18 @@ import {
   serviceSelectionPatch,
 } from "@/lib/booking-selection";
 
+function settlementNote(settlement) {
+  if (!settlement) return "";
+  const due = Number(settlement.dueNowCents) || 0;
+  const total = Number(settlement.totalCents) || 0;
+  const remaining = Number(settlement.remainingCents) || 0;
+  const cashLike = settlement.choice === "cash" || (due === 0 && remaining > 0 && remaining === total);
+  if (total === 0) return "Nothing is due online for this visit.";
+  if (cashLike) return "No payment collected online. Cash is due at the visit — this booking is not prepaid.";
+  if (due > 0 && due < total) return "Deposit due online now. Remaining balance is collected later and is not paid yet.";
+  return "Full total due online. It is paid only after Stripe verifies the payment.";
+}
+
 function Breakdown({ q, compact, settlement }) {
   const Row = ({ l, v, cls = "", testid }) => <div className={`flex justify-between ${cls}`} data-testid={testid}><span>{l}</span><span className="tabular-nums">{v}</span></div>;
   return (
@@ -45,7 +58,7 @@ function Breakdown({ q, compact, settlement }) {
       {settlement && <>
         <Row l="Due now" v={formatCents(settlement.dueNowCents)} testid="breakdown-due-now" />
         <Row l="Remaining balance" v={formatCents(settlement.remainingCents)} testid="breakdown-remaining" />
-        <p className="text-xs text-nb-mute" data-testid="breakdown-settlement-note">{settlement.totalCents === 0 ? "Nothing is due online for this visit." : settlement.choice === "cash" ? "Cash is payable at the visit. This booking is not prepaid." : settlement.dueNowCents < settlement.totalCents ? "The deposit is due online. The remaining balance is collected later and is not paid yet." : "The full total is due online. It is paid only after Stripe verifies the payment."}</p>
+        <p className="text-xs text-nb-mute" data-testid="breakdown-settlement-note">{settlementNote(settlement)}</p>
       </>}
     </div>
   );
@@ -215,6 +228,8 @@ export default function Booking() {
     },
   } : null;
   const quoteKey = JSON.stringify(quotePayload);
+  // Primitive deps only — object identity from DemoStore would re-fire quotes every render.
+  const offerEligibilityKey = JSON.stringify(state?.offerEligibility ?? null);
   useEffect(() => {
     if (quoteKey === "null") {
       setServerQuote(null);
@@ -227,12 +242,12 @@ export default function Booking() {
     setSettlement(null);
     setQuoteNote("");
     const body = JSON.parse(quoteKey);
+    const elig = offerEligibilityKey === "null" ? null : JSON.parse(offerEligibilityKey);
     api.quoteBooking(body)
       .then((res) => {
         if (stop) return;
         setServerQuote(res.pricing);
         setSettlement(res.settlement || null);
-        const elig = state?.offerEligibility;
         if (elig?.known && elig.welcome === false && !res.pricing?.welcomeOffer && !body.campaignId) {
           setQuoteNote("The first-booking welcome offer is not available on your account. Eligibility comes from your booking history, not a new login.");
         } else {
@@ -241,7 +256,7 @@ export default function Booking() {
       })
       .catch((error) => { if (!stop) setQuoteNote(apiError(error)); });
     return () => { stop = true; };
-  }, [quoteKey, api, state?.offerEligibility]);
+  }, [quoteKey, api, offerEligibilityKey]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
   const clinic = idx.settings?.clinic || {};
   const whereOk = draft.locationType === "clinic"
@@ -275,27 +290,36 @@ export default function Booking() {
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
   };
   // Keep draft.step ↔ ?step= in sync for browser/PWA Back and in-step auto-advances (C9).
+  // Coerce draft.step to a number — sessionStorage restore can yield strings, and
+  // `6 === "6"` is false, which previously oscillated URL ↔ draft updates under act().
   useEffect(() => {
+    const draftStep = Number(draft.step);
+    const safeDraftStep = Number.isInteger(draftStep) && draftStep >= 0 ? draftStep : 0;
     const raw = params.get("step");
     if (raw == null) {
-      const seed = draft.step || 0;
       const next = new URLSearchParams(params);
-      next.set("step", String(seed));
-      lastUrlStep.current = seed;
+      next.set("step", String(safeDraftStep));
+      lastUrlStep.current = safeDraftStep;
       setParams(next, { replace: true });
       return undefined;
     }
     const n = Number(raw);
     if (!Number.isInteger(n) || n < 0) return undefined;
-    if (n === draft.step) {
+    if (n === safeDraftStep) {
       lastUrlStep.current = n;
+      // Heal stringy draft.step without a URL write.
+      if (draft.step !== n) patchDraft(n === 0 ? { step: n, forceWhere: true } : { step: n, forceWhere: false });
       return undefined;
     }
-    if (n === lastUrlStep.current) {
+    if (n === Number(lastUrlStep.current)) {
       // Child advanced draft.step (service/duration tap) — push URL so Back unwinds steps.
+      if (params.get("step") === String(safeDraftStep)) {
+        lastUrlStep.current = safeDraftStep;
+        return undefined;
+      }
       const next = new URLSearchParams(params);
-      next.set("step", String(draft.step));
-      lastUrlStep.current = draft.step;
+      next.set("step", String(safeDraftStep));
+      lastUrlStep.current = safeDraftStep;
       setParams(next, { replace: false });
       requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
       return undefined;
@@ -305,8 +329,7 @@ export default function Booking() {
     patchDraft(n === 0 ? { step: n, forceWhere: true } : { step: n, forceWhere: false });
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     return undefined;
-  }, [params, draft.step, patchDraft, setParams]);
-  const changeTreatment = () => {
+  }, [params, draft.step, patchDraft, setParams]);  const changeTreatment = () => {
     go(BOOKING_STEP.SERVICE, { replace: true });
     if (service?.id || service?.slug) {
       const next = new URLSearchParams(params);
@@ -355,29 +378,82 @@ export default function Booking() {
     const live = listed?.serviceSlug ? listed : done;
     const firstBooking = (idx.clients[live.clientId]?.onlineBookings || 1) <= 1;
     const trialVisit = live.appointmentKind === "trial" || live.pricing?.campaignOfferKind === "trial" || live.serviceSlug === "ten-minutes-on-us";
+    const cashLike = !trialVisit && (
+      live.payNow === "cash"
+      || live.paymentDue?.choice === "cash"
+      || (Number(live.paymentDue?.dueNowCents) === 0 && Number(live.paymentDue?.remainingCents) > 0)
+    );
     return (
-      <div className="mx-auto max-w-xl px-5 py-14 text-center" data-testid="booking-confirmation">
-        <SuccessMark size={84} />
-        <h1 className="mt-6 text-3xl font-semibold tracking-tight">Request <span className="font-display font-normal italic nb-gradient-text">received</span></h1>
-        <p className="mt-2 text-nb-mute">Reference <b data-testid="booking-ref">{live.ref}</b> · {idx.services[live.serviceSlug]?.name || live.serviceSlug}, {live.duration} min · {fmtDate(live.date)} at {fmtTime(live.time)}</p>
-        {trialVisit && <p className="mt-2 text-sm text-nb-teal" data-testid="confirmation-trial">10 Minutes. On Us. — free neck-and-shoulder trial. No payment due.</p>}
-        {(live.status === "requested" || !live.practitionerId) && <p className="mt-2 text-sm" data-testid="booking-unassigned">This is a booking request. A practitioner has not been assigned.</p>}
-        <div className="nb-card mt-8 p-5 text-left"><ClientTracker appt={live} /><div className="mt-5"><Breakdown q={live.pricing} settlement={live.paymentDue} /></div>{live.pricing?.welcomeOffer && <p className="mt-3 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>}{!trialVisit && <p className="mt-3 text-xs text-nb-mute" data-testid="booking-settlement-note">{live.payNow === "cash" ? "This confirms the appointment request, not a payment. Cash is due at the visit and this booking is not prepaid." : "This confirms the appointment request, not a payment. Online card payment is recorded only after Stripe verifies it."}</p>}</div>
-        <p className="mt-4 text-xs text-nb-mute">This environment does not send a confirmation text or email.</p>
-        {guestTrack?.token && <p className="mt-3 text-sm"><Link to={{ pathname: "/track", hash: guestTrack.token }} data-testid="guest-tracking-link">Follow this visit</Link> <span className="text-xs text-nb-mute">This link expires in two hours and only shows this appointment while location sharing is on.</span></p>}
-        {firstBooking && !trialVisit && <InstallCard />}
-        {trialVisit && (
-          <div className="nb-card mt-6 p-5 text-left" data-testid="trial-next-cta">
-            <p className="font-semibold">Ready for a full massage?</p>
-            <p className="mt-1 text-sm text-nb-mute">Book a regular session when you are ready. Your first-booking welcome offer stays available for an eligible regular booking.</p>
-            <Link to="/book" className="nb-btn-primary mt-4 inline-flex h-11 px-5 text-sm" data-testid="trial-book-regular">Book a regular massage</Link>
+      <CompletionScreen
+        testid="booking-confirmation"
+        actionsTestid="booking-confirmation-actions"
+        actions={(
+          <div className="flex w-full flex-col gap-2 sm:flex-row">
+            <Link to="/me" data-testid="confirmation-view-visit-btn" className="nb-btn-primary h-12 flex-1">
+              {trialVisit ? "View appointment" : "View my visit"}
+            </Link>
+            <Link to={trialVisit ? "/me" : "/"} data-testid="confirmation-home-btn" className="nb-btn-ghost h-12 flex-1">
+              {trialVisit ? "Back to My Nabitouch" : "Back home"}
+            </Link>
           </div>
         )}
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
-          <Link to="/me" data-testid="confirmation-view-visit-btn" className="nb-btn-primary">{trialVisit ? "View appointment" : "View my visit"}</Link>
-          <Link to={trialVisit ? "/me" : "/"} data-testid="confirmation-home-btn" className="nb-btn-ghost h-12">{trialVisit ? "Back to My Nabitouch" : "Back home"}</Link>
+        footer={(
+          <>
+            <p className="text-xs text-nb-mute" data-testid="booking-settlement-note">
+              {trialVisit
+                ? "This environment does not send a confirmation text or email."
+                : cashLike
+                  ? "Request confirmed — no online payment collected. Cash is due at the visit. This environment does not send a confirmation text or email."
+                  : "Request confirmed — not a payment receipt. Online card amounts are recorded only after Stripe verifies them. This environment does not send a confirmation text or email."}
+            </p>
+            <p className="mt-2 text-[11px] leading-snug text-nb-mute">
+              Visit status updates when your practitioner starts preparing or begins travel — not when health check, consent, or space prep are done.
+            </p>
+            {guestTrack?.token && (
+              <p className="mt-3 text-sm">
+                <Link to={{ pathname: "/track", hash: guestTrack.token }} data-testid="guest-tracking-link" className="font-semibold text-nb-blue">Follow this visit</Link>
+                <span className="mt-1 block text-xs text-nb-mute">Expires in two hours. Only shows this appointment while location sharing is on.</span>
+              </p>
+            )}
+            {firstBooking && !trialVisit && <div className="mt-4"><InstallCard collapsible /></div>}
+            {trialVisit && (
+              <div className="nb-card mt-4 p-4 text-left" data-testid="trial-next-cta">
+                <p className="font-semibold">Ready for a full massage?</p>
+                <p className="mt-1 text-sm text-nb-mute">Book a regular session when you are ready. Your first-booking welcome offer stays available for an eligible regular booking.</p>
+                <Link to="/book" className="nb-btn-primary mt-3 inline-flex h-11 px-5 text-sm" data-testid="trial-book-regular">Book a regular massage</Link>
+              </div>
+            )}
+          </>
+        )}
+      >
+        <CompletionHero
+          mark={<SuccessMark size={44} />}
+          title={<>Request <span className="font-display font-normal italic nb-gradient-text">received</span></>}
+          subtitle={(
+            <>
+              Reference <b data-testid="booking-ref">{live.ref}</b>
+              {" · "}
+              {idx.services[live.serviceSlug]?.name || live.serviceSlug}, {live.duration} min
+              {" · "}
+              {fmtDate(live.date)} at {fmtTime(live.time)}
+            </>
+          )}
+        >
+          {trialVisit && <p className="mt-1.5 text-sm text-nb-teal" data-testid="confirmation-trial">10 Minutes. On Us. — free neck-and-shoulder trial. No payment due.</p>}
+          {(live.status === "requested" || !live.practitionerId) && (
+            <p className="mt-1.5 text-sm" data-testid="booking-unassigned">Booking request — a practitioner has not been assigned yet.</p>
+          )}
+        </CompletionHero>
+        <div className="nb-card mt-3 p-3 text-left sm:mt-4 sm:p-4" data-testid="booking-confirmation-summary">
+          <ClientTracker appt={live} compact />
+          <div className="mt-3">
+            <Breakdown q={live.pricing} settlement={live.paymentDue} compact />
+          </div>
+          {live.pricing?.welcomeOffer && (
+            <p className="mt-2 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>
+          )}
         </div>
-      </div>
+      </CompletionScreen>
     );
   }
 

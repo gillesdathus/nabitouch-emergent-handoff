@@ -95,6 +95,13 @@ export function DemoProvider({ children }) {
     return { services: by('services', 'slug'), clients: by('clients'), practitioners: by('practitioners'), soap: by('soap', 'appointmentId'), settings: state.settings[0] };
   }, [state]);
 
+  const patchDraft = useCallback((p) => {
+    setDraft((d) => ({ ...d, ...(typeof p === "function" ? p(d) : p) }));
+  }, []);
+  const resetDraft = useCallback(() => {
+    clearStoredBookingDraft();
+    setDraft(emptyDraft());
+  }, []);
   const value = {
     ...auth,
     setUser,
@@ -103,8 +110,8 @@ export function DemoProvider({ children }) {
     clientId, setClientId, practitionerId, setPractitionerId, ownerMode, setOwnerMode,
     me: idx && clientId ? idx.clients[clientId] : null,
     draft, setDraft,
-    patchDraft: (p) => setDraft((d) => ({ ...d, ...p })),
-    resetDraft: () => { clearStoredBookingDraft(); setDraft(emptyDraft()); },
+    patchDraft,
+    resetDraft,
     resetDemo: () => run(async () => { await api.reset(); clearStoredBookingDraft(); setDraft(emptyDraft()); }, 'Demo data reset'),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
