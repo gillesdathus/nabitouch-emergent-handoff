@@ -120,6 +120,39 @@ test("coverage check can succeed while confirm still surfaces storage configurat
   view.cleanup();
 });
 
+test("GPS permission denied shows recovery copy and keeps the street field", async () => {
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    geolocation: {
+      getCurrentPosition: (_ok, err) => err({ code: 1, message: "denied" }),
+    },
+  });
+  const view = mount(<Harness />);
+  await act(async () => { view.host.querySelector("[data-testid=address-geolocate-btn]").click(); });
+  expect((await view.find("address-error")).textContent).toMatch(/couldn't read your location/i);
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-confirm-card]")).toBeNull();
+  view.cleanup();
+  vi.unstubAllGlobals();
+});
+
+test("Change address from confirmation card restores the search field", async () => {
+  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
+  api.geoCheck.mockResolvedValue({
+    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
+    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "local-downtown",
+  });
+  const view = mount(<Harness />);
+  await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
+  const option = await view.find("address-option-0");
+  await act(async () => { option.click(); });
+  expect(await view.find("address-confirm-card")).toBeTruthy();
+  await act(async () => { (await view.find("address-change")).click(); });
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-confirm-card]")).toBeNull();
+  view.cleanup();
+});
+
 test("GPS coverage uses geoCheck with coordinates only", async () => {
   const position = { coords: { latitude: 53.54, longitude: -113.49 } };
   vi.stubGlobal("navigator", {
