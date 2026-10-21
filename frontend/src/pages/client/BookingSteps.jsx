@@ -67,13 +67,13 @@ export function StepWhere() {
         <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
         <div className={`${addressFocus ? "mt-0" : "mt-6"} space-y-4`}>
-          {me?.addresses?.length > 0 && (
-            <div className="space-y-2">
+          {me?.addresses?.length > 0 && !addressFocus && (
+            <div className="space-y-2" data-testid="step-where-saved-addresses">
               <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
                 <button key={a.id} type="button" onClick={() => selectSaved(a)} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
               </div>
               <button type="button" onClick={useDifferentAddress} data-testid="step-where-different-address" className="text-xs font-semibold text-nb-blue underline-offset-2 hover:underline">Different address</button>
-              {!addressFocus && <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>}
+              <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>
             </div>
           )}
           <AddressPicker
@@ -83,7 +83,10 @@ export function StepWhere() {
             value={draft.address}
             notes={draft.addressNotes}
             onNotes={(v) => patchDraft({ addressNotes: v })}
-            onAdvance={() => patchDraft({ step: BOOKING_STEP.SERVICE, forceWhere: false })}
+            onAdvance={() => patchDraft({
+              step: draft.serviceSlug ? BOOKING_STEP.DURATION : BOOKING_STEP.SERVICE,
+              forceWhere: false,
+            })}
             onChange={(a) => patchDraft(a
               ? addressSelectionPatch(a, { query: a.line, forceWhere: true })
               : addressSelectionPatch(null, { forceWhere: true, preserveQuery: true }))}
@@ -203,6 +206,12 @@ export function StepWhen() {
         setSlots([]);
         setRecommended([]);
         setNote("Confirm the service address to see times that fit the route.");
+        return;
+      }
+      if (draft.locationType !== "clinic" && draft.address?.detailsSettled !== true) {
+        setSlots([]);
+        setRecommended([]);
+        setNote("Finish address details (suite or access) before choosing a time.");
         return;
       }
       try {

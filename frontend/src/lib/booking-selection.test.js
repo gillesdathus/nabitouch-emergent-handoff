@@ -4,6 +4,7 @@ import {
   BOOKING_STEP,
   addressReady,
   addressSelectionPatch,
+  bookingAddressComplete,
   bookingPathForService,
   canJumpBookingStep,
   clearStoredBookingDraft,
@@ -135,6 +136,13 @@ test("addressReady requires confirmed civic coordinates", () => {
   expect(addressReady(null)).toBe(false);
 });
 
+test("bookingAddressComplete requires detailsSettled for this booking", () => {
+  expect(bookingAddressComplete(homeReady)).toBe(false);
+  expect(bookingAddressComplete({ ...homeReady, detailsSettled: true })).toBe(true);
+  expect(bookingAddressComplete({ ...homeReady, detailsSettled: false })).toBe(false);
+  expect(bookingAddressComplete(officeStale)).toBe(false);
+});
+
 test("preferredBookingAddress prefers a confirmed row over an unconfirmed primary", () => {
   expect(preferredBookingAddress({ addresses: [officeStale, homeReady] })).toBe(homeReady);
   expect(preferredBookingAddress({ addresses: [officeStale] })).toBe(officeStale);
@@ -155,8 +163,9 @@ test("addressSelectionPatch clears travel-dependent slot picks without touching 
   expect(keepQuery.addressQuery).toBeUndefined();
 });
 
-test("rebookStepForAddress lands on When only when the address is ready", () => {
-  expect(rebookStepForAddress(homeReady)).toBe(BOOKING_STEP.WHEN);
+test("rebookStepForAddress lands on When only when civic + details are complete", () => {
+  expect(rebookStepForAddress(homeReady)).toBe(BOOKING_STEP.WHERE);
+  expect(rebookStepForAddress({ ...homeReady, detailsSettled: true })).toBe(BOOKING_STEP.WHEN);
   expect(rebookStepForAddress(officeStale)).toBe(BOOKING_STEP.WHERE);
   expect(rebookStepForAddress(null)).toBe(BOOKING_STEP.WHERE);
   expect(rebookStepForAddress(null, { locationType: "clinic" })).toBe(BOOKING_STEP.WHEN);

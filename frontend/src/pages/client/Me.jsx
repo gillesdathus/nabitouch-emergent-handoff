@@ -18,7 +18,7 @@ import { Avatar, CatalogueImage, ClientTracker, PayPill, StatusPill, SectionHead
 import { Breathing } from "@/components/brand";
 import { useDemo } from "@/store/DemoStore";
 import { OPEN, DONE, money, fmtDate, fmtTime, promoEligibility } from "@/lib/domain";
-import { preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
+import { BOOKING_STEP, preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
 import { homeFor, spacesOf } from "@/lib/workspaces";
 
 const greet = () => { const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Edmonton", hour: "numeric", hourCycle: "h23" }).format(new Date())); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
@@ -186,7 +186,11 @@ export default function Me() {
     const prices = Object.keys(service.prices || {});
     const duration = a?.duration || Number(prices.includes("60") ? 60 : prices[0]);
     const locationType = a?.locationType || "home";
-    const address = preferredBookingAddress(me);
+    const preferred = preferredBookingAddress(me);
+    // Re-ask optional suite/buzzer/notes for this booking even when the civic address is saved.
+    const address = preferred
+      ? { ...preferred, detailsSettled: false }
+      : null;
     const step = rebookStepForAddress(address, { locationType });
     patchDraft({
       serviceId: service.id || null,
@@ -194,10 +198,10 @@ export default function Me() {
       duration,
       practitionerId: a?.practitionerId || me.preferredPractitioners?.[0] || "",
       locationType,
-      address: address || null,
+      address,
       addressQuery: address?.line || "",
       step,
-      forceWhere: step === 0,
+      forceWhere: step === BOOKING_STEP.WHERE || step === 0,
       date: null,
       time: null,
       checkoutSessionId: null,

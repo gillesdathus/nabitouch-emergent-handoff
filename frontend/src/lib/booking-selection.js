@@ -175,6 +175,11 @@ export function addressReady(addr) {
   );
 }
 
+/** Civic address plus per-booking details (suite/buzzer No/Yes) settled. */
+export function bookingAddressComplete(addr) {
+  return addressReady(addr) && addr?.detailsSettled === true;
+}
+
 /** Prefer a confirmed saved address; otherwise the primary (first) row. */
 export function preferredBookingAddress(me) {
   const list = me?.addresses;
@@ -200,10 +205,13 @@ export function addressSelectionPatch(address, { query, forceWhere, preserveQuer
   return patch;
 }
 
-/** Rebook lands on When only when the address is already confirmed. */
+/**
+ * Rebook lands on When only when civic + details are complete for this booking.
+ * Confirmed saved addresses without detailsSettled return to Where (details ask).
+ */
 export function rebookStepForAddress(address, { locationType } = {}) {
   if (locationType === "clinic") return BOOKING_STEP.WHEN;
-  return addressReady(address) ? BOOKING_STEP.WHEN : BOOKING_STEP.WHERE;
+  return bookingAddressComplete(address) ? BOOKING_STEP.WHEN : BOOKING_STEP.WHERE;
 }
 
 /** Confirm a saved address via /geo/confirm without adding it to the profile. */

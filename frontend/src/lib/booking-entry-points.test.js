@@ -39,7 +39,8 @@ describe("shared booking entry paths", () => {
       lat: 53.5,
       lng: -113.5,
     };
-    expect(rebookStepForAddress(ready)).toBe(BOOKING_STEP.WHEN);
+    expect(rebookStepForAddress(ready)).toBe(BOOKING_STEP.WHERE);
+    expect(rebookStepForAddress({ ...ready, detailsSettled: true })).toBe(BOOKING_STEP.WHEN);
     expect(rebookStepForAddress(null)).toBe(BOOKING_STEP.WHERE);
     expect(rebookStepForAddress(null, { locationType: "clinic" })).toBe(BOOKING_STEP.WHEN);
   });

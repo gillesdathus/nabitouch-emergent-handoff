@@ -25,16 +25,18 @@ async function shot(page, name) {
   return file;
 }
 
-async function run(viewport, label) {
+async function run(viewport, label, { detailsPath = "yes" } = {}) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport, locale: "en-CA", hasTouch: true, isMobile: viewport.width < 768 });
   const page = await context.newPage();
-  const result = { label, viewport, shots: [], checks: [] };
+  const result = { label, viewport, detailsPath, shots: [], checks: [] };
   try {
+    await page.evaluate(() => { try { localStorage.removeItem("nt_booking_draft_v1"); } catch { /* ignore */ } }).catch(() => {});
+    await page.goto(`${BASE}/book`, { waitUntil: "networkidle", timeout: 60000 });
+    await page.evaluate(() => { try { localStorage.removeItem("nt_booking_draft_v1"); } catch { /* ignore */ } });
     await page.goto(`${BASE}/book`, { waitUntil: "networkidle", timeout: 60000 });
     await page.getByTestId("booking-regular-flow").waitFor({ state: "visible", timeout: 20000 });
     await page.getByTestId("step-where-home").click();
-    await page.getByTestId("booking-next-btn").click().catch(() => {});
 
     // Find
     await page.getByTestId("step-where-address-find").waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
@@ -65,21 +67,27 @@ async function run(viewport, label) {
     await page.getByTestId("step-where-address-details-ask").waitFor({ state: "visible", timeout: 20000 });
     result.shots.push(await shot(page, `${label}-03-details-ask`));
 
-    await page.getByTestId("step-where-address-details-yes").click();
-    await page.getByTestId("step-where-address-details-form").waitFor({ state: "visible", timeout: 10000 });
-    result.shots.push(await shot(page, `${label}-04-details-form`));
+    if (detailsPath === "no") {
+      await page.getByTestId("step-where-address-details-no").click();
+      await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
+      result.shots.push(await shot(page, `${label}-04-service-via-no`));
+    } else {
+      await page.getByTestId("step-where-address-details-yes").click();
+      await page.getByTestId("step-where-address-details-form").waitFor({ state: "visible", timeout: 10000 });
+      result.shots.push(await shot(page, `${label}-04-details-form`));
 
-    const continueBox = await page.getByTestId("step-where-address-details-continue").boundingBox();
-    if (!continueBox || continueBox.bottom > viewport.height + 1) {
-      result.checks.push(`details Continue out of viewport bottom=${continueBox?.bottom}`);
+      const continueBox = await page.getByTestId("step-where-address-details-continue").boundingBox();
+      if (!continueBox || continueBox.bottom > viewport.height + 1) {
+        result.checks.push(`details Continue out of viewport bottom=${continueBox?.bottom}`);
+      }
+
+      await typeReact(page, "step-where-address-unit-input", "4");
+      await typeReact(page, "step-where-address-access-input", "Buzz 12");
+      await typeReact(page, "step-where-address-notes-input", "Visitor parking");
+      await page.getByTestId("step-where-address-details-continue").click();
+      await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
+      result.shots.push(await shot(page, `${label}-05-service`));
     }
-
-    await typeReact(page, "step-where-address-unit-input", "4");
-    await typeReact(page, "step-where-address-access-input", "Buzz 12");
-    await typeReact(page, "step-where-address-notes-input", "Visitor parking");
-    await page.getByTestId("step-where-address-details-continue").click();
-    await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
-    result.shots.push(await shot(page, `${label}-05-service`));
 
   } catch (err) {
     result.checks.push(String(err && err.message || err));
@@ -93,10 +101,10 @@ async function run(viewport, label) {
 async function main() {
   const report = { ok: [], fail: [], startedAt: new Date().toISOString(), baseUrl: BASE };
   for (const vp of [
-    { label: "addr-375x667", viewport: { width: 375, height: 667 } },
-    { label: "addr-390x844", viewport: { width: 390, height: 844 } },
+    { label: "addr-375x667-yes", viewport: { width: 375, height: 667 }, detailsPath: "yes" },
+    { label: "addr-390x844-no", viewport: { width: 390, height: 844 }, detailsPath: "no" },
   ]) {
-    const row = await run(vp.viewport, vp.label);
+    const row = await run(vp.viewport, vp.label, { detailsPath: vp.detailsPath });
     if (row.checks.length) report.fail.push(row);
     else report.ok.push(row);
   }

@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useDemo } from "@/store/DemoStore";
 import { api, apiError } from "@/lib/api";
 import { DONE, fmtDate, fmtTime, isClinicVisit, isMobileTrackable, money, trackVisitView, visitNavigationPoint } from "@/lib/domain";
-import { preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
+import { BOOKING_STEP, preferredBookingAddress, rebookStepForAddress } from "@/lib/booking-selection";
 import { shouldShowPosition, useLiveSession } from "@/lib/tracking/live";
 import { ClientArrivalCode, TrackVisitVehicle } from "@/components/ArrivalCodePanel";
 import { restrictedFlag } from "@/lib/feature-flags";
@@ -179,7 +179,10 @@ export default function TrackVisit() {
     const prices = Object.keys(svc.prices || {});
     const duration = appt.duration || Number(prices.includes("60") ? 60 : prices[0]);
     const locationType = appt.locationType || "home";
-    const address = preferredBookingAddress(me);
+    const preferred = preferredBookingAddress(me);
+    const address = preferred
+      ? { ...preferred, detailsSettled: false }
+      : null;
     const step = rebookStepForAddress(address, { locationType });
     patchDraft({
       serviceId: svc.id || null,
@@ -187,10 +190,10 @@ export default function TrackVisit() {
       duration,
       practitionerId: appt.practitionerId || me.preferredPractitioners?.[0] || "",
       locationType,
-      address: address || null,
+      address,
       addressQuery: address?.line || "",
       step,
-      forceWhere: step === 0,
+      forceWhere: step === BOOKING_STEP.WHERE || step === 0,
       date: null,
       time: null,
       checkoutSessionId: null,

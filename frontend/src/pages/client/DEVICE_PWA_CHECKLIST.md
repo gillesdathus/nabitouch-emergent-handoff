@@ -18,8 +18,8 @@ Use this checklist on Android and iOS **installed** PWAs (not desktop responsive
 3. [ ] Suggestions appear and are tappable above sticky Continue
 4. [ ] Selecting a suggestion hides the full search form
 5. [ ] Confirmation card shows street + locality
-6. [ ] Suite / apartment optional
-7. [ ] Buzzer / access optional
+6. [ ] After Confirm: details No → continue (no suite/buzzer)
+7. [ ] After Confirm: details Yes → suite / buzzer / notes optional, then Continue
 8. [ ] Confirm Address → details No/Yes → Continue advances without redundant postal fields
 9. [ ] Change address restores search
 10. [ ] Use My Location → grant → card appears
