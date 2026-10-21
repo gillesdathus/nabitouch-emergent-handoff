@@ -185,12 +185,14 @@ test("new client without saved addresses does not auto-skip Where", async () => 
 });
 
 test("Different address clears draft address without a profile PATCH", () => {
+  // Saved chips only show before an address is focused (progressive Where).
   h.me.addresses = [h.home, h.office];
-  h.draft.address = h.home;
+  h.draft.address = null;
   h.draft.addressQuery = h.home.line;
   h.draft.date = "2026-10-20";
   h.draft.time = "10:00";
   const view = renderWhere();
+  expect(view.host.querySelector("[data-testid='step-where-saved-addresses']")).toBeTruthy();
   const btn = view.host.querySelector("[data-testid='step-where-different-address']");
   expect(btn).toBeTruthy();
   act(() => { btn.click(); });
@@ -206,15 +208,33 @@ test("Different address clears draft address without a profile PATCH", () => {
 
 test("switching saved address chips clears date and time", () => {
   h.me.addresses = [h.home, h.office];
-  h.draft.address = h.home;
+  h.draft.address = null;
   h.draft.date = "2026-10-20";
   h.draft.time = "10:00";
   const view = renderWhere();
+  expect(view.host.querySelector("[data-testid='step-where-saved-addresses']")).toBeTruthy();
   act(() => { view.host.querySelector("[data-testid='saved-address-ad-office']").click(); });
   expect(h.patchDraft).toHaveBeenCalledWith(expect.objectContaining({
     address: expect.objectContaining({ id: "ad-office" }),
     date: null,
     time: null,
+  }));
+  view.unmount();
+});
+
+test("Change visit type clears a focused address without a profile PATCH", () => {
+  h.me.addresses = [h.home, h.office];
+  h.draft.address = h.home;
+  h.draft.addressQuery = h.home.line;
+  const view = renderWhere();
+  expect(view.host.querySelector("[data-testid='step-where-saved-addresses']")).toBeNull();
+  const btn = view.host.querySelector("[data-testid='step-where-change-location']");
+  expect(btn).toBeTruthy();
+  act(() => { btn.click(); });
+  expect(h.patchDraft).toHaveBeenCalledWith(expect.objectContaining({
+    address: null,
+    addressQuery: "",
+    forceWhere: true,
   }));
   view.unmount();
 });
