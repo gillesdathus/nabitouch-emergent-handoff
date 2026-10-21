@@ -25,7 +25,12 @@ export function showsMarketingFooter(pathname) {
   return pathname === "/" || pathname === "/services" || pathname === "/practitioners" || pathname === "/offers" || pathname === "/contact" || pathname.startsWith("/services/");
 }
 
-/** Booking wizard: hide marketing header + bottom dock so sticky CTAs own the chrome. */
+/**
+ * Focused client chrome: hide marketing header + bottom dock.
+ * Used for booking and the health-history wizard so in-flow CTAs are not competing with FloatingNav.
+ */
 export function showsFocusedBookingChrome(pathname) {
-  return pathname === "/book" || pathname.startsWith("/book/");
+  if (pathname === "/book" || pathname.startsWith("/book/")) return true;
+  if (pathname === "/me/intake" || pathname.startsWith("/me/intake/")) return true;
+  return false;
 }

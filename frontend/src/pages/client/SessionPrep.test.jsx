@@ -181,10 +181,12 @@ test("complete ready state shows confirmation, summary, and CTAs", () => {
   expect(view.host.querySelector("[data-testid='prep-appointment-summary']").textContent).toContain("Swedish Massage");
   expect(view.host.querySelector("[data-testid='prep-appointment-summary']").textContent).toContain("Maya Chen");
   expect(view.host.querySelector("[data-testid='prep-done-saved']").textContent).toContain("saved on your account");
-  expect(document.querySelector("[data-testid='prep-done-actions']")).toBeTruthy();
-  expect(document.querySelector("[data-testid='prep-done-home']").getAttribute("href")).toBe("/me");
-  expect(document.querySelector("[data-testid='prep-done-appointment']").getAttribute("href")).toBe("/me#upcoming-visit-card");
-  expect(view.host.querySelector("[data-testid='prep-done-home']")).toBeNull();
+  const actions = view.host.querySelector("[data-testid='prep-done-actions']");
+  expect(actions).toBeTruthy();
+  expect(actions.className).not.toMatch(/nb-sticky-actions/);
+  expect(document.querySelector(".nb-sticky-actions")).toBeNull();
+  expect(view.host.querySelector("[data-testid='prep-done-home']").getAttribute("href")).toBe("/me");
+  expect(view.host.querySelector("[data-testid='prep-done-appointment']").getAttribute("href")).toBe("/me#upcoming-visit-card");
   view.unmount();
 });
 

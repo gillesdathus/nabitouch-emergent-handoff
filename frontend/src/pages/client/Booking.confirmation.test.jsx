@@ -116,7 +116,7 @@ function ConfirmationFixture({ withInstall = true }) {
       footer: createElement(
         "div",
         null,
-        createElement("p", { "data-testid": "booking-settlement-note" }, "Request confirmed — no online payment collected. Cash is due at the visit."),
+        createElement("p", { "data-testid": "booking-settlement-note" }, "Booking request received — not an appointment confirmation yet. No online payment collected; cash is due at the visit."),
         withInstall ? createElement(InstallCard, { collapsible: true }) : null,
       ),
     },
@@ -157,20 +157,25 @@ beforeEach(() => {
 });
 
 describe("Booking confirmation layout", () => {
-  test("primary actions use sticky dock; install is collapsible in footer after actions", () => {
+  test("primary actions are in-flow after summary; install stays in footer", () => {
     const view = mountConfirm(createElement(ConfirmationFixture));
-    const actions = document.querySelector("[data-testid=booking-confirmation-actions]");
-    const viewVisit = document.querySelector("[data-testid=confirmation-view-visit-btn]");
-    const home = document.querySelector("[data-testid=confirmation-home-btn]");
+    const actions = view.host.querySelector("[data-testid=booking-confirmation-actions]");
+    const viewVisit = view.host.querySelector("[data-testid=confirmation-view-visit-btn]");
+    const home = view.host.querySelector("[data-testid=confirmation-home-btn]");
     const install = view.host.querySelector("[data-testid=install-prompt-card]");
     const footer = view.host.querySelector("[data-testid=booking-confirmation-footer]");
-    expect(actions.className).toMatch(/nb-sticky-actions/);
+    const summary = view.host.querySelector("[data-testid=booking-confirmation-summary]");
+    expect(actions).toBeTruthy();
+    expect(actions.className).not.toMatch(/nb-sticky-actions/);
+    expect(document.querySelector(".nb-sticky-actions")).toBeNull();
     expect(actions.contains(viewVisit)).toBe(true);
     expect(actions.contains(home)).toBe(true);
-    expect(view.host.contains(actions)).toBe(false);
+    expect(view.host.contains(actions)).toBe(true);
     expect(footer.contains(install)).toBe(true);
     expect(view.host.querySelector("[data-testid=install-card-toggle]")).toBeTruthy();
     expect(view.host.querySelector("[data-testid=booking-confirmation]").className).not.toMatch(/py-14/);
+    expect(summary.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(actions.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     view.cleanup();
   });
 
@@ -179,19 +184,20 @@ describe("Booking confirmation layout", () => {
     expect(view.host.querySelector("[data-testid=breakdown-settlement-note]").textContent).toMatch(/No payment collected online/);
     expect(view.host.querySelector("[data-testid=breakdown-settlement-note]").textContent).not.toMatch(/deposit/i);
     expect(view.host.querySelector("[data-testid=booking-settlement-note]").textContent).toMatch(/no online payment collected/i);
+    expect(view.host.querySelector("[data-testid=booking-settlement-note]").textContent).toMatch(/Booking request received/i);
     view.cleanup();
   });
 
-  test("375 and 390 viewports keep primary CTA inside sticky actions (layout contract)", () => {
+  test("375 and 390 viewports keep primary CTAs in document flow", () => {
     for (const [w, hgt] of [[375, 667], [390, 844]]) {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: w });
       Object.defineProperty(window, "innerHeight", { configurable: true, value: hgt });
       const view = mountConfirm(createElement(ConfirmationFixture));
-      const actions = document.querySelector("[data-testid=booking-confirmation-actions]");
-      const btn = document.querySelector("[data-testid=confirmation-view-visit-btn]");
+      const actions = view.host.querySelector("[data-testid=booking-confirmation-actions]");
+      const btn = view.host.querySelector("[data-testid=confirmation-view-visit-btn]");
       expect(actions).toBeTruthy();
-      expect(view.host.contains(actions)).toBe(false);
-      expect(actions.className).toMatch(/nb-sticky-actions/);
+      expect(view.host.contains(actions)).toBe(true);
+      expect(actions.className).not.toMatch(/nb-sticky-actions/);
       expect(btn).toBeTruthy();
       expect(actions.contains(btn)).toBe(true);
       view.cleanup();
