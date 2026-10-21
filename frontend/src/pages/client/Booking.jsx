@@ -11,7 +11,7 @@ import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay } from "./BookingSteps";
-import { StickyActionBar } from "@/components/StickyActionBar";
+import { bookingAddressOwnsActions, FlowStepShell } from "@/components/FlowStepShell";
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
@@ -470,11 +470,7 @@ export default function Booking() {
   };
   const goBack = () => {
     if (step <= 0) return;
-    // Prefer history when prior entries are booking steps (browser / PWA Back parity).
-    if (typeof window !== "undefined" && window.history.length > 1 && params.get("step") != null) {
-      nav(-1);
-      return;
-    }
+    // Wizard Back always decrements the booking step. Browser/PWA chrome Back still uses history.
     go(trialFlow && step === reviewStep ? BOOKING_STEP.YOU : step - 1, { replace: true });
   };
   const practitionerSummary = draft.practitionerId
@@ -507,40 +503,49 @@ export default function Booking() {
             </div>
           )}
         </div>
-        <AnimatePresence mode="wait">
-          <motion.div key={step} className="nb-step-scroll" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
-            {step < reviewStep && Body ? <Body /> : (
-              <div data-testid="step-review">
-                <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & confirm"}</h2>
-                <div className="nb-card divide-y divide-sky-100">
-                  {[[User, `${service?.name || "Treatment"} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", BOOKING_STEP.SERVICE],
-                    [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, practitionerSummary, BOOKING_STEP.WHEN],
-                    [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", BOOKING_STEP.WHERE]].map(([I, t, s, st]) => (
-                    <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button type="button" onClick={() => (st === BOOKING_STEP.WHERE ? goChangeAddress() : go(st))} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">{st === BOOKING_STEP.WHERE && draft.locationType !== "clinic" ? "Change address" : "Edit"}</button></div>))}
-                  {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
-                  {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
-                  {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
-                  <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
-                  {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
-                  {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
-                  <div className="p-5 text-xs text-nb-mute" data-testid="review-payment-choice">Payment choice: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online. The credit covers this visit" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></div>
-                </div>
-              </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
-        {/* Address confirm/details phases own their CTAs — hide the shell Continue so it cannot cover them. */}
-        {!(step === BOOKING_STEP.WHERE && draft.locationType !== "clinic" && draft.address?.line && draft.address?.detailsSettled !== true) && (
-          <StickyActionBar testid="booking-sticky-actions" liftAt="md">
+        <FlowStepShell
+          testid="booking-flow-shell"
+          actionsTestid="booking-sticky-actions"
+          scrollBody={false}
+          hideActions={bookingAddressOwnsActions(draft, step)}
+          actions={(
             <div className="flex gap-3">
               {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
               {step < reviewStep ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
                 : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>}
             </div>
-            {whereBlockedReason && step === 0 && !ok[0] && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>}
-            {!ok[step] && step > 0 && step < reviewStep && <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>}
-          </StickyActionBar>
-        )}
+          )}
+          hint={
+            (whereBlockedReason && step === 0 && !ok[0])
+              ? <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>
+              : (!ok[step] && step > 0 && step < reviewStep)
+                ? <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>
+                : null
+          }
+        >
+          <AnimatePresence mode="wait">
+            <motion.div key={step} className="nb-step-scroll" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
+              {step < reviewStep && Body ? <Body /> : (
+                <div data-testid="step-review">
+                  <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & confirm"}</h2>
+                  <div className="nb-card divide-y divide-sky-100">
+                    {[[User, `${service?.name || "Treatment"} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", BOOKING_STEP.SERVICE],
+                      [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, practitionerSummary, BOOKING_STEP.WHEN],
+                      [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", BOOKING_STEP.WHERE]].map(([I, t, s, st]) => (
+                      <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button type="button" onClick={() => (st === BOOKING_STEP.WHERE ? goChangeAddress() : go(st))} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">{st === BOOKING_STEP.WHERE && draft.locationType !== "clinic" ? "Change address" : "Edit"}</button></div>))}
+                    {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
+                    {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
+                    {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
+                    <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
+                    {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
+                    {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
+                    <div className="p-5 text-xs text-nb-mute" data-testid="review-payment-choice">Payment choice: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online. The credit covers this visit" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></div>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </FlowStepShell>
       </div>
       <aside className="hidden lg:block">
         <div className="sticky top-32 space-y-4">
