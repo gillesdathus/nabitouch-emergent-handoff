@@ -28,8 +28,8 @@ Use this checklist on Android and iOS **installed** PWAs (not desktop responsive
 13. [ ] Sticky actions clear the bottom dock + home indicator
 
 ## Booking navigation
-14. [ ] Service → Duration auto-advance
-15. [ ] Duration → When auto-advance
+14. [ ] Service → Duration via Continue (no auto-advance / no sticky CTA)
+15. [ ] Duration → When via Continue (no auto-advance / no sticky CTA)
 16. [ ] System Back unwinds steps without leaving `/book` early
 17. [ ] Clinic path skips home address entry
 

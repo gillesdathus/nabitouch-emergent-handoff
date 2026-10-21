@@ -100,6 +100,30 @@
   .safe-top { padding-top: max(env(safe-area-inset-top), 0px); }
   .staff-main-pad { padding-bottom: var(--nb-bottom-clear); }
   .nb-main-clear { padding-bottom: var(--nb-bottom-clear); }
+  /* Booking wizard: no marketing header / bottom dock — CTAs clear safe-area + keyboard only. */
+  .nb-booking-focus {
+    --nb-nav-h: 0px;
+    --nb-dock-offset: var(--nb-safe-b);
+    --nb-sticky-bottom: max(var(--nb-dock-offset), var(--nb-keyboard-inset));
+    --nb-bottom-clear: calc(var(--nb-safe-b) + 1.25rem);
+    --nb-toast-offset: calc(var(--nb-safe-b) + 0.75rem);
+  }
+  .nb-main-clear-booking {
+    padding-bottom: calc(var(--nb-safe-b) + 1.25rem);
+  }
+  .nb-booking-compact-header {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+    margin-top: -0.5rem;
+    padding: calc(0.5rem + var(--nb-safe-t)) 1.25rem 0.75rem;
+    border-bottom: 1px solid rgb(224 242 254);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
   .nb-dock { height: calc(var(--nb-nav-h) + var(--nb-safe-b)); padding-bottom: var(--nb-safe-b); }
   /*
    * Shared primary-action dock (Booking, Visit, SOAP, …).

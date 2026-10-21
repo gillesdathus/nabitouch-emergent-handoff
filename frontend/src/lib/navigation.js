@@ -24,3 +24,8 @@ export function publicNavHasRoleButtons() {
 export function showsMarketingFooter(pathname) {
   return pathname === "/" || pathname === "/services" || pathname === "/practitioners" || pathname === "/offers" || pathname === "/contact" || pathname.startsWith("/services/");
 }
+
+/** Booking wizard: hide marketing header + bottom dock so sticky CTAs own the chrome. */
+export function showsFocusedBookingChrome(pathname) {
+  return pathname === "/book" || pathname.startsWith("/book/");
+}

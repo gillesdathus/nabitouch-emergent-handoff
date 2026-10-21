@@ -141,23 +141,24 @@ beforeEach(() => {
 });
 
 describe("Automatic navigation", () => {
-  test("service selection opens Duration", () => {
+  test("service selection updates draft without auto-advancing", () => {
     const view = mount(createElement(StepService));
     act(() => { view.host.querySelector("[data-testid=step-service-swedish]").click(); });
-    expect(h.patchDraft.mock.calls.at(-1)[0].step).toBe(BOOKING_STEP.DURATION);
+    expect(h.patchDraft.mock.calls.at(-1)[0].serviceSlug).toBe("swedish");
+    expect(h.patchDraft.mock.calls.at(-1)[0].step).toBeUndefined();
     expect(view.host.querySelector("[data-testid=step-duration-60]")).toBeNull();
     view.cleanup();
   });
 
-  test("duration selection advances to When and keeps service", () => {
+  test("duration selection updates draft without auto-advancing", () => {
     h.draft.serviceSlug = "swedish";
     h.draft.step = BOOKING_STEP.DURATION;
     const view = mount(createElement(StepDuration));
     act(() => { view.host.querySelector("[data-testid=step-duration-90]").click(); });
     expect(h.patchDraft.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
       duration: 90,
-      step: BOOKING_STEP.WHEN,
     }));
+    expect(h.patchDraft.mock.calls.at(-1)[0].step).toBeUndefined();
     expect(h.draft.serviceSlug).toBe("swedish");
     view.cleanup();
   });
@@ -171,7 +172,7 @@ describe("Automatic navigation", () => {
 
   test("payment cannot be bypassed via step jump helper", () => {
     const ok = [true, true, true, true, true, false];
-    expect(canJumpBookingStep(BOOKING_STEP.YOU, BOOKING_STEP.REVIEW, ok)).toBe(false);
+    expect(canJumpBookingStep(BOOKING_STEP.DETAILS, BOOKING_STEP.REVIEW, ok)).toBe(false);
   });
 });
 

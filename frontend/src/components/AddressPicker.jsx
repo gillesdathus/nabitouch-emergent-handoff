@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { Crosshair, Loader2, MapPin, CheckCircle2, AlertCircle, Pencil } from "lucide-react";
 import { money } from "@/lib/domain";
 import { api, apiError } from "@/lib/api";
-import { StickyActionBar } from "@/components/StickyActionBar";
 
 function formatCardLines(value) {
   const line = String(value?.line || "");
@@ -353,7 +352,7 @@ export function AddressPicker({
               onChange={(e) => setLocalNotes(e.target.value)}
             />
           </label>
-          <StickyActionBar testid={`${testid}-details-actions`} liftAt="md" stacked>
+          <div className="flex w-full flex-col gap-2 pt-1" data-testid={`${testid}-details-actions`}>
             <button
               type="button"
               onClick={() => settleDetails({ withDetails: true })}
@@ -362,7 +361,7 @@ export function AddressPicker({
             >
               Continue
             </button>
-          </StickyActionBar>
+          </div>
         </div>
       );
     }
@@ -383,26 +382,24 @@ export function AddressPicker({
           <button type="button" onClick={startEdit} data-testid={`${testid}-change`} className="text-sm font-semibold text-nb-blue">
             Change address
           </button>
-          <StickyActionBar testid={`${testid}-details-actions`} liftAt="md" stacked>
-            <div className="flex w-full flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => settleDetails({ withDetails: false })}
-                data-testid={`${testid}-details-no`}
-                className="nb-btn-primary h-12 w-full"
-              >
-                No — Continue
-              </button>
-              <button
-                type="button"
-                onClick={() => setDetailsOpen(true)}
-                data-testid={`${testid}-details-yes`}
-                className="nb-btn-ghost h-12 w-full"
-              >
-                Yes — Add Details
-              </button>
-            </div>
-          </StickyActionBar>
+          <div className="flex w-full flex-col gap-2 pt-1" data-testid={`${testid}-details-actions`}>
+            <button
+              type="button"
+              onClick={() => settleDetails({ withDetails: false })}
+              data-testid={`${testid}-details-no`}
+              className="nb-btn-primary h-12 w-full"
+            >
+              No — Continue
+            </button>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(true)}
+              data-testid={`${testid}-details-yes`}
+              className="nb-btn-ghost h-12 w-full"
+            >
+              Yes — Add Details
+            </button>
+          </div>
         </div>
       );
     }
@@ -460,17 +457,15 @@ export function AddressPicker({
         )}
         {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
         {verdict && <ZoneResult res={verdict} testid={testid} />}
-        <StickyActionBar testid={`${testid}-confirm-actions`} liftAt="md" stacked>
-          <div className="flex w-full flex-col gap-2 sm:flex-row">
-            <button type="button" onClick={confirmServiceAddress} disabled={checking || needsPostal} data-testid={`${testid}-confirm`} className="nb-btn-primary h-12 flex-1">
-              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Confirm Address
-            </button>
-            <button type="button" onClick={startEdit} data-testid={`${testid}-change`} className="nb-btn-ghost h-12 flex-1">
-              <Pencil className="h-3.5 w-3.5" /> Change Address
-            </button>
-          </div>
-        </StickyActionBar>
+        <div className="flex w-full flex-col gap-2 pt-1 sm:flex-row" data-testid={`${testid}-confirm-actions`}>
+          <button type="button" onClick={confirmServiceAddress} disabled={checking || needsPostal} data-testid={`${testid}-confirm`} className="nb-btn-primary h-12 flex-1">
+            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Confirm Address
+          </button>
+          <button type="button" onClick={startEdit} data-testid={`${testid}-change`} className="nb-btn-ghost h-12 flex-1">
+            <Pencil className="h-3.5 w-3.5" /> Change Address
+          </button>
+        </div>
       </div>
     );
   }

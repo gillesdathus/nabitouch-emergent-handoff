@@ -97,18 +97,18 @@ beforeEach(() => {
   });
 });
 
-test("selecting a service advances to the Duration step without showing durations inline", () => {
+test("selecting a service updates the draft without auto-advancing", () => {
   const view = mount(createElement(StepService));
   expect(view.host.querySelector("[data-testid='step-duration-60']")).toBeNull();
   act(() => { view.host.querySelector("[data-testid='step-service-swedish']").click(); });
   expect(h.patchDraft).toHaveBeenCalled();
   const patch = h.patchDraft.mock.calls.at(-1)[0];
   expect(patch.serviceSlug).toBe("swedish");
-  expect(patch.step).toBe(BOOKING_STEP.DURATION);
+  expect(patch.step).toBeUndefined();
   view.cleanup();
 });
 
-test("selecting a duration advances to When and preserves the selected service", () => {
+test("selecting a duration updates the draft without auto-advancing", () => {
   h.draft.serviceSlug = "swedish";
   h.draft.step = BOOKING_STEP.DURATION;
   const view = mount(createElement(StepDuration));
@@ -119,13 +119,13 @@ test("selecting a duration advances to When and preserves the selected service",
   act(() => { view.host.querySelector("[data-testid='step-duration-90']").click(); });
   const patch = h.patchDraft.mock.calls.at(-1)[0];
   expect(patch.duration).toBe(90);
-  expect(patch.step).toBe(BOOKING_STEP.WHEN);
+  expect(patch.step).toBeUndefined();
   expect(h.draft.serviceSlug).toBe("swedish");
   expect(h.draft.addons).toContain("hot-stones");
   view.cleanup();
 });
 
-test("selecting a time advances to You", async () => {
+test("selecting a time updates the draft without auto-advancing", async () => {
   h.draft.serviceSlug = "swedish";
   h.draft.step = BOOKING_STEP.WHEN;
   h.draft.date = todayISO();
@@ -151,8 +151,8 @@ test("selecting a time advances to You", async () => {
   act(() => { timeBtn.click(); });
   expect(h.patchDraft.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
     time: "10:00",
-    step: BOOKING_STEP.YOU,
   }));
+  expect(h.patchDraft.mock.calls.at(-1)[0].step).toBeUndefined();
   view.cleanup();
 });
 
@@ -177,14 +177,14 @@ test("Back from Duration keeps the previously selected service in the draft", ()
   view.cleanup();
 });
 
-test("selecting a payment choice advances to Review", () => {
+test("selecting a payment choice updates payNow without leaving the step", () => {
   h.draft.serviceSlug = "swedish";
-  h.draft.step = BOOKING_STEP.PAYMENT;
+  h.draft.step = BOOKING_STEP.REVIEW;
   const view = mount(createElement(StepPay));
   act(() => { view.host.querySelector("[data-testid='step-pay-cash']").click(); });
   expect(h.patchDraft.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
     payNow: "cash",
-    step: BOOKING_STEP.REVIEW,
   }));
+  expect(h.patchDraft.mock.calls.at(-1)[0].step).toBeUndefined();
   view.cleanup();
 });

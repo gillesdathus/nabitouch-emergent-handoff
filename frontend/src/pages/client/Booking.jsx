@@ -10,8 +10,7 @@ import { PromoBanner } from "@/components/client";
 import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 import { useDemo } from "@/store/DemoStore";
-import { StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay } from "./BookingSteps";
-import { bookingAddressOwnsActions, bookingShellShowContinue, FlowStepShell } from "@/components/FlowStepShell";
+import { StepWhere, StepService, StepDuration, StepWhen, StepPreferences, StepDetails, StepPay } from "./BookingSteps";
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
@@ -21,6 +20,8 @@ import {
   BOOKING_STEP,
   bookingFlowLabels,
   bookingReviewStep,
+  bookingStepFromVisualIndex,
+  bookingVisualStepIndex,
   canJumpBookingStep,
   confirmAddressForBooking,
   isLockedBookingAppointment,
@@ -41,6 +42,44 @@ function settlementNote(settlement) {
   if (cashLike) return "No payment collected online. Cash is due at the visit — this booking is not prepaid.";
   if (due > 0 && due < total) return "Deposit due online now. Remaining balance is collected later and is not paid yet.";
   return "Full total due online. It is paid only after Stripe verifies the payment.";
+}
+
+/** Clear Continue-disabled copy for the You step (guest contact / optional profile). */
+export function youContinueHint({ me, guest, trialFlow }) {
+  const g = guest || {};
+  const missing = [];
+  if (!me) {
+    if (!String(g.firstName || "").trim()) missing.push("first name");
+    if (!String(g.lastName || "").trim()) missing.push("last name");
+    if (!/\S+@\S+/.test(String(g.email || ""))) missing.push("email");
+    if (!String(g.phone || "").trim()) missing.push("phone");
+  }
+  if (trialFlow) {
+    if (!(me?.dob || g.dob)) missing.push("date of birth");
+    if (!["yes", "no", "unsure"].includes(g.insuranceStatus)) missing.push("insurance answer");
+  } else if (!me && g.createProfile) {
+    if ((g.password || "").length < 8) missing.push("password (8+ characters)");
+    if (!g.dob) missing.push("birthday for your profile");
+  }
+  if (!missing.length) return "";
+  return `Still needed: ${missing.join(", ")}.`;
+}
+
+function useKeepFocusedFieldVisible() {
+  useEffect(() => {
+    const onFocusIn = (event) => {
+      const el = event.target;
+      if (!(el instanceof HTMLElement)) return;
+      if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      window.setTimeout(() => {
+        try {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+        } catch { /* ignore */ }
+      }, 120);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
 }
 
 function Breakdown({ q, compact, settlement }) {
@@ -68,6 +107,7 @@ export default function Booking() {
   const { draft, patchDraft, state, idx, me, run, api, resetDraft, register } = useDemo();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
+  useKeepFocusedFieldVisible();
   const [done, setDone] = useState(null);
   const [guestTrack, setGuestTrack] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -75,6 +115,7 @@ export default function Booking() {
   const [settlement, setSettlement] = useState(null);
   const [quoteNote, setQuoteNote] = useState("");
   const [wallet, setWallet] = useState([]);
+  const [fieldErrors, setFieldErrors] = useState({});
   const autoAddressKey = useRef("");
   const lastUrlStep = useRef(null);
   useEffect(() => { if (me) api.plansMine().then((r) => setWallet(r.wallet || [])).catch(() => setWallet([])); }, [me, api]);
@@ -210,6 +251,14 @@ export default function Booking() {
     if (next !== draft.locationType) patchDraft({ locationType: next });
   }, [idx?.settings, draft.locationType, draft.campaignId, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Trial skips Preferences — bounce any deep-link / restore onto Details.
+  useEffect(() => {
+    const trialDraft = Boolean(draft.campaignId && isTrialService(service));
+    if (trialDraft && Number(draft.step) === BOOKING_STEP.PREFERENCES) {
+      patchDraft({ step: BOOKING_STEP.DETAILS });
+    }
+  }, [draft.campaignId, draft.step, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const zr = draft.locationType !== "clinic" && draft.address ? zoneFor(draft.address, state.zones) : null;
   const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx?.settings, locationType: draft.locationType });
   const trialFlowEarly = Boolean(draft.campaignId && isTrialService(service));
@@ -266,13 +315,13 @@ export default function Booking() {
   const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
   const guestProfileOk = trialFlowEarly || !g.createProfile || (g.dob && (g.password || "").length >= 8);
-  const youOk = me ? trialExtrasOk : (guestContactOk && trialExtrasOk && guestProfileOk);
+  const detailsOk = me ? trialExtrasOk : (guestContactOk && trialExtrasOk && guestProfileOk);
   const durationKey = String(draft.duration);
   const durationPriced = !!service && Object.prototype.hasOwnProperty.call(service.prices || {}, durationKey);
-  // Gates align 1:1 with wizard indices before Review (C3/C6).
-  const ok = trialFlow
-    ? [whereOk, !!service, durationPriced, !!draft.date && !!draft.time, youOk]
-    : [whereOk, !!service, durationPriced, !!draft.date && !!draft.time, youOk, !!paymentChoice(draft, idx.settings)];
+  const whenOk = !!draft.date && !!draft.time;
+  const payOk = trialFlow || !!paymentChoice(draft, idx.settings);
+  // Absolute gates: Preferences (index 4) always optional; Details (5) required before Review.
+  const ok = [whereOk, !!service, durationPriced, whenOk, true, detailsOk];
   const whereBlockedReason = !whereOk
     ? (draft.locationType === "clinic"
       ? (trialFlow
@@ -280,7 +329,35 @@ export default function Booking() {
         : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
       : "Confirm a service address in our Edmonton zones to continue.")
     : "";
+  const collectDetailsErrors = () => {
+    const errors = {};
+    if (!me) {
+      if (!String(g.firstName || "").trim()) errors.firstName = "Enter your first name.";
+      if (!String(g.lastName || "").trim()) errors.lastName = "Enter your last name.";
+      if (!/\S+@\S+/.test(String(g.email || ""))) errors.email = "Enter a valid email.";
+      if (!String(g.phone || "").trim()) errors.phone = "Enter your phone number.";
+      if (!trialFlowEarly && g.createProfile) {
+        if ((g.password || "").length < 8) errors.password = "Use at least 8 characters.";
+        if (!g.dob) errors.dob = "Birthday is required to create a profile.";
+      }
+    }
+    if (trialFlowEarly) {
+      if (!(me?.dob || g.dob)) errors.dob = "Date of birth is required for the trial.";
+      if (!["yes", "no", "unsure"].includes(g.insuranceStatus)) errors.insuranceStatus = "Choose an insurance answer.";
+    }
+    return errors;
+  };
+  const scrollToFirstError = (errors) => {
+    const order = ["firstName", "lastName", "email", "phone", "password", "dob", "insuranceStatus"];
+    const key = order.find((k) => errors[k]);
+    if (!key) return;
+    const testid = key === "insuranceStatus" ? "trial-insurance-status" : `guest-${key}-input`;
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-testid='${testid}']`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    });
+  };
   const go = (n, { replace = false } = {}) => {
+    setFieldErrors({});
     const review = bookingReviewStep(trialFlow);
     const clamped = Math.max(0, Math.min(Number(n) || 0, review));
     patchDraft(clamped === 0 ? { step: clamped, forceWhere: true } : { step: clamped, forceWhere: false });
@@ -290,7 +367,7 @@ export default function Booking() {
     setParams(next, { replace });
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
   };
-  // Keep draft.step ↔ ?step= in sync for browser/PWA Back and in-step auto-advances (C9).
+  // Keep draft.step ↔ ?step= in sync for browser/PWA Back (C9).
   // Coerce draft.step to a number — sessionStorage restore can yield strings, and
   // `6 === "6"` is false, which previously oscillated URL ↔ draft updates under act().
   useEffect(() => {
@@ -330,7 +407,9 @@ export default function Booking() {
     patchDraft(n === 0 ? { step: n, forceWhere: true } : { step: n, forceWhere: false });
     requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     return undefined;
-  }, [params, draft.step, patchDraft, setParams]);  const changeTreatment = () => {
+  }, [params, draft.step, patchDraft, setParams]);
+
+  const changeTreatment = () => {
     go(BOOKING_STEP.SERVICE, { replace: true });
     if (service?.id || service?.slug) {
       const next = new URLSearchParams(params);
@@ -460,95 +539,173 @@ export default function Booking() {
 
   const flowSteps = bookingFlowLabels(trialFlow);
   const reviewStep = bookingReviewStep(trialFlow);
-  const stepBodies = trialFlow
-    ? [StepWhere, StepService, StepDuration, StepWhen, StepYou]
-    : [StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay];
+  const stepBodies = {
+    [BOOKING_STEP.WHERE]: StepWhere,
+    [BOOKING_STEP.SERVICE]: StepService,
+    [BOOKING_STEP.DURATION]: StepDuration,
+    [BOOKING_STEP.WHEN]: StepWhen,
+    [BOOKING_STEP.PREFERENCES]: StepPreferences,
+    [BOOKING_STEP.DETAILS]: StepDetails,
+  };
   const Body = stepBodies[step];
   const advance = () => {
-    if (trialFlow && step === BOOKING_STEP.YOU) go(reviewStep);
-    else go(step + 1);
+    if (step === BOOKING_STEP.WHERE && !whereOk) {
+      toast.error(whereBlockedReason || "Finish this step to continue.");
+      return;
+    }
+    if (step === BOOKING_STEP.SERVICE && !service) {
+      toast.error("Choose a treatment to continue.");
+      return;
+    }
+    if (step === BOOKING_STEP.DURATION && !durationPriced) {
+      toast.error("Choose a duration to continue.");
+      return;
+    }
+    if (step === BOOKING_STEP.WHEN && !whenOk) {
+      toast.error("Choose a date and time to continue.");
+      return;
+    }
+    if (step === BOOKING_STEP.DETAILS) {
+      const errors = collectDetailsErrors();
+      if (Object.keys(errors).length) {
+        setFieldErrors(errors);
+        scrollToFirstError(errors);
+        return;
+      }
+    }
+    setFieldErrors({});
+    if (trialFlow && step === BOOKING_STEP.WHEN) go(BOOKING_STEP.DETAILS);
+    else if (step === BOOKING_STEP.DETAILS) go(reviewStep);
+    else if (step < reviewStep) go(step + 1);
   };
   const goBack = () => {
     if (step <= 0) return;
-    // Wizard Back always decrements the booking step. Browser/PWA chrome Back still uses history.
-    go(trialFlow && step === reviewStep ? BOOKING_STEP.YOU : step - 1, { replace: true });
+    if (step === reviewStep) go(BOOKING_STEP.DETAILS, { replace: true });
+    else if (trialFlow && step === BOOKING_STEP.DETAILS) go(BOOKING_STEP.WHEN, { replace: true });
+    else if (step === BOOKING_STEP.PREFERENCES && trialFlow) go(BOOKING_STEP.WHEN, { replace: true });
+    else go(step - 1, { replace: true });
   };
   const practitionerSummary = draft.practitionerId
     ? (idx.practitioners[draft.practitionerId]?.name || "Selected practitioner is unavailable — choose another or Any Available Practitioner")
     : "Request only — a practitioner is not assigned yet";
+  const stepIndex = bookingVisualStepIndex(step, trialFlow);
+  const stepLabel = flowSteps[stepIndex] || flowSteps[flowSteps.length - 1];
+  const continueHint = step === BOOKING_STEP.WHERE && !whereOk
+    ? whereBlockedReason
+    : step === BOOKING_STEP.DETAILS && !detailsOk
+      ? youContinueHint({ me, guest: g, trialFlow })
+      : step === BOOKING_STEP.REVIEW && !trialFlow && !payOk
+        ? "Choose how you want to pay."
+        : "";
+  const hideStepNav = step === BOOKING_STEP.WHERE
+    && draft.locationType !== "clinic"
+    && Boolean(draft.address?.line)
+    && draft.address?.detailsSettled !== true;
+
   return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_340px]" data-testid={trialFlow ? "booking-trial-flow" : "booking-regular-flow"}>
-      <div className="min-w-0">
-        <div className="mb-8" data-testid="booking-progress">
-          <div className="mb-3 flex items-center justify-between text-xs font-medium text-nb-mute"><span>Step {Math.min(step, reviewStep) + 1} of {flowSteps.length} · <b className="text-nb-ink">{flowSteps[Math.min(step, reviewStep)]}</b></span><span>{shown.welcomeOffer && <span className="text-nb-teal">First-booking welcome offer — confirmed when you submit</span>}{trialFlow && <span className="text-nb-teal">Free 10-minute trial · $0</span>}</span></div>
-          <Stepper steps={flowSteps} current={Math.min(step, reviewStep)} testid="booking-stepper" onStep={(index) => {
-            const target = index >= flowSteps.length - 1 ? reviewStep : index;
-            if (canJumpBookingStep(step, target, ok)) go(target);
-          }} />
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-5 pb-[calc(1.5rem+var(--nb-safe-b))] pt-2 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-8 lg:py-8" data-testid={trialFlow ? "booking-trial-flow" : "booking-regular-flow"}>
+      <div className="min-w-0" data-testid="booking-flow-shell">
+        <header className="nb-booking-compact-header mb-5 lg:mb-6" data-testid="booking-compact-header">
+          <div className="flex items-center gap-2">
+            {step > 0 ? (
+              <button type="button" onClick={goBack} data-testid="booking-header-back" className="nb-btn-ghost h-10 shrink-0 px-3 text-sm" aria-label="Back">
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden min-[380px]:inline">Back</span>
+              </button>
+            ) : (
+              <Link to="/" data-testid="booking-header-exit" className="nb-btn-ghost h-10 shrink-0 px-3 text-sm" aria-label="Exit booking">
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden min-[380px]:inline">Exit</span>
+              </Link>
+            )}
+            <div className="min-w-0 flex-1 text-center">
+              <p className="truncate text-sm font-semibold text-nb-ink" data-testid="booking-step-label">{stepLabel}</p>
+              <p className="text-[11px] font-medium text-nb-mute">Step {stepIndex + 1} of {flowSteps.length}</p>
+            </div>
+            <div className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium text-nb-mute" aria-hidden="true">
+              {trialFlow ? <span className="text-nb-teal">Trial</span> : (shown.welcomeOffer ? <span className="text-nb-teal">Offer</span> : null)}
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-sky-100" data-testid="booking-progress-bar" role="progressbar" aria-valuenow={stepIndex + 1} aria-valuemin={1} aria-valuemax={flowSteps.length}>
+            <div className="h-full rounded-full bg-nb-blue transition-[width] duration-300" style={{ width: `${((stepIndex + 1) / flowSteps.length) * 100}%` }} />
+          </div>
+          <div className="mt-3 hidden lg:block">
+            <Stepper steps={flowSteps} current={stepIndex} testid="booking-stepper" onStep={(index) => {
+              const target = bookingStepFromVisualIndex(index, trialFlow);
+              if (canJumpBookingStep(step, target, ok)) go(target);
+            }} />
+          </div>
           <div className="sr-only">{flowSteps.map((label, index) => {
-            const target = index >= flowSteps.length - 1 ? reviewStep : index;
+            const target = bookingStepFromVisualIndex(index, trialFlow);
             return (
               <button key={label} type="button" disabled={!canJumpBookingStep(step, target, ok)} onClick={() => go(target)} aria-label={`Step ${index + 1}: ${label}`} data-testid={`booking-step-indicator-${index}`}>{label}</button>
             );
           })}</div>
           {service && step !== BOOKING_STEP.SERVICE && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-100 bg-sky-50/60 px-4 py-3" data-testid="booking-selected-service">
-              <div className="min-w-0">
-                <p className="text-xs font-medium uppercase tracking-wide text-nb-mute">Selected treatment</p>
-                <p className="truncate text-sm font-semibold text-nb-ink">{service.name}{step > BOOKING_STEP.DURATION || durationPriced ? ` · ${draft.duration} min` : ""}</p>
-              </div>
-              <button type="button" onClick={changeTreatment} data-testid="booking-change-treatment" className="text-sm font-semibold text-nb-blue underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nb-blue focus-visible:ring-offset-2">
-                Change treatment
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2" data-testid="booking-selected-service">
+              <p className="min-w-0 truncate text-xs font-semibold text-nb-ink">{service.name}{step > BOOKING_STEP.DURATION || durationPriced ? ` · ${draft.duration} min` : ""}</p>
+              <button type="button" onClick={changeTreatment} data-testid="booking-change-treatment" className="shrink-0 text-xs font-semibold text-nb-blue underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nb-blue focus-visible:ring-offset-2">
+                Change
               </button>
             </div>
           )}
-        </div>
-        <FlowStepShell
-          testid="booking-flow-shell"
-          actionsTestid="booking-sticky-actions"
-          scrollBody={false}
-          hideActions={bookingAddressOwnsActions(draft, step)}
-          actions={(
-            <div className="flex gap-3" data-testid="booking-shell-actions-row">
-              {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
-              {bookingShellShowContinue(draft, step, ok, { trialFlow, reviewStep }) && (
-                step < reviewStep
-                  ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
-                  : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>
-              )}
-            </div>
-          )}
-          hint={
-            (whereBlockedReason && step === BOOKING_STEP.WHERE && !ok[0] && !bookingAddressOwnsActions(draft, step))
-              ? <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>
-              : (step === BOOKING_STEP.YOU && !ok[step])
-                ? <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Add the contact details needed for this visit.</p>
-                : null
-          }
-        >
-          <AnimatePresence mode="wait">
-            <motion.div key={step} className="nb-step-scroll" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
-              {step < reviewStep && Body ? <Body /> : (
-                <div data-testid="step-review">
-                  <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & confirm"}</h2>
-                  <div className="nb-card divide-y divide-sky-100">
-                    {[[User, `${service?.name || "Treatment"} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", BOOKING_STEP.SERVICE],
-                      [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, practitionerSummary, BOOKING_STEP.WHEN],
-                      [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", BOOKING_STEP.WHERE]].map(([I, t, s, st]) => (
-                      <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button type="button" onClick={() => (st === BOOKING_STEP.WHERE ? goChangeAddress() : go(st))} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">{st === BOOKING_STEP.WHERE && draft.locationType !== "clinic" ? "Change address" : "Edit"}</button></div>))}
-                    {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
-                    {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
-                    {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
-                    <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
-                    {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
-                    {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
-                    <div className="p-5 text-xs text-nb-mute" data-testid="review-payment-choice">Payment choice: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online. The credit covers this visit" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></div>
-                  </div>
+        </header>
+        <AnimatePresence mode="wait">
+          <motion.div key={step} className="min-w-0" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2 }}>
+            {step < reviewStep && Body ? (
+              step === BOOKING_STEP.DETAILS ? <StepDetails fieldErrors={fieldErrors} /> : <Body />
+            ) : (
+              <div data-testid="step-review">
+                <h2 className="mb-4 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & payment"}</h2>
+                <div className="nb-card divide-y divide-sky-100">
+                  {[[User, `${service?.name || "Treatment"} · ${draft.duration} min`, draft.addons.length ? q.addonList.join(", ") : "No enhancements", BOOKING_STEP.SERVICE],
+                    [Clock, `${fmtDate(draft.date)} at ${fmtTime(draft.time)}`, practitionerSummary, BOOKING_STEP.WHEN],
+                    [MapPin, draft.locationType === "clinic" ? "In clinic" : draft.address?.line, zr?.zone ? `${zr.zone.name}` : "", BOOKING_STEP.WHERE]].map(([I, t, s, st]) => (
+                    <div key={st} className="flex items-center gap-4 p-5"><I className="h-5 w-5 text-nb-blue" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{t}</p><p className="text-xs text-nb-mute">{s}</p></div><button type="button" onClick={() => (st === BOOKING_STEP.WHERE ? goChangeAddress() : go(st))} data-testid={`review-edit-${st}`} className="text-xs font-semibold text-nb-blue">{st === BOOKING_STEP.WHERE && draft.locationType !== "clinic" ? "Change address" : "Edit"}</button></div>))}
+                  {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
+                  {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
+                  {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
+                  <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
+                  {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
+                  {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
                 </div>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </FlowStepShell>
+                {!trialFlow && (
+                  <div className="mt-6" data-testid="review-payment-section">
+                    <StepPay />
+                    <p className="mt-3 text-xs text-nb-mute" data-testid="review-payment-choice">Selected: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></p>
+                  </div>
+                )}
+              </div>
+            )}
+            {!hideStepNav && (
+              <div className="mt-8 space-y-3 border-t border-sky-100 pt-5" data-testid="booking-step-nav">
+                {continueHint && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{continueHint}{step === BOOKING_STEP.WHERE && whereBlockedReason ? <>{" "}<Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></> : null}</p>}
+                <div className="flex flex-col gap-2 sm:flex-row-reverse" data-testid="booking-shell-actions-row">
+                  {step < reviewStep ? (
+                    <button type="button" onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary h-12 w-full sm:flex-1">
+                      Continue <ArrowRight className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={submitting || !serverQuote || (!trialFlow && !payOk)}
+                      onClick={confirm}
+                      data-testid="booking-confirm-btn"
+                      className="nb-btn-primary h-12 w-full sm:flex-1"
+                    >
+                      {submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (!serverQuote ? "Confirming the price…" : (payOk ? "Book now" : "Choose payment"))}
+                    </button>
+                  )}
+                  {step > 0 && (
+                    <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12 w-full sm:w-auto">
+                      <ArrowLeft className="h-4 w-4" />Back
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
       <aside className="hidden lg:block">
         <div className="sticky top-32 space-y-4">
