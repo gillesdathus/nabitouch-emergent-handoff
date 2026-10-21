@@ -5,9 +5,14 @@ import { fmtTime } from "@/lib/domain";
 import { AppointmentCard } from "./AppointmentCard";
 import { appointmentsOnDate, daySegments, timeRangeLabel, workingWindow } from "./scheduleUtils";
 
-function blockItems(segments) {
+/** Breaks always show. Full-day unavailable is covered by the banner — omit when not working. */
+function blockItems(segments, { working } = {}) {
   return (segments || [])
-    .filter((s) => s.state === "blocked" || s.state === "unavailable")
+    .filter((s) => {
+      if (s.state === "blocked") return true;
+      if (s.state !== "unavailable") return false;
+      return Boolean(working);
+    })
     .map((s) => ({
       id: `seg-${s.state}-${s.start}-${s.end}`,
       kind: s.state === "blocked" ? "break" : "unavailable",
@@ -29,7 +34,7 @@ export function DayTimeline({
   const segments = daySegments(days, date);
   const window = workingWindow(segments);
   const visits = appointmentsOnDate(appointments, date);
-  const blocks = blockItems(segments);
+  const blocks = blockItems(segments, { working: Boolean(window) });
   const timeline = [...visits, ...blocks].sort((a, b) => String(a.time || a.start).localeCompare(String(b.time || b.start)));
 
   return (

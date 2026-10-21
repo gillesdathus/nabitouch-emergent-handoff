@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
+import { StickyActionBar } from "@/components/StickyActionBar";
 import { ErrorState } from "@/components/ds";
 import { ScheduleHeader } from "@/components/schedule/ScheduleHeader";
 import { CalendarToolbar } from "@/components/schedule/CalendarToolbar";
@@ -280,14 +281,16 @@ export default function Availability({ mode = "pro" }) {
             ))}
           </ul>
           <p className="mt-2 text-sm text-nb-mute">Closing open time does not cancel or move a client. Confirm only if existing visits should remain booked.</p>
-          <button
-            type="button"
-            className="nb-btn-primary mt-3 h-10"
-            data-testid="availability-keep"
-            onClick={() => send({ ...pending, resolution: "keep_appointments" }, pending)}
-          >
-            Keep the bookings and save
-          </button>
+          <StickyActionBar testid="availability-conflict-actions" liftAt="md">
+            <button
+              type="button"
+              className="nb-btn-primary h-12 w-full"
+              data-testid="availability-keep"
+              onClick={() => send({ ...pending, resolution: "keep_appointments" }, pending)}
+            >
+              Keep the bookings and save
+            </button>
+          </StickyActionBar>
         </div>
       )}
 
