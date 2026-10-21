@@ -10,8 +10,14 @@ import { PractitionerErrorBoundary } from "@/components/PractitionerRouteGuard";
 import { PageSkeleton } from "@/components/ui-kit";
 import { AppErrorBoundary, installChunkRecovery } from "@/components/AppErrorBoundary";
 import { PwaUpdateBanner } from "@/components/PwaUpdateBanner";
+import { useVisualViewportInset } from "@/lib/viewport";
 
 installChunkRecovery();
+
+function VisualViewportSync() {
+  useVisualViewportInset();
+  return null;
+}
 
 const Login = lazy(() => import("@/pages/Login"));
 const PaymentResult = lazy(() => import("@/pages/client/PaymentResult"));
@@ -113,6 +119,7 @@ export default function App() {
     <MotionConfig reducedMotion="user">
       <DemoProvider>
         <BrowserRouter>
+          <VisualViewportSync />
           <Splash />
           <OfflineNotice />
           <Gate>

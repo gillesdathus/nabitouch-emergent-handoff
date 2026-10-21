@@ -10,6 +10,7 @@ import { PromoBanner } from "@/components/client";
 import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay } from "./BookingSteps";
+import { StickyActionBar } from "@/components/StickyActionBar";
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
@@ -430,7 +431,7 @@ export default function Booking() {
           )}
         </div>
         <AnimatePresence mode="wait">
-          <motion.div key={step} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
+          <motion.div key={step} className="nb-step-scroll" initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.25 }}>
             {step < reviewStep && Body ? <Body /> : (
               <div data-testid="step-review">
                 <h2 className="mb-6 text-2xl font-semibold tracking-tight sm:text-3xl">{trialFlow ? "Confirm your free trial" : "Review & confirm"}</h2>
@@ -451,7 +452,7 @@ export default function Booking() {
             )}
           </motion.div>
         </AnimatePresence>
-        <div className="safe-bottom sticky bottom-[64px] z-20 -mx-5 mt-10 flex flex-col gap-2 border-t border-sky-100 bg-white/95 px-5 py-4 backdrop-blur md:static md:mx-0 md:border-0 md:bg-transparent md:p-0">
+        <StickyActionBar testid="booking-sticky-actions" liftAt="md">
           <div className="flex gap-3">
             {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
             {step < reviewStep ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
@@ -459,7 +460,7 @@ export default function Booking() {
           </div>
           {whereBlockedReason && step === 0 && !ok[0] && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>}
           {!ok[step] && step > 0 && step < reviewStep && <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>}
-        </div>
+        </StickyActionBar>
       </div>
       <aside className="hidden lg:block">
         <div className="sticky top-32 space-y-4">

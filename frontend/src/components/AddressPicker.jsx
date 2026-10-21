@@ -64,9 +64,18 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
     update();
     window.addEventListener("scroll", update, true);
     window.addEventListener("resize", update);
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", update);
+      vv.addEventListener("scroll", update);
+    }
     return () => {
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
+      if (vv) {
+        vv.removeEventListener("resize", update);
+        vv.removeEventListener("scroll", update);
+      }
     };
   }, [open, showCard, q]);
 

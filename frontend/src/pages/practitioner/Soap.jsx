@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Mic, MicOff, History, FileSignature, Save, Lock } fro
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Pill } from "@/components/ui-kit";
+import { StickyActionBar } from "@/components/StickyActionBar";
 import { useDemo } from "@/store/DemoStore";
 import { markDirty, clearDirty } from "@/lib/dirtyForms";
 import { RestrictionList, useSessionReadiness } from "@/components/session/SessionReadiness";
@@ -129,10 +130,12 @@ export default function Soap() {
           <div className="flex gap-2"><button type="button" className="nb-btn-ghost h-12 px-4" onClick={() => { setAmendment({ reason: "", treatmentPerformed: "" }); setAmending(false); }}>Cancel</button><button className="nb-btn-primary h-12" data-testid="soap-amendment-save">Record amendment</button></div>
         </form>
       ) : (
-        <div className="safe-bottom sticky bottom-[72px] flex gap-2 lg:static">
-          <button onClick={async () => { await api.saveSoap(id, { ...note, clientId: appt.clientId, practitionerId: appt.practitionerId }); setSaved(new Date().toISOString()); }} data-testid="soap-save-draft-btn" className="nb-btn-ghost h-14"><Save className="h-4 w-4" />Save draft</button>
-          <button onClick={() => { setAck(false); setReview(true); }} data-testid="soap-review-sign-btn" className="nb-btn-primary h-14 flex-1"><FileSignature className="h-5 w-5" />Review & Sign</button>
-        </div>
+        <StickyActionBar testid="soap-sticky-actions" liftAt="lg">
+          <div className="flex gap-2">
+            <button type="button" onClick={async () => { await api.saveSoap(id, { ...note, clientId: appt.clientId, practitionerId: appt.practitionerId }); setSaved(new Date().toISOString()); }} data-testid="soap-save-draft-btn" className="nb-btn-ghost h-14"><Save className="h-4 w-4" />Save draft</button>
+            <button type="button" onClick={() => { setAck(false); setReview(true); }} data-testid="soap-review-sign-btn" className="nb-btn-primary h-14 flex-1"><FileSignature className="h-5 w-5" />Review & Sign</button>
+          </div>
+        </StickyActionBar>
       )}
       <Dialog open={review} onOpenChange={setReview}>
         <DialogContent className="max-h-[90vh] overflow-y-auto rounded-3xl sm:max-w-lg" data-testid="soap-review-dialog">

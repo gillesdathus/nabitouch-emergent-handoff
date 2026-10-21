@@ -38,6 +38,12 @@
     --nb-nav-h: 4rem;
     --nb-safe-t: env(safe-area-inset-top, 0px);
     --nb-safe-b: env(safe-area-inset-bottom, 0px);
+    /* Soft-keyboard band; updated by useVisualViewportInset (0 when closed). */
+    --nb-keyboard-inset: 0px;
+    /* Space above the bottom dock (nav + home indicator). */
+    --nb-dock-offset: calc(var(--nb-nav-h) + var(--nb-safe-b));
+    /* Sticky CTAs sit above the dock, or above the keyboard when it is taller. */
+    --nb-sticky-bottom: max(var(--nb-dock-offset), var(--nb-keyboard-inset));
     --nb-bottom-clear: calc(var(--nb-nav-h) + var(--nb-safe-b) + 1.5rem);
     --nb-toast-offset: calc(var(--nb-nav-h) + var(--nb-safe-b) + 0.75rem);
     /* Design system: surfaces */
@@ -49,7 +55,12 @@
     --nb-warm: #FBFAF7;
   }
   @media (min-width: 1024px) {
-    :root { --nb-bottom-clear: 2.5rem; --nb-toast-offset: 1.5rem; }
+    :root {
+      --nb-bottom-clear: 2.5rem;
+      --nb-toast-offset: 1.5rem;
+      --nb-dock-offset: 0px;
+      --nb-sticky-bottom: var(--nb-keyboard-inset);
+    }
   }
   * { @apply border-border; }
   html { -webkit-tap-highlight-color: transparent; overflow-x: clip; }
@@ -90,6 +101,61 @@
   .staff-main-pad { padding-bottom: var(--nb-bottom-clear); }
   .nb-main-clear { padding-bottom: var(--nb-bottom-clear); }
   .nb-dock { height: calc(var(--nb-nav-h) + var(--nb-safe-b)); padding-bottom: var(--nb-safe-b); }
+  /* Shared sticky primary-action bar (Booking, Visit, SOAP, …). */
+  .nb-sticky-actions {
+    position: sticky;
+    bottom: var(--nb-sticky-bottom);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 2.5rem;
+    border-top: 1px solid rgb(224 242 254);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    padding: 1rem 1.25rem;
+  }
+  .nb-sticky-actions--md,
+  .nb-sticky-actions--lg {
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+  }
+  @media (min-width: 768px) {
+    .nb-sticky-actions--md {
+      position: static;
+      bottom: auto;
+      z-index: auto;
+      margin-left: 0;
+      margin-right: 0;
+      margin-top: 2.5rem;
+      border-top: 0;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      padding: 0;
+    }
+  }
+  @media (min-width: 1024px) {
+    .nb-sticky-actions--lg {
+      position: static;
+      bottom: auto;
+      z-index: auto;
+      margin-left: 0;
+      margin-right: 0;
+      margin-top: 2.5rem;
+      border-top: 0;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      padding: 0;
+    }
+  }
+  /* Scroll clearance so focused fields / last controls are not trapped under the sticky bar. */
+  .nb-step-scroll {
+    padding-bottom: 0.25rem;
+    scroll-padding-bottom: calc(var(--nb-sticky-bottom) + 5.5rem);
+  }
   .nb-panel { @apply min-w-0 bg-white; border-radius: var(--nb-r-lg); border: 1px solid var(--nb-line); box-shadow: var(--nb-elev-2); }
   .nb-panel-head { @apply flex min-w-0 items-center justify-between gap-3 px-4 pt-4 sm:px-5 sm:pt-5; }
   .nb-panel-title { @apply min-w-0 truncate text-[15px] font-semibold tracking-tight text-nb-ink; }
