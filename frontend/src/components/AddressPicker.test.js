@@ -34,7 +34,9 @@ function mount(ui) {
     async find(testid) {
       const started = Date.now();
       while (Date.now() - started < 2000) {
-        const found = host.querySelector(`[data-testid="${testid}"]`);
+        // Suggestion list is portaled to document.body above sticky chrome.
+        const found = host.querySelector(`[data-testid="${testid}"]`)
+          || document.querySelector(`[data-testid="${testid}"]`);
         if (found) return found;
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
       }
@@ -134,6 +136,9 @@ test("GPS coverage uses geoCheck with coordinates only", async () => {
   await act(async () => { view.host.querySelector("[data-testid=address-geolocate-btn]").click(); });
   expect(api.geoCheck).toHaveBeenCalledWith({ lat: 53.54, lng: -113.49 });
   expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
+  expect(await view.find("address-confirm-card")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeNull();
+  expect((await view.find("address-card-detected")).textContent).toMatch(/Location detected/);
   view.cleanup();
   vi.unstubAllGlobals();
 });

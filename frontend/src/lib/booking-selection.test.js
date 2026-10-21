@@ -1,13 +1,17 @@
 import { vi } from "vitest";
 import {
   BOOKING_DRAFT_KEY,
+  BOOKING_STEP,
   addressReady,
   addressSelectionPatch,
   bookingPathForService,
+  canJumpBookingStep,
   clearStoredBookingDraft,
   confirmAddressForBooking,
   defaultDurationMinutes,
   isLockedBookingAppointment,
+  migrateBookingDraft,
+  normalizeLocationType,
   preferredBookingAddress,
   primaryAddress,
   readStoredBookingDraft,
@@ -88,11 +92,11 @@ test("completed appointments are locked out of the initial booking flow", () => 
 
 test("booking draft persists in sessionStorage across refresh", () => {
   sessionStorage.clear();
-  const empty = () => ({ step: 0, serviceSlug: null, guest: { firstName: "" } });
-  writeStoredBookingDraft({ step: 2, serviceId: "svc-swedish", serviceSlug: "swedish", guest: { firstName: "Ada" } });
+  const empty = () => ({ step: 0, bookingFlowVersion: 2, serviceSlug: null, guest: { firstName: "" } });
+  writeStoredBookingDraft({ step: BOOKING_STEP.DURATION, bookingFlowVersion: 2, serviceId: "svc-swedish", serviceSlug: "swedish", guest: { firstName: "Ada" } });
   expect(sessionStorage.getItem(BOOKING_DRAFT_KEY)).toBeTruthy();
   const restored = readStoredBookingDraft(empty);
-  expect(restored.step).toBe(2);
+  expect(restored.step).toBe(BOOKING_STEP.DURATION);
   expect(restored.serviceId).toBe("svc-swedish");
   expect(restored.guest.firstName).toBe("Ada");
   clearStoredBookingDraft();
@@ -146,13 +150,37 @@ test("addressSelectionPatch clears travel-dependent slot picks without touching 
   expect(patch.time).toBeNull();
   expect(patch.forceWhere).toBe(true);
   expect(addressSelectionPatch(null, { query: "" }).address).toBeNull();
+  const keepQuery = addressSelectionPatch(null, { forceWhere: true, preserveQuery: true });
+  expect(keepQuery.address).toBeNull();
+  expect(keepQuery.addressQuery).toBeUndefined();
 });
 
 test("rebookStepForAddress lands on When only when the address is ready", () => {
-  expect(rebookStepForAddress(homeReady)).toBe(2);
-  expect(rebookStepForAddress(officeStale)).toBe(0);
-  expect(rebookStepForAddress(null)).toBe(0);
-  expect(rebookStepForAddress(null, { locationType: "clinic" })).toBe(2);
+  expect(rebookStepForAddress(homeReady)).toBe(BOOKING_STEP.WHEN);
+  expect(rebookStepForAddress(officeStale)).toBe(BOOKING_STEP.WHERE);
+  expect(rebookStepForAddress(null)).toBe(BOOKING_STEP.WHERE);
+  expect(rebookStepForAddress(null, { locationType: "clinic" })).toBe(BOOKING_STEP.WHEN);
+});
+
+test("migrateBookingDraft inserts Duration step for v1 session drafts", () => {
+  const migrated = migrateBookingDraft({ step: 2, bookingFlowVersion: 1, locationType: "home" });
+  expect(migrated.step).toBe(BOOKING_STEP.WHEN);
+  expect(migrated.bookingFlowVersion).toBe(2);
+  expect(migrateBookingDraft({ step: 1, bookingFlowVersion: 1 }).step).toBe(BOOKING_STEP.SERVICE);
+});
+
+test("normalizeLocationType never returns undefined", () => {
+  expect(normalizeLocationType(undefined)).toBe("home");
+  expect(normalizeLocationType("clinic", { trialFlow: true })).toBe("home");
+  expect(normalizeLocationType("clinic", { clinicAllowed: false })).toBe("home");
+  expect(normalizeLocationType("hotel")).toBe("hotel");
+});
+
+test("canJumpBookingStep blocks Review when Payment gate fails", () => {
+  const ok = [true, true, true, true, true, false];
+  expect(canJumpBookingStep(4, BOOKING_STEP.REVIEW, ok)).toBe(false);
+  expect(canJumpBookingStep(4, BOOKING_STEP.PAYMENT, ok)).toBe(true);
+  expect(canJumpBookingStep(5, BOOKING_STEP.REVIEW, [...ok.slice(0, 5), true])).toBe(true);
 });
 
 test("confirmAddressForBooking maps a successful geo confirm onto the draft address", async () => {

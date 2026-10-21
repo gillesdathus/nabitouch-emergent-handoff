@@ -1,10 +1,20 @@
-import { useEffect, useState } from "react";
-import { Crosshair, Loader2, MapPin, CheckCircle2, AlertCircle } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Crosshair, Loader2, MapPin, CheckCircle2, AlertCircle, Pencil } from "lucide-react";
 import { money } from "@/lib/domain";
 import { api, apiError } from "@/lib/api";
 
-// Address suggestions come from the API. The server decides the zone and the travel fee.
+/**
+ * Address suggestions come from the API. The server decides the zone and the travel fee.
+ *
+ * Parent contract:
+ * - onQuery(text) updates the search string on every keystroke (must not be overwritten by a later patch).
+ * - onChange(null) clears a resolved address only — parents must leave addressQuery alone.
+ * - onChange(address) applies a resolved / confirmed address and may set addressQuery to address.line.
+ */
 export function AddressPicker({ value, onChange, query, onQuery, testid = "address", purpose = "visit" }) {
+  const listId = useId();
+  const fieldRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [locating, setLocating] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -13,11 +23,25 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
   const [error, setError] = useState("");
   const [unit, setUnit] = useState(value?.unit || "");
   const [postal, setPostal] = useState(value?.postal || "");
+  const [access, setAccess] = useState(value?.access || "");
+  const [editing, setEditing] = useState(!value?.line);
+  const [menuBox, setMenuBox] = useState(null);
   const q = query ?? "";
   const clinic = purpose === "clinic";
+  const resolved = Boolean(value?.line);
+  const confirmed = resolved && value?.clientConfirmed === true;
+  const showCard = resolved && !editing && !clinic;
 
   useEffect(() => {
-    if (!open || q.trim().length < 3) {
+    if (value?.line && !editing) {
+      setUnit(value.unit || "");
+      setPostal(value.postal || "");
+      setAccess(value.access || "");
+    }
+  }, [value?.line, value?.unit, value?.postal, value?.access, value?.mapboxId, editing]);
+
+  useEffect(() => {
+    if (!open || q.trim().length < 3 || showCard) {
       setMatches([]);
       return undefined;
     }
@@ -26,7 +50,30 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
       api.geoSuggest(q.trim()).then((body) => { if (!stopped) { setMatches(body.suggestions || []); setError(""); } }).catch((err) => { if (!stopped) { setMatches([]); setError(apiError(err)); } });
     }, 250);
     return () => { stopped = true; clearTimeout(handle); };
-  }, [q, open]);
+  }, [q, open, showCard]);
+
+  useLayoutEffect(() => {
+    if (!open || showCard || !fieldRef.current) {
+      setMenuBox(null);
+      return undefined;
+    }
+    const update = () => {
+      const rect = fieldRef.current.getBoundingClientRect();
+      setMenuBox({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open, showCard, q]);
+
+  const clearResolvedKeepQuery = () => {
+    if (value) onChange(null);
+    setVerdict(null);
+  };
 
   const apply = async (body) => {
     setChecking(true);
@@ -42,24 +89,29 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
         onChange({ line: checked.line, mapboxId: checked.mapboxId, postal, clientConfirmed: false, confidence: checked.confidence });
         onQuery(checked.line);
         setVerdict(null);
+        setEditing(false);
         return;
       }
       const checked = await api.geoCheck(body);
       setVerdict(checked);
       if (!checked.eligible) {
         onChange(null);
+        setEditing(true);
         return;
       }
       onChange({
-        line: checked.line, unit, lat: checked.lat, lng: checked.lng, area: checked.area,
+        line: checked.line, unit, access, lat: checked.lat, lng: checked.lng, area: checked.area,
         mapboxId: checked.mapboxId, zoneId: checked.zone?.id, travelFee: checked.travel, quoted: true,
-        clientConfirmed: false, postal,
+        clientConfirmed: false, postal: checked.postalNormalized || postal || "",
       });
       onQuery(checked.line);
+      if (checked.postalNormalized) setPostal(checked.postalNormalized);
+      setEditing(false);
     } catch (err) {
       setVerdict(null);
       onChange(null);
       setError(apiError(err));
+      setEditing(true);
     } finally {
       setChecking(false);
       setOpen(false);
@@ -80,22 +132,25 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
         }
         onChange({ ...value, line: checked.line, lat: checked.lat, lng: checked.lng, mapboxId: checked.mapboxId, postal, clientConfirmed: true, confidence: checked.confidence });
         onQuery(checked.line);
+        setEditing(false);
         return;
       }
       const checked = await api.geoConfirm({ line: value.line, mapboxId: value.mapboxId, postal, unit, clientConfirmed: true });
       const approximate = checked.confidence && checked.confidence !== "address";
       if (!checked.accepted || approximate) {
-        onChange({ ...value, unit, postal, clientConfirmed: false, confidence: checked.confidence });
+        onChange({ ...value, unit, access, postal, clientConfirmed: false, confidence: checked.confidence });
         setError(approximate
           ? "This result is approximate, so it is not a verified civic address. Correct it or ask Nabitouch to review it before a mobile visit."
           : "Confirm a complete civic address before a mobile visit can be booked.");
+        setEditing(false);
         return;
       }
       onChange({
-        ...value, line: checked.line, unit, lat: checked.lat, lng: checked.lng,
+        ...value, line: checked.line, unit, access, lat: checked.lat, lng: checked.lng,
         mapboxId: checked.mapboxId || value.mapboxId, postal: checked.postalNormalized || postal,
         clientConfirmed: true, confidence: checked.confidence, travelFee: checked.travel, quoted: true,
       });
+      setEditing(false);
     } catch (err) {
       setError(apiError(err));
     } finally {
@@ -115,34 +170,167 @@ export function AddressPicker({ value, onChange, query, onQuery, testid = "addre
       { timeout: 8000 });
   };
 
+  const startEdit = () => {
+    setEditing(true);
+    setOpen(false);
+    const keep = value?.line || q || "";
+    clearResolvedKeepQuery();
+    onQuery(keep);
+  };
+
+  const onStreetInput = (e) => {
+    const next = e.target.value;
+    onQuery(next);
+    clearResolvedKeepQuery();
+    setError("");
+    setOpen(true);
+  };
+
+  const suggestionList = open && !showCard && q.trim().length >= 3 && menuBox && typeof document !== "undefined"
+    ? createPortal(
+      <ul
+        id={listId}
+        role="listbox"
+        data-testid={`${testid}-list`}
+        className="fixed z-[80] max-h-64 overflow-auto rounded-2xl border border-sky-100 bg-white shadow-xl"
+        style={{ top: menuBox.top, left: menuBox.left, width: menuBox.width }}
+      >
+        {matches.length === 0 && !error && <li className="px-4 py-3 text-sm text-nb-mute">No matching address yet. Include the street and city.</li>}
+        {matches.map((item, i) => (
+          <li key={item.id || item.label}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={false}
+              data-testid={`${testid}-option-${i}`}
+              onPointerDown={(e) => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => apply({ line: item.label, mapboxId: item.id })}
+              className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-sky-50"
+            >
+              <MapPin className="mt-0.5 h-4 w-4 text-nb-teal" />
+              <span>
+                <span className="block text-sm font-medium text-nb-ink">{item.label}</span>
+                <span className="text-xs text-nb-mute">{item.area || "Edmonton area"}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>,
+      document.body,
+    )
+    : null;
+
+  if (showCard) {
+    const street = value.line.split(",")[0]?.trim() || value.line;
+    const locality = value.line.includes(",") ? value.line.split(",").slice(1).join(",").trim() : (value.area || "");
+    return (
+      <div className="space-y-3" data-testid={`${testid}-confirm-card`}>
+        <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-nb-mute">Your massage location</p>
+          <p className="mt-1 text-base font-semibold text-nb-ink" data-testid={`${testid}-card-line`}>{street}</p>
+          {locality && <p className="text-sm text-nb-mute" data-testid={`${testid}-card-locality`}>{locality}</p>}
+          {verdict?.eligible && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-teal-800" data-testid={`${testid}-card-detected`}>
+              <CheckCircle2 className="h-3.5 w-3.5" /> Location detected
+            </p>
+          )}
+          {confirmed && (
+            <p data-testid={`${testid}-confirmed`} className="mt-2 text-sm text-teal-800">You confirmed this civic address. Suite and access details can still be updated.</p>
+          )}
+        </div>
+        <label className="block">
+          <span className="nb-label">Suite / apartment / unit <span className="font-normal text-nb-mute">(optional)</span></span>
+          <input
+            className="nb-input"
+            value={unit}
+            data-testid={`${testid}-unit-input`}
+            placeholder="Unit 4"
+            onChange={(e) => {
+              const next = e.target.value;
+              setUnit(next);
+              if (value) onChange({ ...value, unit: next, clientConfirmed: false });
+            }}
+          />
+        </label>
+        <label className="block">
+          <span className="nb-label">Buzzer / access code <span className="font-normal text-nb-mute">(optional)</span></span>
+          <input
+            className="nb-input"
+            value={access}
+            data-testid={`${testid}-access-input`}
+            placeholder="Buzzer 12"
+            onChange={(e) => {
+              const next = e.target.value;
+              setAccess(next);
+              if (value) onChange({ ...value, access: next, clientConfirmed: false });
+            }}
+          />
+        </label>
+        {!confirmed && (
+          <label className="block">
+            <span className="nb-label">Postal code</span>
+            <input
+              className="nb-input"
+              value={postal}
+              data-testid={`${testid}-postal-input`}
+              placeholder="T5J 2R4"
+              autoComplete="postal-code"
+              onChange={(e) => setPostal(e.target.value)}
+            />
+          </label>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={startEdit} data-testid={`${testid}-change`} className="nb-btn-ghost h-10 px-4 text-sm">
+            <Pencil className="h-3.5 w-3.5" /> Change address
+          </button>
+          {!confirmed && (
+            <button type="button" onClick={confirmServiceAddress} disabled={checking} data-testid={`${testid}-confirm`} className="nb-btn-primary h-10 px-4 text-sm">
+              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Confirm &amp; Continue
+            </button>
+          )}
+        </div>
+        {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+        {verdict && <ZoneResult res={verdict} testid={testid} />}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      <div className="relative">
+      <div className="relative" ref={fieldRef}>
         <MapPin className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-nb-sky" />
-        <input data-testid={`${testid}-input`} className="nb-input pl-11" placeholder="Street address in Edmonton or nearby" value={q} role="combobox" aria-expanded={open} aria-controls={`${testid}-list`} autoComplete="off"
-          onChange={(e) => { onQuery(e.target.value); onChange(null); setVerdict(null); setError(""); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 250)} />
-        {open && q.trim().length >= 3 && (
-          <ul id={`${testid}-list`} role="listbox" className="absolute z-20 mt-2 max-h-64 w-full overflow-auto rounded-2xl border border-sky-100 bg-white shadow-xl">
-            {matches.length === 0 && !error && <li className="px-4 py-3 text-sm text-nb-mute">No matching address yet. Include the street and city.</li>}
-            {matches.map((item, i) => (
-              <li key={item.id || item.label}><button type="button" role="option" aria-selected={false} data-testid={`${testid}-option-${i}`} onMouseDown={(e) => e.preventDefault()} onClick={() => apply({ line: item.label, mapboxId: item.id })} className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-sky-50">
-                <MapPin className="mt-0.5 h-4 w-4 text-nb-teal" /><span><span className="block text-sm font-medium text-nb-ink">{item.label}</span><span className="text-xs text-nb-mute">{item.area || "Edmonton area"}</span></span>
-              </button></li>
-            ))}
-          </ul>
-        )}
+        <input
+          data-testid={`${testid}-input`}
+          className="nb-input pl-11"
+          placeholder="Street address in Edmonton or nearby"
+          value={q}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          autoComplete="off"
+          onChange={onStreetInput}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 250)}
+        />
+        {suggestionList}
       </div>
-      <label className="block"><span className="nb-label">Apartment, unit or buzzer <span className="font-normal text-nb-mute">(optional, not used to find the building)</span></span>
-        <input className="nb-input" value={unit} data-testid={`${testid}-unit-input`} placeholder="Unit 4, buzzer 12" onChange={(e) => { setUnit(e.target.value); if (value) onChange({ ...value, unit: e.target.value }); }} /></label>
-      <label className="block"><span className="nb-label">Postal code</span>
-        <input className="nb-input" value={postal} data-testid={`${testid}-postal-input`} placeholder="T5J 2R4" autoComplete="postal-code" onChange={(e) => setPostal(e.target.value)} /></label>
-      {value?.line && !value.clientConfirmed && <button type="button" onClick={confirmServiceAddress} data-testid={`${testid}-confirm`} className="nb-btn-primary h-10 px-4 text-sm">Confirm this service address</button>}
-      {value?.clientConfirmed && <p data-testid={`${testid}-confirmed`} className="text-sm text-teal-800">You confirmed this civic address. The arrival point can still be adjusted without changing the street.</p>}
-      {!clinic && <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="mt-2 flex items-center gap-2 text-sm font-medium text-nb-blue">
-        {locating || checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crosshair className="h-4 w-4" />} Use my current location <span className="text-xs font-normal text-nb-mute">(optional — asks permission)</span>
-      </button>}
+      {clinic && (
+        <>
+          <label className="block"><span className="nb-label">Postal code</span>
+            <input className="nb-input" value={postal} data-testid={`${testid}-postal-input`} placeholder="T5J 2R4" autoComplete="postal-code" onChange={(e) => setPostal(e.target.value)} /></label>
+          {value?.line && !value.clientConfirmed && <button type="button" onClick={confirmServiceAddress} data-testid={`${testid}-confirm`} className="nb-btn-primary h-10 px-4 text-sm">Confirm this clinic address</button>}
+          {value?.clientConfirmed && <p data-testid={`${testid}-confirmed`} className="text-sm text-teal-800">You confirmed this civic address.</p>}
+        </>
+      )}
+      {!clinic && (
+        <button type="button" onClick={locate} data-testid={`${testid}-geolocate-btn`} className="mt-2 flex items-center gap-2 text-sm font-medium text-nb-blue">
+          {locating || checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crosshair className="h-4 w-4" />} Use my current location <span className="text-xs font-normal text-nb-mute">(optional — asks permission)</span>
+        </button>
+      )}
       {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
-      {!clinic && verdict && <ZoneResult res={verdict} testid={testid} />}
+      {!clinic && verdict && editing && <ZoneResult res={verdict} testid={testid} />}
       {clinic && value?.clientConfirmed && <p data-testid={`${testid}-navigation-ready`} className="text-sm text-teal-800">This clinic address is confirmed for navigation.</p>}
     </div>
   );
