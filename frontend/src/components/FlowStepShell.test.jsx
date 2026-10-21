@@ -1,7 +1,8 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, test } from "vitest";
-import { bookingAddressOwnsActions, FlowStepShell } from "./FlowStepShell";
+import { bookingAddressOwnsActions, bookingShellShowContinue, bookingTapAdvanceStep, FlowStepShell } from "./FlowStepShell";
+import { BOOKING_STEP } from "@/lib/booking-selection";
 
 function mount(ui) {
   const host = document.createElement("div");
@@ -72,5 +73,24 @@ describe("bookingAddressOwnsActions", () => {
       locationType: "home",
       address: { line: "10150 104 St NW", detailsSettled: false },
     }, 1)).toBe(false);
+  });
+});
+
+describe("bookingShellShowContinue", () => {
+  const draft = { locationType: "home", address: { line: "x", detailsSettled: true } };
+  const ok = [true, false, true, false, false, false];
+
+  test("tap-advance steps hide Continue until the gate is ready", () => {
+    expect(bookingTapAdvanceStep(BOOKING_STEP.SERVICE)).toBe(true);
+    expect(bookingShellShowContinue(draft, BOOKING_STEP.SERVICE, ok)).toBe(false);
+    expect(bookingShellShowContinue(draft, BOOKING_STEP.DURATION, ok)).toBe(true);
+    expect(bookingShellShowContinue(draft, BOOKING_STEP.YOU, ok)).toBe(true);
+  });
+
+  test("address ownership still suppresses Continue", () => {
+    expect(bookingShellShowContinue({
+      locationType: "home",
+      address: { line: "x", detailsSettled: false },
+    }, BOOKING_STEP.WHERE, [false])).toBe(false);
   });
 });

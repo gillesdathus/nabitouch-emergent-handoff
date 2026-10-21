@@ -49,3 +49,24 @@ export function bookingAddressOwnsActions(draft, step) {
     && draft?.address?.detailsSettled !== true
   );
 }
+
+/** Steps where the primary choice is a tile tap that auto-advances. */
+export function bookingTapAdvanceStep(step, { trialFlow = false } = {}) {
+  if (step === BOOKING_STEP.SERVICE || step === BOOKING_STEP.DURATION || step === BOOKING_STEP.WHEN) {
+    return true;
+  }
+  return !trialFlow && step === BOOKING_STEP.PAYMENT;
+}
+
+/**
+ * Shell Continue visibility: always on Where/You/Review; on tap-advance steps only
+ * when the gate is already satisfied (fallback when a duration/time is pre-selected).
+ */
+export function bookingShellShowContinue(draft, step, ok, { trialFlow = false, reviewStep } = {}) {
+  if (bookingAddressOwnsActions(draft, step)) return false;
+  const review = reviewStep ?? (trialFlow ? BOOKING_STEP.YOU + 1 : BOOKING_STEP.REVIEW);
+  if (step >= review) return true;
+  if (step === BOOKING_STEP.WHERE || step === BOOKING_STEP.YOU) return true;
+  if (bookingTapAdvanceStep(step, { trialFlow })) return Boolean(ok?.[step]);
+  return true;
+}

@@ -11,7 +11,7 @@ import { SuccessMark, ClientTracker } from "@/components/ui-kit";
 import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepDuration, StepWhen, StepYou, StepPay } from "./BookingSteps";
-import { bookingAddressOwnsActions, FlowStepShell } from "@/components/FlowStepShell";
+import { bookingAddressOwnsActions, bookingShellShowContinue, FlowStepShell } from "@/components/FlowStepShell";
 import { Stepper } from "@/components/tide";
 import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
@@ -509,17 +509,20 @@ export default function Booking() {
           scrollBody={false}
           hideActions={bookingAddressOwnsActions(draft, step)}
           actions={(
-            <div className="flex gap-3">
+            <div className="flex gap-3" data-testid="booking-shell-actions-row">
               {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
-              {step < reviewStep ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
-                : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>}
+              {bookingShellShowContinue(draft, step, ok, { trialFlow, reviewStep }) && (
+                step < reviewStep
+                  ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
+                  : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>
+              )}
             </div>
           )}
           hint={
-            (whereBlockedReason && step === 0 && !ok[0])
+            (whereBlockedReason && step === BOOKING_STEP.WHERE && !ok[0] && !bookingAddressOwnsActions(draft, step))
               ? <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>
-              : (!ok[step] && step > 0 && step < reviewStep)
-                ? <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>
+              : (step === BOOKING_STEP.YOU && !ok[step])
+                ? <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Add the contact details needed for this visit.</p>
                 : null
           }
         >
