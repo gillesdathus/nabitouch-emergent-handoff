@@ -88,7 +88,12 @@ export function StepWhere() {
               forceWhere: false,
             })}
             onChange={(a) => patchDraft(a
-              ? addressSelectionPatch(a, { query: a.line, forceWhere: true })
+              ? addressSelectionPatch(a, {
+                query: a.line,
+                // Keep the client on Where until details settle; releasing forceWhere
+                // here avoids racing onAdvance and leaving a settled address stuck.
+                forceWhere: a.detailsSettled !== true,
+              })
               : addressSelectionPatch(null, { forceWhere: true, preserveQuery: true }))}
           />
         </div>
