@@ -94,6 +94,10 @@ def test_launch_seed_has_catalogue_and_no_patients():
     assert offer["end"] is None
     assert seed["settings"][0]["rewards"]["enabled"] is False
     assert seed["settings"][0]["rewards"]["referralsEnabled"] is False
+    assert seed["settings"][0]["packageProgram"]["salesEnabled"] is False
+    assert seed["settings"][0]["packageProgram"]["noExpiryAtLaunch"] is True
+    assert "swedish" in seed["settings"][0]["packageProgram"]["eligibleServiceSlugs"]
+    assert "hot-stone" not in seed["settings"][0]["packageProgram"]["eligibleServiceSlugs"]
 
 
 def test_production_launch_env_is_accepted(monkeypatch):
