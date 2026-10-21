@@ -240,6 +240,7 @@ export async function confirmAddressForBooking(api, address) {
       postal: checked.postalNormalized || address.postal,
       zoneId: checked.zone?.id || address.zoneId,
       clientConfirmed: true,
+      detailsSettled: address.detailsSettled === true,
       confidence: checked.confidence,
       travelFee: checked.travel,
       quoted: true,

@@ -20,7 +20,7 @@ Use this checklist on Android and iOS **installed** PWAs (not desktop responsive
 5. [ ] Confirmation card shows street + locality
 6. [ ] Suite / apartment optional
 7. [ ] Buzzer / access optional
-8. [ ] Confirm & Continue enables booking Continue
+8. [ ] Confirm Address → details No/Yes → Continue advances without redundant postal fields
 9. [ ] Change address restores search
 10. [ ] Use My Location → grant → card appears
 11. [ ] Use My Location → deny → recoverable error, search remains

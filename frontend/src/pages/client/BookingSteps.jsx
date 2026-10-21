@@ -21,38 +21,59 @@ export function StepWhere() {
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   // Clinic tiles stay off while in-clinic booking is disabled. Trial is always mobile-only.
   const clinicShown = !trialFlow && clinicBookable(clinic);
+  const mobile = draft.locationType !== "clinic" || !clinicShown;
+  // Once a civic pick is on the draft, focus the address phases (find/confirm/details).
+  const addressFocus = mobile && Boolean(draft.address?.line);
   const selectSaved = (a) => {
-    const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
+    const civicOk = a.clientConfirmed === true && a.confidence === "address";
+    const next = {
+      ...a,
+      clientConfirmed: civicOk,
+      // Fresh pick always re-asks optional suite/buzzer/notes for this booking.
+      detailsSettled: false,
+    };
     patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
   };
   const useDifferentAddress = () => {
     patchDraft(addressSelectionPatch(null, { query: "", forceWhere: true }));
   };
+  const locationLabel = LOCATION_TYPES.find((l) => l.id === draft.locationType)?.label || "My Home";
   return (
-    <div>
+    <div data-testid="step-where">
       <H
-        t="Where should we meet you?"
-        s={trialFlow
-          ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
-          : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")}
+        t={addressFocus ? "Confirm your address" : "Where should we meet you?"}
+        s={addressFocus
+          ? "One decision at a time — confirm the service address, then optional access details."
+          : (trialFlow
+            ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
+            : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton."))}
       />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
-          <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id || "home" })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
-            <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
-          </Tile>); })}
-      </div>
+      {!addressFocus && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
+            <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id || "home" })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
+              <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
+            </Tile>); })}
+        </div>
+      )}
+      {addressFocus && (
+        <p className="mb-4 text-sm text-nb-mute" data-testid="step-where-location-chip">
+          Visit type: <b className="text-nb-ink">{locationLabel}</b>
+          {" · "}
+          <button type="button" className="font-semibold text-nb-blue" data-testid="step-where-change-location" onClick={() => patchDraft({ address: null, addressQuery: "", forceWhere: true })}>Change visit type</button>
+        </p>
+      )}
       {draft.locationType === "clinic" && clinicShown ? (
         <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
-        <div className="mt-6 space-y-4">
+        <div className={`${addressFocus ? "mt-0" : "mt-6"} space-y-4`}>
           {me?.addresses?.length > 0 && (
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
                 <button key={a.id} type="button" onClick={() => selectSaved(a)} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
               </div>
               <button type="button" onClick={useDifferentAddress} data-testid="step-where-different-address" className="text-xs font-semibold text-nb-blue underline-offset-2 hover:underline">Different address</button>
-              <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>
+              {!addressFocus && <p className="text-xs text-nb-mute">A different visit address is used for this booking only. It does not change your saved home address unless you update it in Profile.</p>}
             </div>
           )}
           <AddressPicker
@@ -60,12 +81,13 @@ export function StepWhere() {
             query={draft.addressQuery}
             onQuery={(v) => patchDraft({ addressQuery: v })}
             value={draft.address}
+            notes={draft.addressNotes}
+            onNotes={(v) => patchDraft({ addressNotes: v })}
+            onAdvance={() => patchDraft({ step: BOOKING_STEP.SERVICE, forceWhere: false })}
             onChange={(a) => patchDraft(a
               ? addressSelectionPatch(a, { query: a.line, forceWhere: true })
               : addressSelectionPatch(null, { forceWhere: true, preserveQuery: true }))}
           />
-          <label className="block"><span className="nb-label">Access notes <span className="font-normal text-nb-mute">(optional)</span></span>
-            <input className="nb-input" placeholder="Buzzer, parking, pets, stairs…" value={draft.addressNotes} onChange={(e) => patchDraft({ addressNotes: e.target.value })} data-testid="step-where-notes-input" /></label>
         </div>
       )}
     </div>

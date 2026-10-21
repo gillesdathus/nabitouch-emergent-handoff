@@ -60,26 +60,32 @@ async function runJourney(label, viewport, setup) {
 
     await waitStep(page, "step-where-address-confirm-card");
     await shot(page, `${label}-address-confirm`);
-    // Postal is required for confirmation; suite/buzzer are optional.
-    await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
-    await typeReact(page, "step-where-address-unit-input", "4");
-    await typeReact(page, "step-where-address-access-input", "Buzz 12");
+    // Incomplete postal only: type when the incomplete field is shown.
+    const postal = page.getByTestId("step-where-address-postal-input");
+    if (await postal.count()) await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
     await page.getByTestId("step-where-address-confirm").click();
     const addrErr = page.getByTestId("step-where-address-error");
     await Promise.race([
-      page.getByTestId("step-where-address-confirmed").waitFor({ state: "visible", timeout: 20000 }),
+      page.getByTestId("step-where-address-details-ask").waitFor({ state: "visible", timeout: 20000 }),
       addrErr.waitFor({ state: "visible", timeout: 20000 }).then(async () => {
         throw new Error(`address confirm failed: ${await addrErr.innerText()}`);
       }),
     ]);
+    await shot(page, `${label}-address-details-ask`);
+    await page.getByTestId("step-where-address-details-yes").click();
+    await waitStep(page, "step-where-address-details-form");
+    await typeReact(page, "step-where-address-unit-input", "4");
+    await typeReact(page, "step-where-address-access-input", "Buzz 12");
+    await typeReact(page, "step-where-address-notes-input", "Park in visitor stall");
+    await page.getByTestId("step-where-address-details-continue").click();
+    // Details Continue advances to Service (or sticky Continue as fallback).
     await page.waitForTimeout(400);
-
-    const notes = page.getByTestId("step-where-notes-input");
-    if (await notes.count()) await typeReact(page, "step-where-notes-input", "Park in visitor stall");
-
-    const continueWhere = page.getByTestId("booking-next-btn");
-    await expectEnabled(continueWhere);
-    await continueWhere.click();
+    const onService = page.getByTestId("step-service");
+    if (!(await onService.count())) {
+      const continueWhere = page.getByTestId("booking-next-btn");
+      await expectEnabled(continueWhere);
+      await continueWhere.click();
+    }
     // Service
     await waitStep(page, "step-service");
     await shot(page, `${label}-service`);

@@ -120,7 +120,7 @@ export default function Booking() {
         setParams(next, { replace: true });
       }
     };
-    if (draft.address && addressReady(draft.address)) {
+    if (draft.address && addressReady(draft.address) && draft.address.detailsSettled === true) {
       autoAddressKey.current = key;
       if (draft.step === 0) {
         patchDraft({ step: BOOKING_STEP.SERVICE, forceWhere: false });
@@ -136,14 +136,15 @@ export default function Booking() {
       return undefined;
     }
     if (addressReady(saved)) {
-      applyReady({ ...saved });
+      // Returning clients: civic address already verified — settle access details without re-asking.
+      applyReady({ ...saved, detailsSettled: true });
       return undefined;
     }
     autoAddressKey.current = key;
     confirmAddressForBooking(api, saved)
       .then((result) => {
         if (cancelled) return;
-        if (result.ok) applyReady(result.address);
+        if (result.ok) applyReady({ ...result.address, detailsSettled: true });
         else {
           patchDraft({
             ...addressSelectionPatch(result.address || saved, { query: (result.address || saved).line }),
@@ -261,7 +262,7 @@ export default function Booking() {
   const clinic = idx.settings?.clinic || {};
   const whereOk = draft.locationType === "clinic"
     ? (!trialFlow && clinicBookable(clinic))
-    : (!!zr?.zone && draft.address?.clientConfirmed === true);
+    : (!!zr?.zone && draft.address?.clientConfirmed === true && draft.address?.detailsSettled === true);
   const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
   const guestProfileOk = trialFlowEarly || !g.createProfile || (g.dob && (g.password || "").length >= 8);
@@ -528,15 +529,18 @@ export default function Booking() {
             )}
           </motion.div>
         </AnimatePresence>
-        <StickyActionBar testid="booking-sticky-actions" liftAt="md">
-          <div className="flex gap-3">
-            {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
-            {step < reviewStep ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
-              : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>}
-          </div>
-          {whereBlockedReason && step === 0 && !ok[0] && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>}
-          {!ok[step] && step > 0 && step < reviewStep && <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>}
-        </StickyActionBar>
+        {/* Address confirm/details phases own their CTAs — hide the shell Continue so it cannot cover them. */}
+        {!(step === BOOKING_STEP.WHERE && draft.locationType !== "clinic" && draft.address?.line && draft.address?.detailsSettled !== true) && (
+          <StickyActionBar testid="booking-sticky-actions" liftAt="md">
+            <div className="flex gap-3">
+              {step > 0 && <button type="button" onClick={goBack} data-testid="booking-back-btn" className="nb-btn-ghost h-12"><ArrowLeft className="h-4 w-4" />Back</button>}
+              {step < reviewStep ? <button type="button" disabled={!ok[step]} onClick={advance} data-testid="booking-next-btn" className="nb-btn-primary flex-1">Continue <ArrowRight className="h-4 w-4" /></button>
+                : <button type="button" disabled={submitting || !serverQuote} onClick={confirm} data-testid="booking-confirm-btn" className="nb-btn-primary flex-1">{submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (serverQuote ? "Request this visit" : "Confirming the price…")}</button>}
+            </div>
+            {whereBlockedReason && step === 0 && !ok[0] && <p className="text-sm text-amber-900" data-testid="booking-continue-hint">{whereBlockedReason} <Link to="/book" className="font-semibold text-nb-blue underline" onClick={() => patchDraft({ campaignId: undefined, serviceSlug: "swedish", duration: 60, locationType: normalizeLocationType(draft.locationType === "clinic" ? "home" : draft.locationType) })}>Book a regular massage</Link></p>}
+            {!ok[step] && step > 0 && step < reviewStep && <p className="text-sm text-nb-mute" data-testid="booking-continue-hint">Complete this step to continue.</p>}
+          </StickyActionBar>
+        )}
       </div>
       <aside className="hidden lg:block">
         <div className="sticky top-32 space-y-4">

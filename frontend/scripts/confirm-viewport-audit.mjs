@@ -42,11 +42,16 @@ async function bookToConfirmation(page) {
   await page.getByTestId("step-where-address-option-0").waitFor({ state: "visible", timeout: 15000 });
   await page.getByTestId("step-where-address-option-0").click();
   await page.waitForTimeout(500);
-  await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
-  await typeReact(page, "step-where-address-unit-input", "4");
+  const postal = page.getByTestId("step-where-address-postal-input");
+  if (await postal.count()) await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
   await page.getByTestId("step-where-address-confirm").click();
-  await page.getByTestId("step-where-address-confirmed").waitFor({ state: "visible", timeout: 20000 });
-  await page.getByTestId("booking-next-btn").click();
+  await page.getByTestId("step-where-address-details-ask").waitFor({ state: "visible", timeout: 20000 });
+  await page.getByTestId("step-where-address-details-no").click();
+  await page.waitForTimeout(400);
+  const onService = page.getByTestId("step-service");
+  if (!(await onService.count())) {
+    await page.getByTestId("booking-next-btn").click();
+  }
   await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
   const swedish = page.getByTestId("step-service-swedish");
   if (await swedish.count()) await swedish.click();
