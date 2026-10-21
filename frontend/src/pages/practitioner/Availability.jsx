@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
+import { StickyActionBar } from "@/components/StickyActionBar";
 import { ErrorState } from "@/components/ds";
 import { ScheduleHeader } from "@/components/schedule/ScheduleHeader";
 import { CalendarToolbar } from "@/components/schedule/CalendarToolbar";
@@ -182,6 +183,22 @@ export default function Availability({ mode = "pro" }) {
 
   const onWeeklyHours = ({ weekly }) => send({ weekly });
 
+  const needsApprove = mode === "owner" && user?.role === "owner" && Boolean(schedule?.status) && schedule.status !== "approved";
+  const dockBusy = Boolean(editor || conflicts);
+
+  const approveSchedule = async () => {
+    try {
+      await api.approveSchedule(personId);
+      toast.success("Schedule approved");
+      load();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      const message = typeof detail === "string" ? detail : detail?.message;
+      const gapText = Array.isArray(detail?.gaps) ? detail.gaps.map((gap) => `${gap.label}: ${gap.status}`).join(" ") : "";
+      toast.error([message, gapText].filter(Boolean).join(" ") || "Approval was not saved.");
+    }
+  };
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5" data-testid="availability-page">
       <ScheduleHeader
@@ -209,27 +226,6 @@ export default function Availability({ mode = "pro" }) {
                 ))}
               </select>
             </label>
-            {user?.role === "owner" && (
-              <button
-                type="button"
-                className="nb-btn-primary h-12"
-                data-testid="availability-approve"
-                onClick={async () => {
-                  try {
-                    await api.approveSchedule(personId);
-                    toast.success("Schedule approved");
-                    load();
-                  } catch (err) {
-                    const detail = err?.response?.data?.detail;
-                    const message = typeof detail === "string" ? detail : detail?.message;
-                    const gapText = Array.isArray(detail?.gaps) ? detail.gaps.map((gap) => `${gap.label}: ${gap.status}`).join(" ") : "";
-                    toast.error([message, gapText].filter(Boolean).join(" ") || "Approval was not saved.");
-                  }
-                }}
-              >
-                Approve schedule
-              </button>
-            )}
           </div>
         )}
       />
@@ -269,7 +265,15 @@ export default function Availability({ mode = "pro" }) {
         </div>
       )}
 
-      <ScheduleQuickActions onOpen={setEditor} />
+      <ScheduleQuickActions onOpen={setEditor} hidden={dockBusy || needsApprove} />
+
+      {needsApprove && !dockBusy && (
+        <StickyActionBar testid="availability-approve-actions" liftAt="md">
+          <button type="button" className="nb-btn-primary h-12 w-full" data-testid="availability-approve" onClick={approveSchedule}>
+            Approve schedule
+          </button>
+        </StickyActionBar>
+      )}
 
       {conflicts && (
         <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4" data-testid="availability-conflicts">
@@ -280,14 +284,24 @@ export default function Availability({ mode = "pro" }) {
             ))}
           </ul>
           <p className="mt-2 text-sm text-nb-mute">Closing open time does not cancel or move a client. Confirm only if existing visits should remain booked.</p>
-          <button
-            type="button"
-            className="nb-btn-primary mt-3 h-10"
-            data-testid="availability-keep"
-            onClick={() => send({ ...pending, resolution: "keep_appointments" }, pending)}
-          >
-            Keep the bookings and save
-          </button>
+          <StickyActionBar testid="availability-conflict-actions" liftAt="md" stacked>
+            <button
+              type="button"
+              className="nb-btn-ghost h-12 w-full"
+              data-testid="availability-conflict-cancel"
+              onClick={() => { setConflicts(null); setPending(null); }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="nb-btn-primary h-12 w-full"
+              data-testid="availability-keep"
+              onClick={() => send({ ...pending, resolution: "keep_appointments" }, pending)}
+            >
+              Keep the bookings and save
+            </button>
+          </StickyActionBar>
         </div>
       )}
 

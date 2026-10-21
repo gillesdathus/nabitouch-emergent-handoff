@@ -116,7 +116,7 @@ export default function Home() {
       {resume && (
         <Link to="/book" data-testid="resume-booking-card" className="nb-card flex items-center gap-3 p-4 transition-transform hover:-translate-y-0.5">
           <span className="grid h-11 w-11 place-items-center rounded-2xl text-nb-blue tint-lagoon"><RotateCcw className="h-5 w-5" /></span>
-          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">Pick up where you left off</p><p className="truncate text-xs text-nb-mute">{idx.services[draft.serviceSlug]?.name || "Your visit"} · step {draft.step + 1} of 6</p></div>
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">Pick up where you left off</p><p className="truncate text-xs text-nb-mute">{idx.services[draft.serviceSlug]?.name || "Your visit"} · step {draft.step + 1} of 7</p></div>
           <ArrowRight className="h-4 w-4 text-nb-blue" />
         </Link>
       )}
@@ -124,7 +124,19 @@ export default function Home() {
       <section className="nb-card p-5" data-testid="area-check-card">
         <p className="text-sm font-semibold text-nb-ink">Do we come to you?</p>
         <p className="mb-3 text-xs text-nb-mute">Check your address against the Edmonton service zones. The result comes from Nabitouch, not a sample list.</p>
-        <AddressPicker testid="area-check" query={query} onQuery={setQuery} value={draft.address} onChange={(address) => patchDraft({ address, addressQuery: address?.line || query })} />
+        <AddressPicker
+          testid="area-check"
+          query={query}
+          onQuery={setQuery}
+          value={draft.address}
+          onChange={(address) => {
+            if (!address) {
+              patchDraft({ address: null });
+              return;
+            }
+            patchDraft({ address, addressQuery: address.line || query });
+          }}
+        />
       </section>
 
       <section>

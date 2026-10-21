@@ -1,0 +1,11 @@
+# Override for host-reachable browser E2E (Slice 5).
+# Usage from repo root:
+#   docker compose -f deploy/qa/compose.yml -f deploy/qa/compose.browser.yml up -d --wait mongo redis
+#   docker compose -f deploy/qa/compose.yml -f deploy/qa/compose.browser.yml run --rm --service-ports qa python tests/qa_runner.py --browser
+services:
+  qa:
+    ports:
+      - "18080:8000"
+networks:
+  qa:
+    internal: false

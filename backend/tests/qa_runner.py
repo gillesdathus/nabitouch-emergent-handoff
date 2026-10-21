@@ -85,7 +85,15 @@ def main():
     import requests
     configure()
     if "--browser" in sys.argv:
-        os.environ["CORS_ORIGINS"] = "http://localhost:3025"
+        # Local CRA/Vite and Playwright/Cursor browser harnesses.
+        os.environ["CORS_ORIGINS"] = ",".join([
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3025",
+            "http://127.0.0.1:3025",
+            "http://localhost:3026",
+            "http://127.0.0.1:3026",
+        ])
         serve()
         return 0
     if "--eta-failure" in sys.argv:

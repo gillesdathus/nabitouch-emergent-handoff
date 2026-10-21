@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from availability import draft_schedule, launch_clinic, launch_policy, launch_practitioner
 from pricing import launch_welcome_offer
 from rewards import launch_rewards
+from package_program import launch_package_program
 from config import is_production
 from payments import with_settle, claim_eligible
 from trial import launch_trial_service
@@ -321,6 +322,7 @@ def build_seed():
                             {"id": "warm-stone", "name": "Warm stone add-on", "price": 20},
                             {"id": "scalp-finish", "name": "10-min scalp finish", "price": 15}],
                  "rewards": launch_rewards(),
+                 "packageProgram": launch_package_program(),
                  "center": {"lat": 53.5461, "lng": -113.4938},
                  "revenueTrend": [{"week": f"W{i + 1}", "revenue": v} for i, v in enumerate(weeks)]}]
     audit = [{"id": f"au-{i}", "at": ago(200 - i * 30), "actor": a, "action": m, "appointmentId": x}
@@ -354,6 +356,7 @@ def build_launch_seed():
     settings["scheduling"] = {"setupMin": 10, "cleanupMin": 15, "travelBufferMin": 10, "leadMin": 90, "enforceAdjacentTravel": True}
     settings["recovery"] = {"exclusiveMinutes": 20, "holdMinutes": 3, "maxExclusiveAttempts": 5, "broadcastLimit": 25}
     settings["rewards"] = launch_rewards()
+    settings["packageProgram"] = launch_package_program()
     settings["cancellationFee"] = {
         "enabled": False, "noShowEnabled": False, "automaticCollection": False, "noticeHours": None,
         "fixedFee": None, "percentFee": None, "noShowFee": None, "maxFee": None,

@@ -140,8 +140,9 @@ test("shows load error with retry when readiness fails", () => {
   const view = renderPrep();
   expect(view.host.querySelector("[data-testid='prep-load-error']")).toBeTruthy();
   expect(view.host.textContent).toContain("Not authenticated");
-  act(() => { view.host.querySelector("[data-testid='prep-load-retry']").click(); });
+  act(() => { document.querySelector("[data-testid='prep-load-retry']").click(); });
   expect(h.reload).toHaveBeenCalled();
+  expect(document.querySelector("[data-testid='prep-load-actions']")).toBeTruthy();
   view.unmount();
 });
 
@@ -180,8 +181,10 @@ test("complete ready state shows confirmation, summary, and CTAs", () => {
   expect(view.host.querySelector("[data-testid='prep-appointment-summary']").textContent).toContain("Swedish Massage");
   expect(view.host.querySelector("[data-testid='prep-appointment-summary']").textContent).toContain("Maya Chen");
   expect(view.host.querySelector("[data-testid='prep-done-saved']").textContent).toContain("saved on your account");
-  expect(view.host.querySelector("[data-testid='prep-done-home']").getAttribute("href")).toBe("/me");
-  expect(view.host.querySelector("[data-testid='prep-done-appointment']").getAttribute("href")).toBe("/me#upcoming-visit-card");
+  expect(document.querySelector("[data-testid='prep-done-actions']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='prep-done-home']").getAttribute("href")).toBe("/me");
+  expect(document.querySelector("[data-testid='prep-done-appointment']").getAttribute("href")).toBe("/me#upcoming-visit-card");
+  expect(view.host.querySelector("[data-testid='prep-done-home']")).toBeNull();
   view.unmount();
 });
 
@@ -194,10 +197,20 @@ test("failed health confirm keeps form and shows retry", async () => {
     view.host.querySelector("[data-testid='prep-answer-unwell-no']").click();
   });
   await act(async () => {
-    view.host.querySelector("[data-testid='prep-confirm-submit']").click();
+    document.querySelector("[data-testid='prep-confirm-submit']").click();
   });
   expect(view.host.querySelector("[data-testid='prep-confirm-error']")?.textContent).toContain("Document uploads are turned off");
   expect(view.host.querySelector("[data-testid='prep-confirm-step']")).toBeTruthy();
   expect(view.host.querySelector("[data-testid='prep-confirm-error-retry']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='prep-confirm-actions']")).toBeTruthy();
+  view.unmount();
+});
+
+test("confirm step collapses history and keeps primary CTA sticky", () => {
+  h.readiness = baseReadiness();
+  const view = renderPrep();
+  expect(view.host.querySelector("[data-testid='prep-history-summary']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='prep-confirm-submit']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='prep-confirm-submit']")).toBeNull();
   view.unmount();
 });

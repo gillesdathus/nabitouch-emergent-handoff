@@ -89,6 +89,7 @@ from trial import (
     trial_duration_ok,
 )
 from plans import available_credit, build_plans_router, consume_credit, credit_quote, ensure_plans, release_credit, reserve_credit
+from package_program import validate_package_program
 from safety import build_safety_router, ensure_safety
 from fleet import build_fleet_router, ensure_fleet
 from shield import (
@@ -2333,7 +2334,7 @@ PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility"
                 "stackable", "redemptionLimit", "appliesTo", "requiresMarketingConsent", "code", "approval",
                 "placements", "bannerHeadline", "bannerBody"}
 ZONE_FIELDS = {"enabled", "radiusKm", "fee", "perKm", "name", "color"}
-SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "paymentPolicy", "whatsapp", "teamConnect", "bookingProtection", "flashProtection"}
+SETTINGS_FIELDS = {"gst", "cashEnabled", "clinic", "addons", "receptionPerms", "liveGpsPractitionerId", "center", "credentialReminderDays", "requireMfaForPrivileged", "mfaEnforcePrivileged", "cancellationPolicy", "cancellationFee", "scheduling", "recovery", "rewards", "packageProgram", "paymentPolicy", "whatsapp", "teamConnect", "bookingProtection", "flashProtection"}
 PLAN_FIELDS = {"title", "sessionsTotal", "sessionsDone", "homeCare", "nextReview", "visibleToClient", "frequency", "goals", "followUpDays"}
 
 
@@ -2728,6 +2729,12 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             try:
                 doc["rewards"] = validate_rewards(doc["rewards"])
             except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        if "packageProgram" in doc:
+            try:
+                services = await coll("services").find({}, {"_id": 0, "slug": 1, "prices": 1}).to_list(200)
+                doc["packageProgram"] = validate_package_program(doc["packageProgram"], services=services)
+            except (TypeError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
         if "teamConnect" in doc:
             try:

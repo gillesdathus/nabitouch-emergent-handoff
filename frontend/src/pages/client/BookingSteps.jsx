@@ -7,7 +7,7 @@ import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
-import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
+import { addressSelectionPatch, BOOKING_STEP, serviceSelectionPatch } from "@/lib/booking-selection";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
 const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
@@ -21,33 +21,54 @@ export function StepWhere() {
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   // Clinic tiles stay off while in-clinic booking is disabled. Trial is always mobile-only.
   const clinicShown = !trialFlow && clinicBookable(clinic);
+  const mobile = draft.locationType !== "clinic" || !clinicShown;
+  // Once a civic pick is on the draft, focus the address phases (find/confirm/details).
+  const addressFocus = mobile && Boolean(draft.address?.line);
   const selectSaved = (a) => {
-    const next = { ...a, clientConfirmed: a.clientConfirmed === true && a.confidence === "address" };
+    const civicOk = a.clientConfirmed === true && a.confidence === "address";
+    const next = {
+      ...a,
+      clientConfirmed: civicOk,
+      // Fresh pick always re-asks optional suite/buzzer/notes for this booking.
+      detailsSettled: false,
+    };
     patchDraft(addressSelectionPatch(next, { query: a.line, forceWhere: true }));
   };
   const useDifferentAddress = () => {
     patchDraft(addressSelectionPatch(null, { query: "", forceWhere: true }));
   };
+  const locationLabel = LOCATION_TYPES.find((l) => l.id === draft.locationType)?.label || "My Home";
   return (
-    <div>
+    <div data-testid="step-where">
       <H
-        t="Where should we meet you?"
-        s={trialFlow
-          ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
-          : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton.")}
+        t={addressFocus ? "Confirm your address" : "Where should we meet you?"}
+        s={addressFocus
+          ? "One decision at a time — confirm the service address, then optional access details."
+          : (trialFlow
+            ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
+            : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton."))}
       />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
-          <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
-            <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
-          </Tile>); })}
-      </div>
+      {!addressFocus && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {LOCATION_TYPES.filter((l) => l.id !== "clinic" || clinicShown).map((l) => { const I = LOC_ICON[l.id]; return (
+            <Tile key={l.id} on={draft.locationType === l.id} onClick={() => patchDraft({ locationType: l.id || "home" })} data-testid={`step-where-${l.id}`} aria-pressed={draft.locationType === l.id}>
+              <I className={`h-5 w-5 ${draft.locationType === l.id ? "text-nb-blue" : "text-nb-mute"}`} /><span className="mt-3 block text-sm font-semibold">{l.label}</span>
+            </Tile>); })}
+        </div>
+      )}
+      {addressFocus && (
+        <p className="mb-4 text-sm text-nb-mute" data-testid="step-where-location-chip">
+          Visit type: <b className="text-nb-ink">{locationLabel}</b>
+          {" · "}
+          <button type="button" className="font-semibold text-nb-blue" data-testid="step-where-change-location" onClick={() => patchDraft({ address: null, addressQuery: "", forceWhere: true })}>Change visit type</button>
+        </p>
+      )}
       {draft.locationType === "clinic" && clinicShown ? (
         <div className="nb-soft mt-6 p-5 text-sm" data-testid="step-where-clinic-info"><p className="font-semibold">In-clinic visit</p><p className="text-nb-mute">{clinic.address || "Clinic address on file"} · no travel fee</p></div>
       ) : (
-        <div className="mt-6 space-y-4">
-          {me?.addresses?.length > 0 && (
-            <div className="space-y-2">
+        <div className={`${addressFocus ? "mt-0" : "mt-6"} space-y-4`}>
+          {me?.addresses?.length > 0 && !addressFocus && (
+            <div className="space-y-2" data-testid="step-where-saved-addresses">
               <div className="flex flex-wrap gap-2">{me.addresses.map((a) => (
                 <button key={a.id} type="button" onClick={() => selectSaved(a)} data-testid={`saved-address-${a.id}`} className={(draft.address?.id ? draft.address.id === a.id : draft.address?.line === a.line) ? "nb-chip-on" : "nb-chip-off"}><HomeIcon className="h-3.5 w-3.5" />{a.label}: {a.line.split(",")[0]}{a.clientConfirmed === true && a.confidence === "address" ? <span className="sr-only"> (confirmed)</span> : null}</button>))}
               </div>
@@ -60,10 +81,21 @@ export function StepWhere() {
             query={draft.addressQuery}
             onQuery={(v) => patchDraft({ addressQuery: v })}
             value={draft.address}
-            onChange={(a) => patchDraft(addressSelectionPatch(a, { query: a?.line || draft.addressQuery, forceWhere: true }))}
+            notes={draft.addressNotes}
+            onNotes={(v) => patchDraft({ addressNotes: v })}
+            onAdvance={() => patchDraft({
+              step: draft.serviceSlug ? BOOKING_STEP.DURATION : BOOKING_STEP.SERVICE,
+              forceWhere: false,
+            })}
+            onChange={(a) => patchDraft(a
+              ? addressSelectionPatch(a, {
+                query: a.line,
+                // Keep the client on Where until details settle; releasing forceWhere
+                // here avoids racing onAdvance and leaving a settled address stuck.
+                forceWhere: a.detailsSettled !== true,
+              })
+              : addressSelectionPatch(null, { forceWhere: true, preserveQuery: true }))}
           />
-          <label className="block"><span className="nb-label">Access notes <span className="font-normal text-nb-mute">(optional)</span></span>
-            <input className="nb-input" placeholder="Buzzer, parking, pets, stairs…" value={draft.addressNotes} onChange={(e) => patchDraft({ addressNotes: e.target.value })} data-testid="step-where-notes-input" /></label>
         </div>
       )}
     </div>
@@ -79,25 +111,74 @@ export function StepService() {
     if (isTrialService(x)) return false;
     return bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile);
   });
+  const chooseService = (x) => {
+    if (trialFlow) {
+      patchDraft({ step: BOOKING_STEP.DURATION });
+      return;
+    }
+    patchDraft({ ...serviceSelectionPatch(x, draft, { preserveDuration: true }), step: BOOKING_STEP.DURATION });
+  };
   return (
-    <div>
-      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "The total is confirmed before you book."} />
+    <div data-testid="step-service">
+      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "Tap a treatment to choose its length."} />
       <div className="grid gap-3 sm:grid-cols-2">
         {visible.map((x) => (
-          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => !trialFlow && patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }))}>
+          <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => chooseService(x)}>
             <div className="flex items-center gap-3"><img src={x.img} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" loading="lazy" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{x.name}</p><p className="line-clamp-2 text-xs text-nb-mute">{x.short}</p></div>{draft.serviceSlug === x.slug && <Check className="h-5 w-5 shrink-0 text-nb-blue" />}</div>
           </Tile>))}
       </div>
-      {s && (
-        <div className="mt-8 space-y-6">
-          <div><p className="nb-label">Duration</p><div className="grid grid-cols-3 gap-2">
-            {Object.entries(s.prices).map(([d, p]) => <Tile key={d} on={String(draft.duration) === d} onClick={() => !trialFlow && patchDraft({ duration: Number(d), time: null, idempotencyKey: undefined, checkoutSessionId: null, checkoutAmountCents: null, depositCents: null, invoiceId: null })} data-testid={`step-duration-${d}`}><span className="block text-center text-sm font-semibold">{d} min</span><span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span></Tile>)}
-          </div></div>
-          {!trialFlow && <div><p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p><div className="flex flex-wrap gap-2">
-            {idx.settings.addons.map((a) => <button key={a.id} onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>{a.name} · +{money(a.price)}</button>)}
-          </div></div>}
+    </div>
+  );
+}
+
+export function StepDuration() {
+  const { draft, patchDraft, idx } = useDemo();
+  const s = idx.services[draft.serviceSlug];
+  const trialFlow = Boolean(draft.campaignId && isTrialService(s));
+  if (!s) {
+    return (
+      <div data-testid="step-duration">
+        <H t="Choose a duration" s="Pick a treatment first." />
+      </div>
+    );
+  }
+  const chooseDuration = (d) => {
+    const duration = Number(d);
+    patchDraft({
+      duration,
+      time: null,
+      idempotencyKey: undefined,
+      checkoutSessionId: null,
+      checkoutAmountCents: null,
+      depositCents: null,
+      invoiceId: null,
+      step: BOOKING_STEP.WHEN,
+    });
+  };
+  return (
+    <div data-testid="step-duration">
+      <H t={trialFlow ? "Confirm your free trial length" : "How long?"} s={trialFlow ? "Your trial is complimentary." : `${s.name} — optional enhancements first, then tap a length to continue.`} />
+      {/* Enhancements above duration so they are reachable before auto-advance. */}
+      {!trialFlow && idx.settings.addons?.length > 0 && (
+        <div className="mb-6">
+          <p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {idx.settings.addons.map((a) => (
+              <button key={a.id} type="button" onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>
+                {a.name} · +{money(a.price)}
+              </button>
+            ))}
+          </div>
         </div>
       )}
+      <div className="grid grid-cols-3 gap-2">
+        {Object.entries(s.prices).map(([d, p]) => (
+          <Tile key={d} on={String(draft.duration) === d} onClick={() => chooseDuration(d)} data-testid={`step-duration-${d}`}>
+            <span className="block text-center text-sm font-semibold">{d} min</span>
+            <span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span>
+          </Tile>
+        ))}
+      </div>
     </div>
   );
 }
@@ -105,6 +186,7 @@ export function StepService() {
 export function StepWhen() {
   const { draft, patchDraft, state, api } = useDemo();
   const days = Array.from({ length: 10 }, (_, i) => addDays(todayISO(), i));
+  const firstDay = days[0];
   const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   const pros = state.practitioners.filter((person) => {
@@ -112,18 +194,29 @@ export function StepWhen() {
     return publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug) || trialFlow);
   });
   const held = state.practitioners.find((person) => person.id === draft.practitionerId);
-  const date = draft.date || days[0];
+  const date = draft.date;
   const [slots, setSlots] = useState([]);
   const [recommended, setRecommended] = useState([]);
   const [showAll, setShowAll] = useState(false);
   const [note, setNote] = useState("");
+  // Keep the highlighted day and draft.date in sync (no phantom "today" selection).
+  useEffect(() => {
+    if (!draft.date && firstDay) patchDraft({ date: firstDay });
+  }, [draft.date, firstDay, patchDraft]);
   useEffect(() => {
     let cancel = false;
     const load = async () => {
+      if (!date) return;
       if (draft.locationType !== "clinic" && draft.address?.clientConfirmed !== true) {
         setSlots([]);
         setRecommended([]);
         setNote("Confirm the service address to see times that fit the route.");
+        return;
+      }
+      if (draft.locationType !== "clinic" && draft.address?.detailsSettled !== true) {
+        setSlots([]);
+        setRecommended([]);
+        setNote("Finish address details (suite or access) before choosing a time.");
         return;
       }
       try {
@@ -153,26 +246,32 @@ export function StepWhen() {
   }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address, draft.campaignId]);
   const visible = showAll ? slots : recommended;
   return (
-    <div>
+    <div data-testid="step-when">
       <H t="When works for you?" s="Times come from open practitioner schedules and the drive between visits. A recommendation is not a confirmed assignment." />
       <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
         {days.map((d) => (
-          <button key={d} onClick={() => { patchDraft({ date: d, time: null }); setShowAll(false); }} data-testid={`step-date-${d}`} className={`flex h-20 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border-2 transition-colors ${date === d ? "border-transparent text-white nb-gradient" : "border-sky-100 bg-white"}`}>
+          <button key={d} type="button" onClick={() => { patchDraft({ date: d, time: null }); setShowAll(false); }} data-testid={`step-date-${d}`} className={`flex h-20 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border-2 transition-colors ${date === d ? "border-transparent text-white nb-gradient" : "border-sky-100 bg-white"}`}>
             <span className={`text-[11px] uppercase ${date === d ? "text-white/80" : "text-nb-mute"}`}>{fmtDate(d, { weekday: "short" })}</span><span className="text-xl font-semibold">{fmtDate(d, { day: "numeric" })}</span><span className={`text-[10px] ${date === d ? "text-white/80" : "text-nb-mute"}`}>{fmtDate(d, { month: "short" })}</span>
           </button>))}
       </div>
       <p className="nb-label mt-6">Practitioner <span className="font-normal text-nb-mute">(optional)</span></p>
       <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
-        <button onClick={() => patchDraft({ practitionerId: "", time: null })} data-testid="step-pract-any" className={!draft.practitionerId ? "nb-chip-on" : "nb-chip-off"}>Best available</button>
-        {pros.map((p) => <button key={p.id} onClick={() => patchDraft({ practitionerId: p.id, time: null })} data-testid={`step-pract-${p.id}`} className={draft.practitionerId === p.id ? "nb-chip-on" : "nb-chip-off"}><Avatar person={p} size={22} />{p.name}</button>)}
+        <button type="button" onClick={() => patchDraft({ practitionerId: "", time: null })} data-testid="step-pract-any" className={!draft.practitionerId ? "nb-chip-on" : "nb-chip-off"}>Any Available Practitioner</button>
+        {pros.map((p) => <button key={p.id} type="button" onClick={() => patchDraft({ practitionerId: p.id, time: null })} data-testid={`step-pract-${p.id}`} className={draft.practitionerId === p.id ? "nb-chip-on" : "nb-chip-off"}><Avatar person={p} size={22} />{p.name}</button>)}
       </div>
-      {held && !pros.some((person) => person.id === held.id) && <p className="mt-2 text-sm text-red-700" data-testid="step-pract-mismatch">{held.name} does not offer this treatment. Choose another practitioner or best available.</p>}
-      <p className="nb-label mt-6">{showAll ? "Open times" : "Recommended times"} · {fmtDate(date)}</p>
+      {held && !pros.some((person) => person.id === held.id) && <p className="mt-2 text-sm text-red-700" data-testid="step-pract-mismatch">{held.name} does not offer this treatment. Choose another practitioner or Any Available Practitioner.</p>}
+      <p className="nb-label mt-6">{showAll ? "Open times" : "Recommended times"}{date ? ` · ${fmtDate(date)}` : ""}</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {visible.map((s) => (
-          <button key={s.time} onClick={() => patchDraft({ date, time: s.time })} data-testid={`step-time-${s.time}`} className={`rounded-2xl border-2 px-3 py-3 text-left text-sm ${draft.time === s.time && draft.date === date ? "border-nb-blue bg-nb-blue text-white" : "border-sky-100 bg-white"}`}>
-            <span className="block font-semibold">{fmtTime(s.time)}</span>
-            <span className={`mt-1 block text-xs ${draft.time === s.time && draft.date === date ? "text-white/80" : "text-nb-mute"}`}>{s.label || "Available"}</span>
+        {visible.map((slot) => (
+          <button
+            key={slot.time}
+            type="button"
+            onClick={() => patchDraft({ date, time: slot.time, step: BOOKING_STEP.YOU })}
+            data-testid={`step-time-${slot.time}`}
+            className={`rounded-2xl border-2 px-3 py-3 text-left text-sm ${draft.time === slot.time && draft.date === date ? "border-nb-blue bg-nb-blue text-white" : "border-sky-100 bg-white"}`}
+          >
+            <span className="block font-semibold">{fmtTime(slot.time)}</span>
+            <span className={`mt-1 block text-xs ${draft.time === slot.time && draft.date === date ? "text-white/80" : "text-nb-mute"}`}>{slot.label || "Available"}</span>
           </button>
         ))}
       </div>
@@ -277,7 +376,12 @@ export function StepPay() {
   const policy = idx.settings.paymentPolicy || {};
   const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
   const selected = paymentChoice(draft, idx.settings);
-  const choose = (payNow) => patchDraft({ paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card" });
+  const choose = (payNow) => patchDraft({
+    paymentMethod: "self",
+    payNow,
+    selfMethod: payNow === "cash" ? "cash" : "card",
+    step: BOOKING_STEP.REVIEW,
+  });
   if (trialFlow) {
     return (
       <div data-testid="step-pay-trial">

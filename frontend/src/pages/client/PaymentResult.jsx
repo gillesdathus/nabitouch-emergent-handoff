@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { CheckCircle2, Clock3, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Clock3, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { useDemo } from "@/store/DemoStore";
 import { homeFor } from "@/lib/workspaces";
+import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 
 const STATES = {
   confirmed: ["Payment confirmed", "Your verified payment is recorded. Thank you."],
@@ -14,6 +15,13 @@ const STATES = {
   partially_refunded: ["Payment partially refunded", "A verified partial refund is recorded in your billing account."],
   unavailable: ["Payment verification temporarily unavailable", "We could not verify this payment. Check again or contact Nabitouch before making another payment."],
 };
+
+function ResultIcon({ state }) {
+  if (state === "confirmed") return <CheckCircle2 className="h-7 w-7" />;
+  if (state === "pending") return <Clock3 className="h-7 w-7" />;
+  if (state === "failed" || state === "cancelled") return <XCircle className="h-7 w-7" />;
+  return <ShieldCheck className="h-7 w-7" />;
+}
 
 export default function PaymentResult() {
   const { user } = useDemo();
@@ -45,7 +53,21 @@ export default function PaymentResult() {
     return () => { stopped = true; clearTimeout(timer); };
   }, [sid, Boolean(user), attempt]);
   const login = "/login?next=" + encodeURIComponent(location.pathname + location.search);
-  if (!user || needsLogin) return <div className="mx-auto max-w-xl px-5 py-14 text-center"><h1 className="text-2xl font-semibold">Sign in to verify your payment</h1><p className="mt-3 text-sm text-nb-mute">Payment details are available only through your authenticated account.</p><Link className="nb-btn-primary mt-6" to={login}>Sign in</Link></div>;
+  if (!user || needsLogin) {
+    return (
+      <CompletionScreen
+        testid="payment-result-signin"
+        actionsTestid="payment-result-actions"
+        actions={<Link className="nb-btn-primary h-12 w-full" to={login} data-testid="payment-result-signin-btn">Sign in</Link>}
+      >
+        <CompletionHero
+          mark={<span className="grid h-12 w-12 place-items-center rounded-2xl tint-lagoon text-nb-teal"><ShieldCheck className="h-7 w-7" /></span>}
+          title="Sign in to verify your payment"
+          subtitle="Payment details are available only through your authenticated account."
+        />
+      </CompletionScreen>
+    );
+  }
   const state = result ? (STATES[result.status] ? result.status : "unavailable") : sid ? "pending" : "unavailable";
   const [title, detail] = STATES[state];
   const cancel = async () => {
@@ -54,17 +76,34 @@ export default function PaymentResult() {
     catch { setResult({ status: "unavailable" }); }
     finally { setBusy(false); }
   };
-  return <div className="mx-auto max-w-xl px-5 py-14 nb-page" data-testid="payment-result-page">
-    <div className="nb-card rounded-3xl p-6 sm:p-8" role="status" aria-live="polite" data-testid={`payment-result-${state}`}>
-      <div className="mb-5 grid h-14 w-14 place-items-center rounded-2xl tint-lagoon text-nb-teal">{state === "confirmed" ? <CheckCircle2 /> : state === "pending" ? <Clock3 /> : <ShieldCheck />}</div>
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="mt-3 text-sm text-nb-mute">{detail}</p>
-      {result?.amount && <p className="mt-5 text-sm">Payment amount <b className="nb-num">{result.amount.display}</b></p>}
-      {result?.balance && <p className="mt-2 text-sm">Invoice balance <b className="nb-num">{result.balance.display}</b></p>}
-      <div className="mt-6 flex flex-wrap gap-3">
-        {sid && <button type="button" className="nb-btn-primary" disabled={busy} onClick={() => setAttempt((n) => n + 1)}><RefreshCw className={busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />Check again</button>}
-        <Link className="nb-btn-ghost" to={user.role === "client" ? "/me/billing" : homeFor(user)}>Back to my account</Link>
-        {state === "pending" && sid && <button type="button" className="nb-btn-ghost" disabled={busy} onClick={cancel}>Cancel this checkout</button>}
+  const accountHref = user.role === "client" ? "/me/billing" : homeFor(user);
+  return (
+    <CompletionScreen
+      testid="payment-result-page"
+      actionsTestid="payment-result-actions"
+      actions={(
+        <div className="flex w-full flex-col gap-2 sm:flex-row">
+          {sid && (
+            <button type="button" className="nb-btn-primary h-12 flex-1" disabled={busy} onClick={() => setAttempt((n) => n + 1)} data-testid="payment-result-retry">
+              <RefreshCw className={busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />Check again
+            </button>
+          )}
+          <Link className="nb-btn-ghost h-12 flex-1" to={accountHref} data-testid="payment-result-account">Back to my account</Link>
+          {state === "pending" && sid && (
+            <button type="button" className="nb-btn-ghost h-12 flex-1" disabled={busy} onClick={cancel} data-testid="payment-result-cancel-checkout">Cancel this checkout</button>
+          )}
+        </div>
+      )}
+    >
+      <div className="nb-card rounded-3xl p-5 text-left sm:p-6" role="status" aria-live="polite" data-testid={`payment-result-${state}`}>
+        <CompletionHero
+          mark={<span className="grid h-12 w-12 place-items-center rounded-2xl tint-lagoon text-nb-teal"><ResultIcon state={state} /></span>}
+          title={title}
+          subtitle={detail}
+        />
+        {result?.amount && <p className="mt-4 text-sm">Payment amount <b className="nb-num">{result.amount.display}</b></p>}
+        {result?.balance && <p className="mt-1 text-sm">Invoice balance <b className="nb-num">{result.balance.display}</b></p>}
       </div>
-    </div>
-  </div>;
+    </CompletionScreen>
+  );
 }

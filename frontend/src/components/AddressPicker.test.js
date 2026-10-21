@@ -18,10 +18,42 @@ beforeEach(() => {
   api.geoConfirm.mockReset();
 });
 
-function Harness() {
+const eligibleCheck = {
+  eligible: true,
+  line: "10150 104 St NW, Edmonton, AB",
+  area: "Downtown",
+  zone: { id: "z-central", name: "Central Edmonton", fee: 0 },
+  travel: 0,
+  mapboxId: "local-downtown",
+  postalNormalized: "T5J 2R4",
+};
+
+const acceptedConfirm = {
+  accepted: true,
+  confidence: "address",
+  line: "10150 104 St NW, Edmonton, AB",
+  postalNormalized: "T5J 2R4",
+  lat: 53.54,
+  lng: -113.49,
+  mapboxId: "local-downtown",
+  travel: 0,
+};
+
+function Harness({ onAdvance } = {}) {
   const [query, setQuery] = useState("");
   const [value, setValue] = useState(null);
-  return <AddressPicker value={value} onChange={setValue} query={query} onQuery={setQuery} />;
+  const [notes, setNotes] = useState("");
+  return (
+    <AddressPicker
+      value={value}
+      onChange={setValue}
+      query={query}
+      onQuery={setQuery}
+      notes={notes}
+      onNotes={setNotes}
+      onAdvance={onAdvance}
+    />
+  );
 }
 
 function mount(ui) {
@@ -34,7 +66,8 @@ function mount(ui) {
     async find(testid) {
       const started = Date.now();
       while (Date.now() - started < 2000) {
-        const found = host.querySelector(`[data-testid="${testid}"]`);
+        const found = host.querySelector(`[data-testid="${testid}"]`)
+          || document.querySelector(`[data-testid="${testid}"]`);
         if (found) return found;
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
       }
@@ -54,22 +87,109 @@ function type(input, value) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-test("shows an Edmonton suggestion and the server travel fee", async () => {
+async function pickDowntown(view) {
   api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
-  api.geoCheck.mockResolvedValue({
-    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
-    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "local-downtown",
-  });
-  const view = mount(<Harness />);
+  api.geoCheck.mockResolvedValue({ ...eligibleCheck });
   await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
   const option = await view.find("address-option-0");
   await act(async () => { option.click(); });
-  const ok = await view.find("address-zone-ok");
-  expect(ok.textContent).toMatch(/Central Edmonton/);
-  expect(ok.textContent).toMatch(/included/);
-  const unit = view.host.querySelector("[data-testid=address-unit-input]");
-  await act(async () => { type(unit, "Unit 4"); });
-  expect(unit.value).toBe("Unit 4");
+  await view.find("address-confirm-card");
+}
+
+test("autocomplete selection hides search and shows read-only confirm card", async () => {
+  const view = mount(<Harness />);
+  await pickDowntown(view);
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeNull();
+  expect(view.host.querySelector("[data-testid=address-unit-input]")).toBeNull();
+  expect(view.host.querySelector("[data-testid=address-postal-input]")).toBeNull();
+  expect((await view.find("address-confirm-prompt")).textContent).toMatch(/correct service address/i);
+  expect((await view.find("address-card-locality")).textContent).toMatch(/T5J 2R4/);
+  expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
+  view.cleanup();
+});
+
+test("Confirm Address opens additional-details choice; No advances", async () => {
+  const onAdvance = vi.fn();
+  api.geoConfirm.mockResolvedValue({ ...acceptedConfirm });
+  const view = mount(<Harness onAdvance={onAdvance} />);
+  await pickDowntown(view);
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(await view.find("address-details-ask")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-unit-input]")).toBeNull();
+  expect((await view.find("address-details-prompt")).textContent).toMatch(/suite, buzzer/i);
+  await act(async () => { (await view.find("address-details-no")).click(); });
+  expect(onAdvance).toHaveBeenCalledTimes(1);
+  expect(await view.find("address-confirm-card")).toBeTruthy();
+  expect((await view.find("address-confirmed")).textContent).toMatch(/Address confirmed/);
+  view.cleanup();
+});
+
+test("Yes reveals optional fields; Continue preserves suite, buzzer, and notes", async () => {
+  const onAdvance = vi.fn();
+  let notes = "";
+  let settled = null;
+  function Tracked() {
+    const [query, setQuery] = useState("");
+    const [value, setValue] = useState(null);
+    const [n, setN] = useState("");
+    return (
+      <AddressPicker
+        value={value}
+        onChange={(v) => { settled = v; setValue(v); }}
+        query={query}
+        onQuery={setQuery}
+        notes={n}
+        onNotes={(v) => { notes = v; setN(v); }}
+        onAdvance={onAdvance}
+      />
+    );
+  }
+  api.geoConfirm.mockResolvedValue({ ...acceptedConfirm });
+  const view = mount(<Tracked />);
+  await pickDowntown(view);
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  await act(async () => { (await view.find("address-details-yes")).click(); });
+  expect(await view.find("address-details-form")).toBeTruthy();
+  await act(async () => { type(view.host.querySelector("[data-testid=address-unit-input]"), "4"); });
+  await act(async () => { type(view.host.querySelector("[data-testid=address-access-input]"), "Buzz 12"); });
+  await act(async () => { type(view.host.querySelector("[data-testid=address-notes-input]"), "Park visitor"); });
+  await act(async () => { (await view.find("address-details-continue")).click(); });
+  expect(onAdvance).toHaveBeenCalledTimes(1);
+  expect(settled.unit).toBe("4");
+  expect(settled.access).toBe("Buzz 12");
+  expect(settled.detailsSettled).toBe(true);
+  expect(settled.postal).toBe("T5J 2R4");
+  expect(notes).toBe("Park visitor");
+  view.cleanup();
+});
+
+test("Change address returns to search; Back from confirm keeps selection until change", async () => {
+  api.geoConfirm.mockResolvedValue({ ...acceptedConfirm });
+  const view = mount(<Harness />);
+  await pickDowntown(view);
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeNull();
+  await act(async () => { (await view.find("address-change")).click(); });
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-confirm-card]")).toBeNull();
+  view.cleanup();
+});
+
+test("incomplete address requests only the missing postal code", async () => {
+  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
+  api.geoCheck.mockResolvedValue({ ...eligibleCheck, postalNormalized: "" });
+  api.geoConfirm.mockResolvedValue({ ...acceptedConfirm });
+  const view = mount(<Harness />);
+  await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+  await act(async () => { (await view.find("address-option-0")).click(); });
+  expect(await view.find("address-incomplete-postal")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-unit-input]")).toBeNull();
+  expect(document.querySelector("[data-testid=address-confirm]").disabled).toBe(true);
+  await act(async () => { type(view.host.querySelector("[data-testid=address-postal-input]"), "T5J 2R4"); });
+  expect(document.querySelector("[data-testid=address-confirm]").disabled).toBe(false);
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(api.geoConfirm).toHaveBeenCalledWith(expect.objectContaining({ postal: "T5J 2R4" }));
+  expect(await view.find("address-details-ask")).toBeTruthy();
   view.cleanup();
 });
 
@@ -101,24 +221,31 @@ test("shows a configuration error when address search is unavailable", async () 
 });
 
 test("coverage check can succeed while confirm still surfaces storage configuration failures", async () => {
-  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "mbx-1", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
-  api.geoCheck.mockResolvedValue({
-    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
-    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "mbx-1",
-  });
   api.geoConfirm.mockRejectedValue(new Error("Address confirmation requires Mapbox storage configuration. Contact Nabitouch."));
   const view = mount(<Harness />);
-  await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
-  const option = await view.find("address-option-0");
-  await act(async () => { option.click(); });
-  expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
-  const confirm = await view.find("address-confirm");
-  await act(async () => { confirm.click(); });
+  await pickDowntown(view);
+  await act(async () => { (await view.find("address-confirm")).click(); });
   expect((await view.find("address-error")).textContent).toMatch(/storage configuration/);
   view.cleanup();
 });
 
-test("GPS coverage uses geoCheck with coordinates only", async () => {
+test("GPS permission denied shows recovery copy and keeps the street field", async () => {
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    geolocation: {
+      getCurrentPosition: (_ok, err) => err({ code: 1, message: "denied" }),
+    },
+  });
+  const view = mount(<Harness />);
+  await act(async () => { view.host.querySelector("[data-testid=address-geolocate-btn]").click(); });
+  expect((await view.find("address-error")).textContent).toMatch(/couldn't read your location/i);
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-confirm-card]")).toBeNull();
+  view.cleanup();
+  vi.unstubAllGlobals();
+});
+
+test("GPS coverage uses geoCheck with coordinates only and opens confirm card", async () => {
   const position = { coords: { latitude: 53.54, longitude: -113.49 } };
   vi.stubGlobal("navigator", {
     ...navigator,
@@ -126,43 +253,30 @@ test("GPS coverage uses geoCheck with coordinates only", async () => {
       getCurrentPosition: (ok) => ok(position),
     },
   });
-  api.geoCheck.mockResolvedValue({
-    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
-    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "mbx-gps",
-  });
+  api.geoCheck.mockResolvedValue({ ...eligibleCheck, mapboxId: "mbx-gps" });
   const view = mount(<Harness />);
   await act(async () => { view.host.querySelector("[data-testid=address-geolocate-btn]").click(); });
   expect(api.geoCheck).toHaveBeenCalledWith({ lat: 53.54, lng: -113.49 });
-  expect((await view.find("address-zone-ok")).textContent).toMatch(/Central Edmonton/);
+  expect(await view.find("address-confirm-card")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-input]")).toBeNull();
+  expect((await view.find("address-card-detected")).textContent).toMatch(/Location detected/);
   view.cleanup();
   vi.unstubAllGlobals();
 });
 
 test("requires an explicit confirm and does not treat an approximate match as verified", async () => {
-  api.geoSuggest.mockResolvedValue({ suggestions: [{ id: "local-downtown", label: "10150 104 St NW, Edmonton, AB", area: "Downtown" }] });
-  api.geoCheck.mockResolvedValue({
-    eligible: true, line: "10150 104 St NW, Edmonton, AB", area: "Downtown",
-    zone: { id: "z-central", name: "Central Edmonton", fee: 0 }, travel: 0, mapboxId: "local-downtown",
-  });
   api.geoConfirm.mockResolvedValueOnce({
     accepted: false, confidence: "approximate", line: "10150 104 St NW, Edmonton, AB", postalNormalized: "",
   });
   const view = mount(<Harness />);
-  await act(async () => { type(view.host.querySelector("[data-testid=address-input]"), "104 St NW"); });
-  const option = await view.find("address-option-0");
-  await act(async () => { option.click(); });
-  const confirm = await view.find("address-confirm");
-  await act(async () => { type(view.host.querySelector("[data-testid=address-postal-input]"), "T5J 2R4"); });
-  await act(async () => { confirm.click(); });
-  expect((await view.find("address-error")).textContent).toMatch(/not a verified civic address/);
-  expect(view.host.querySelector("[data-testid=address-confirmed]")).toBeNull();
-
-  api.geoConfirm.mockResolvedValueOnce({
-    accepted: true, confidence: "address", line: "10150 104 St NW, Edmonton, AB",
-    postalNormalized: "T5J 2R4", lat: 53.54, lng: -113.49, mapboxId: "local-downtown", travel: 0,
-  });
+  await pickDowntown(view);
   await act(async () => { (await view.find("address-confirm")).click(); });
-  expect((await view.find("address-confirmed")).textContent).toMatch(/confirmed this civic address/);
+  expect((await view.find("address-error")).textContent).toMatch(/not a verified civic address/);
+  expect(view.host.querySelector("[data-testid=address-details-ask]")).toBeNull();
+
+  api.geoConfirm.mockResolvedValueOnce({ ...acceptedConfirm });
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(await view.find("address-details-ask")).toBeTruthy();
   view.cleanup();
 });
 

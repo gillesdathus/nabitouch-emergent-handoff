@@ -1,4 +1,7 @@
-"""Wellness plans: prepaid packages and memberships, per-credit ledger, booking reservation and Stripe test checkout."""
+"""Wellness plans: prepaid packages and memberships, per-credit ledger, booking reservation and Stripe test checkout.
+
+Nabitouch Rewards packages reuse this ledger. See package_program.py for tier pricing and eligibility.
+"""
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -8,6 +11,14 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from config import payments_simulated, stripe_card_checkout_enabled
+from package_program import (
+    build_tier_product,
+    credit_matches_treatment,
+    eligible_slugs_for_duration,
+    launch_package_program,
+    tier_product_id,
+    validate_package_program,
+)
 
 KINDS = ("package", "membership")
 STATUSES = ("draft", "published", "paused", "archived")
@@ -52,16 +63,42 @@ async def _log(db, credit, kind, key, actor="system", appointment_id=None, note=
 
 
 async def expire_stale(db, client_id):
+    """Expire dated credits only. Credits with expiresAt null/missing never auto-forfeit."""
     stamp = now_iso()
-    rows = await db.nt_credits.find({"clientId": client_id, "state": "available", "expiresAt": {"$lt": stamp}}, {"_id": 0}).to_list(500)
+    rows = await db.nt_credits.find(
+        {"clientId": client_id, "state": "available", "expiresAt": {"$type": "string", "$lt": stamp}},
+        {"_id": 0},
+    ).to_list(500)
     for credit in rows:
+        if not credit.get("expiresAt"):
+            continue
         if await db.nt_credits.find_one_and_update({"id": credit["id"], "state": "available"}, {"$set": {"state": "expired", "expiredAt": stamp}}):
             await _log(db, credit, "expired", f"expire-{credit['id']}")
 
 
+async def _find_available_credit(db, client_id, slug, duration):
+    """Prefer exact service match, then flexible Rewards eligibleSlugs of the same duration."""
+    duration = int(duration)
+    exact = await db.nt_credits.find(
+        {"clientId": client_id, "state": "available", "serviceSlug": slug, "duration": duration},
+        {"_id": 0},
+    ).sort([("expiresAt", 1)]).to_list(20)
+    for row in exact:
+        if credit_matches_treatment(row, slug, duration):
+            return row
+    flexible = await db.nt_credits.find(
+        {"clientId": client_id, "state": "available", "duration": duration, "eligibleSlugs": slug},
+        {"_id": 0},
+    ).sort([("expiresAt", 1)]).to_list(20)
+    for row in flexible:
+        if credit_matches_treatment(row, slug, duration):
+            return row
+    return None
+
+
 async def available_credit(db, client_id, slug, duration):
     await expire_stale(db, client_id)
-    return await db.nt_credits.find_one({"clientId": client_id, "state": "available", "serviceSlug": slug, "duration": int(duration)}, {"_id": 0}, sort=[("expiresAt", 1)])
+    return await _find_available_credit(db, client_id, slug, duration)
 
 
 def credit_quote(quoted, unit_cents, gst, service):
@@ -70,16 +107,19 @@ def credit_quote(quoted, unit_cents, gst, service):
     credit = min(round(unit_cents / 100, 2), base)
     subtotal = round(float(quoted["addons"]) + float(quoted["travel"]), 2)
     tax = 0.0 if (service or {}).get("taxable") is False else round(subtotal * gst, 2)
-    return {**quoted, "discount": base, "promoId": None, "promoName": "Wellness package credit", "promoCode": None, "welcomeOffer": False, "appliedPromoIds": [],
+    return {**quoted, "discount": base, "promoId": None, "promoName": "Prepaid package credit", "promoCode": None, "welcomeOffer": False, "appliedPromoIds": [],
             "tax": tax, "total": round(subtotal + tax, 2), "treatmentAfterDiscount": 0.0, "packageCredit": True, "creditUnit": credit}
 
 
 async def reserve_credit(db, client_id, slug, duration, appointment_id, actor):
     await expire_stale(db, client_id)
+    found = await _find_available_credit(db, client_id, slug, duration)
+    if not found:
+        raise HTTPException(409, "No package credit is available for this treatment")
     credit = await db.nt_credits.find_one_and_update(
-        {"clientId": client_id, "state": "available", "serviceSlug": slug, "duration": int(duration)},
+        {"id": found["id"], "state": "available"},
         {"$set": {"state": "reserved", "appointmentId": appointment_id, "reservedAt": now_iso()}},
-        sort=[("expiresAt", 1)], return_document=ReturnDocument.AFTER, projection={"_id": 0})
+        return_document=ReturnDocument.AFTER, projection={"_id": 0})
     if not credit:
         raise HTTPException(409, "No package credit is available for this treatment")
     await _log(db, credit, "reserved", f"reserve-{credit['id']}-{appointment_id}", actor, appointment_id)
@@ -102,13 +142,36 @@ async def release_credit(db, appointment_id, actor="system", note=None):
     return credit
 
 
-async def issue_credits(db, purchase):
+def _credit_expiry(purchase):
+    """None means no automatic forfeiture (Rewards launch default)."""
+    if purchase.get("noExpiry") is True or purchase.get("validityDays") in (None, 0, "0"):
+        return None
     days = int(purchase.get("validityDays") or 365)
-    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
+async def issue_credits(db, purchase):
+    expires = _credit_expiry(purchase)
+    eligible = purchase.get("eligibleSlugs")
+    if not isinstance(eligible, list) or not eligible:
+        eligible = [purchase["serviceSlug"]] if purchase.get("serviceSlug") else []
     for n in range(int(purchase["credits"])):
-        credit = {"id": f"cr-{purchase['id'][-10:]}-{n + 1}", "purchaseId": purchase["id"], "productId": purchase["productId"], "clientId": purchase["clientId"],
-                  "kind": purchase["kind"], "serviceSlug": purchase["serviceSlug"], "duration": purchase["duration"], "unitCents": purchase["unitCents"],
-                  "state": "available", "appointmentId": None, "issuedAt": now_iso(), "expiresAt": expires}
+        credit = {
+            "id": f"cr-{purchase['id'][-10:]}-{n + 1}",
+            "purchaseId": purchase["id"],
+            "productId": purchase["productId"],
+            "clientId": purchase["clientId"],
+            "kind": purchase["kind"],
+            "serviceSlug": purchase["serviceSlug"],
+            "eligibleSlugs": list(eligible),
+            "duration": purchase["duration"],
+            "unitCents": purchase["unitCents"],
+            "state": "available",
+            "appointmentId": None,
+            "issuedAt": now_iso(),
+            "expiresAt": expires,
+            "noExpiry": expires is None,
+        }
         try:
             await db.nt_credits.insert_one(dict(credit))
         except DuplicateKeyError:
@@ -120,11 +183,37 @@ def _purchase_doc(product, client_id, key, gst, kind=None, membership_id=None):
     price = int(product["priceCents"])
     tax = round(price * gst)
     credits = int(product["credits"])
-    return {"id": "pp-" + uuid.uuid4().hex[:10], "idempotencyKey": key, "productId": product["id"], "productName": product["name"], "kind": kind or product["kind"],
-            "clientId": client_id, "serviceSlug": product["serviceSlug"], "serviceName": product.get("serviceName"), "duration": int(product["duration"]),
-            "credits": credits, "priceCents": price, "taxCents": tax, "totalCents": price + tax, "unitCents": price // credits if credits else 0,
-            "validityDays": int(product.get("validityDays") or (60 if product["kind"] == "membership" else 365)), "membershipId": membership_id,
-            "status": "pending_payment", "refundedCents": 0, "createdAt": now_iso()}
+    no_expiry = bool(product.get("noExpiry")) or product.get("validityDays") in (None, 0)
+    if no_expiry and (kind or product["kind"]) == "package":
+        validity = None
+    else:
+        validity = int(product.get("validityDays") or (60 if product["kind"] == "membership" else 365))
+    eligible = product.get("eligibleSlugs")
+    if not isinstance(eligible, list) or not eligible:
+        eligible = [product["serviceSlug"]]
+    return {
+        "id": "pp-" + uuid.uuid4().hex[:10],
+        "idempotencyKey": key,
+        "productId": product["id"],
+        "productName": product["name"],
+        "kind": kind or product["kind"],
+        "clientId": client_id,
+        "serviceSlug": product["serviceSlug"],
+        "serviceName": product.get("serviceName"),
+        "duration": int(product["duration"]),
+        "credits": credits,
+        "priceCents": price,
+        "taxCents": tax,
+        "totalCents": price + tax,
+        "unitCents": price // credits if credits else 0,
+        "validityDays": validity,
+        "noExpiry": bool(no_expiry and (kind or product["kind"]) == "package"),
+        "eligibleSlugs": list(eligible),
+        "membershipId": membership_id,
+        "status": "pending_payment",
+        "refundedCents": 0,
+        "createdAt": now_iso(),
+    }
 
 
 async def settle_checkout(db, checkout_row, obj, event_id, add_audit):
@@ -184,7 +273,20 @@ async def subscription_event(db, kind, obj, add_audit):
 
 
 def public_product(p):
-    return {**p, "price": money(p["priceCents"]), "perCredit": money(p["priceCents"] // max(1, int(p["credits"])))}
+    row = {**p, "price": money(p["priceCents"]), "perCredit": money(p["priceCents"] // max(1, int(p["credits"])))}
+    if p.get("eligibleSlugs"):
+        row["eligibleSlugs"] = list(p["eligibleSlugs"])
+    if "noExpiry" in p or p.get("validityDays") is None:
+        row["noExpiry"] = bool(p.get("noExpiry") or p.get("validityDays") is None)
+    return row
+
+
+async def load_package_program(db):
+    row = await db.nt_settings.find_one({"id": "app"}, {"_id": 0, "packageProgram": 1}) or {}
+    stored = row.get("packageProgram")
+    if not isinstance(stored, dict):
+        return launch_package_program()
+    return validate_package_program(stored)
 
 
 async def plans_report(db, start, end):
@@ -244,17 +346,134 @@ def build_plans_router(db, coll, add_audit, user_from):
             raise HTTPException(400, "Credits must be between 1 and 24")
         if not isinstance(price, int) or not 100 <= price <= MAX_CENTS:
             raise HTTPException(400, "Price must be between $1 and $5,000")
-        validity = body.get("validityDays") or (60 if kind == "membership" else 365)
-        if not isinstance(validity, int) or not 7 <= validity <= 730:
-            raise HTTPException(400, "Validity must be between 7 and 730 days")
-        return {"kind": kind, "name": name, "description": str(body.get("description") or "")[:240], "serviceSlug": service["slug"], "serviceName": service.get("name"),
-                "duration": int(duration), "credits": credits, "priceCents": price, "validityDays": validity, "regularCents": round(float(service["prices"][str(duration)]) * 100) * credits,
-                "order": int(body.get("order") or 0)}
+        no_expiry = bool(body.get("noExpiry")) or body.get("validityDays") in (None, 0, "0")
+        if kind == "package" and no_expiry:
+            validity = None
+        else:
+            validity = body.get("validityDays") if body.get("validityDays") is not None else (60 if kind == "membership" else 365)
+            validity = int(validity)
+            if not 7 <= validity <= 730:
+                raise HTTPException(400, "Validity must be between 7 and 730 days, or no expiry for packages")
+        eligible = body.get("eligibleSlugs")
+        if isinstance(eligible, list) and eligible:
+            clean_eligible = []
+            for slug in eligible:
+                row = await coll("services").find_one({"slug": slug}, {"_id": 0, "slug": 1, "prices": 1})
+                if row and str(duration) in (row.get("prices") or {}):
+                    clean_eligible.append(row["slug"])
+            if not clean_eligible:
+                clean_eligible = [service["slug"]]
+        else:
+            clean_eligible = [service["slug"]]
+        list_cents = round(float(service["prices"][str(duration)]) * 100)
+        return {
+            "kind": kind,
+            "name": name,
+            "description": str(body.get("description") or "")[:240],
+            "serviceSlug": service["slug"],
+            "serviceName": service.get("name"),
+            "duration": int(duration),
+            "credits": credits,
+            "priceCents": price,
+            "validityDays": validity,
+            "noExpiry": bool(kind == "package" and no_expiry),
+            "eligibleSlugs": clean_eligible,
+            "regularCents": int(body["regularCents"]) if isinstance(body.get("regularCents"), int) else list_cents * credits,
+            "discountPerSessionCents": int(body["discountPerSessionCents"]) if isinstance(body.get("discountPerSessionCents"), int) else None,
+            "rewardsPackage": bool(body.get("rewardsPackage")),
+            "order": int(body.get("order") or 0),
+        }
+
+    @r.get("/program")
+    async def get_program(request: Request):
+        await actor(request, "owner")
+        program = await load_package_program(db)
+        return {"program": program}
+
+    @r.put("/program")
+    async def put_program(request: Request):
+        user = await actor(request, "owner")
+        services = await coll("services").find({}, {"_id": 0, "slug": 1, "prices": 1, "kind": 1}).to_list(200)
+        try:
+            program = validate_package_program(await body_of(request), services=services)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        await db.nt_settings.update_one({"id": "app"}, {"$set": {"packageProgram": program}}, upsert=True)
+        await add_audit(user.get("name") or "owner", "Rewards package program settings updated")
+        return {"program": program}
+
+    @r.post("/program/seed-tiers")
+    async def seed_reward_tiers(request: Request):
+        """Upsert draft Rewards tier products from catalogue prices. Does not publish or delete legacy packs."""
+        user = await actor(request, "owner")
+        program = await load_package_program(db)
+        services = await coll("services").find({}, {"_id": 0}).to_list(200)
+        by_slug = {s["slug"]: s for s in services if s.get("slug")}
+        ref = by_slug.get(program["referencePricingSlug"]) or by_slug.get("swedish")
+        if not ref:
+            raise HTTPException(409, "Reference pricing service is missing from the catalogue")
+        created, updated = [], []
+        order = 10
+        for duration in program["eligibleDurations"]:
+            if str(duration) not in (ref.get("prices") or {}):
+                continue
+            eligible = eligible_slugs_for_duration(program, services, duration)
+            if not eligible:
+                continue
+            for tier in program["packageTiers"]:
+                pid = tier_product_id(duration, tier["sessions"])
+                try:
+                    fields = build_tier_product(
+                        duration=duration,
+                        sessions=tier["sessions"],
+                        discount_cents=tier["discountCents"],
+                        service=ref,
+                        eligible_slugs=eligible,
+                        no_expiry=bool(program.get("noExpiryAtLaunch")),
+                        order=order,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                order += 1
+                existing = await db.nt_plan_products.find_one({"id": pid}, {"_id": 0})
+                if existing:
+                    sold = await db.nt_plan_purchases.count_documents({"productId": pid, "status": {"$ne": "pending_payment"}})
+                    if sold:
+                        continue
+                    patch = {k: fields[k] for k in fields if k != "status"}
+                    # Keep owner publication state; only refresh pricing/eligibility for unsold drafts.
+                    await db.nt_plan_products.update_one({"id": pid}, {"$set": patch})
+                    updated.append(pid)
+                else:
+                    doc = {"id": pid, **fields, "createdAt": now_iso()}
+                    await db.nt_plan_products.insert_one(dict(doc))
+                    created.append(pid)
+        await add_audit(user.get("name") or "owner", f"Rewards package tiers seeded ({len(created)} new, {len(updated)} refreshed)")
+        rows = await db.nt_plan_products.find({"id": {"$in": created + updated}}, {"_id": 0}).to_list(100)
+        return {"created": created, "updated": updated, "products": [public_product(p) for p in rows], "program": program}
 
     @r.get("")
     async def published():
+        program = await load_package_program(db)
         rows = await db.nt_plan_products.find({"status": "published"}, {"_id": 0}).sort("order", 1).to_list(50)
-        return {"products": [public_product(p) for p in rows], "checkoutEnabled": stripe_card_checkout_enabled() and os.environ.get("PAYMENT_MODE") != "test"}
+        # Pausing Rewards sales hides Rewards packages; legacy published packs stay listed for redemption UX.
+        if not program.get("salesEnabled"):
+            rows = [p for p in rows if not p.get("rewardsPackage")]
+        checkout_ok = (
+            bool(program.get("salesEnabled"))
+            and stripe_card_checkout_enabled()
+            and os.environ.get("PAYMENT_MODE") != "test"
+        )
+        return {
+            "products": [public_product(p) for p in rows],
+            "checkoutEnabled": checkout_ok,
+            "packageProgram": {
+                "salesEnabled": bool(program.get("salesEnabled")),
+                "noExpiryAtLaunch": bool(program.get("noExpiryAtLaunch")),
+                "eligibleServiceSlugs": program.get("eligibleServiceSlugs") or [],
+                "eligibleDurations": program.get("eligibleDurations") or [],
+            },
+        }
 
     @r.get("/products")
     async def products(request: Request):
@@ -278,7 +497,7 @@ def build_plans_router(db, coll, add_audit, user_from):
         current = await db.nt_plan_products.find_one({"id": pid}, {"_id": 0})
         if not current:
             raise HTTPException(404, "Plan not found")
-        if sold and any(fields[k] != current.get(k) for k in ("kind", "serviceSlug", "duration", "credits")):
+        if sold and any(fields.get(k) != current.get(k) for k in ("kind", "serviceSlug", "duration", "credits", "eligibleSlugs", "noExpiry", "validityDays")):
             raise HTTPException(409, "This plan has been sold. Archive it and create a new one to change what it includes.")
         saved = await db.nt_plan_products.find_one_and_update({"id": pid}, {"$set": fields}, return_document=ReturnDocument.AFTER, projection={"_id": 0})
         await add_audit(user.get("name") or "owner", f"Wellness plan {saved['name']} updated")
@@ -355,6 +574,10 @@ def build_plans_router(db, coll, add_audit, user_from):
         product = await db.nt_plan_products.find_one({"id": pid, "status": "published", "kind": kind}, {"_id": 0})
         if not product:
             raise HTTPException(404, "That plan is not available")
+        if kind == "package":
+            program = await load_package_program(db)
+            if product.get("rewardsPackage") and not program.get("salesEnabled"):
+                raise HTTPException(409, "Prepaid package sales are paused. Existing credits can still be redeemed.")
         return product
 
     def idem(body):
@@ -396,6 +619,11 @@ def build_plans_router(db, coll, add_audit, user_from):
             if await available_credit(db, cid, v["serviceSlug"], v["duration"]):
                 return {"nudge": None}
             plan = await db.nt_plan_products.find_one({"status": "published", "kind": "package", "serviceSlug": v["serviceSlug"], "duration": int(v["duration"])}, {"_id": 0}, sort=[("order", 1)])
+            if not plan:
+                plan = await db.nt_plan_products.find_one(
+                    {"status": "published", "kind": "package", "duration": int(v["duration"]), "eligibleSlugs": v["serviceSlug"]},
+                    {"_id": 0}, sort=[("order", 1)],
+                )
             if not plan:
                 continue
             saving = int(plan.get("regularCents") or 0) - int(plan["priceCents"])

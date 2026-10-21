@@ -8,7 +8,7 @@ import { resolvePractitionerId } from '@/lib/practitionerIdentity';
 const Ctx = createContext(null);
 const TrainingBridge = createContext(null);
 const LS = { client: 'nt_demo_client', pract: 'nt_demo_pract', owner: 'nt_demo_owner' };
-const emptyDraft = () => ({ step: 0, locationType: 'home', address: null, addressQuery: '', addressNotes: '', forceWhere: false, serviceId: null, serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, checkoutSessionId: null, checkoutAmountCents: null, invoiceId: null, depositCents: null, idempotencyKey: undefined, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', insuranceStatus: '', marketingConsent: false } });
+const emptyDraft = () => ({ step: 0, bookingFlowVersion: 2, locationType: 'home', address: null, addressQuery: '', addressNotes: '', forceWhere: false, serviceId: null, serviceSlug: null, duration: 60, addons: [], date: null, time: null, practitionerId: '', goals: [], pressure: 'Medium', focus: [], notes: '', paymentMethod: 'self', selfMethod: 'card', insuranceId: null, pendingInsurance: null, checkoutSessionId: null, checkoutAmountCents: null, invoiceId: null, depositCents: null, idempotencyKey: undefined, guest: { firstName: '', lastName: '', email: '', phone: '', createProfile: true, dob: '', insuranceStatus: '', marketingConsent: false } });
 
 export function DemoProvider({ children }) {
   const [state, setState] = useState(null);
@@ -95,6 +95,13 @@ export function DemoProvider({ children }) {
     return { services: by('services', 'slug'), clients: by('clients'), practitioners: by('practitioners'), soap: by('soap', 'appointmentId'), settings: state.settings[0] };
   }, [state]);
 
+  const patchDraft = useCallback((p) => {
+    setDraft((d) => ({ ...d, ...(typeof p === "function" ? p(d) : p) }));
+  }, []);
+  const resetDraft = useCallback(() => {
+    clearStoredBookingDraft();
+    setDraft(emptyDraft());
+  }, []);
   const value = {
     ...auth,
     setUser,
@@ -103,8 +110,8 @@ export function DemoProvider({ children }) {
     clientId, setClientId, practitionerId, setPractitionerId, ownerMode, setOwnerMode,
     me: idx && clientId ? idx.clients[clientId] : null,
     draft, setDraft,
-    patchDraft: (p) => setDraft((d) => ({ ...d, ...p })),
-    resetDraft: () => { clearStoredBookingDraft(); setDraft(emptyDraft()); },
+    patchDraft,
+    resetDraft,
     resetDemo: () => run(async () => { await api.reset(); clearStoredBookingDraft(); setDraft(emptyDraft()); }, 'Demo data reset'),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

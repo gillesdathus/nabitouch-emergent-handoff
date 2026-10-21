@@ -1,0 +1,36 @@
+# Installed PWA address & booking checklist (Slice 5)
+
+**Status:** Outstanding deployment blocker — not executed on physical/remote installed PWAs.
+
+Browser/Playwright journeys (desktop 1280×800 and mobile 390×700) completed against Docker QA + local Vite, but **browser emulation does not count** as installed-PWA verification.
+
+Use this checklist on Android and iOS **installed** PWAs (not desktop responsive mode alone).
+
+## Environments
+- [ ] Android Chrome → Install app → open standalone
+- [ ] iOS Safari → Add to Home Screen → open standalone
+- [ ] Mobile Chrome (tab, not installed)
+- [ ] iOS Safari (tab, not installed)
+
+## Address flow (after selecting a service → Mobile)
+1. [ ] Street field focuses; software keyboard opens
+2. [ ] Typing retains characters (no bounce-clear)
+3. [ ] Suggestions appear and are tappable above sticky Continue
+4. [ ] Selecting a suggestion hides the full search form
+5. [ ] Confirmation card shows street + locality
+6. [ ] After Confirm: details No → continue (no suite/buzzer)
+7. [ ] After Confirm: details Yes → suite / buzzer / notes optional, then Continue
+8. [ ] Confirm Address → details No/Yes → Continue advances without redundant postal fields
+9. [ ] Change address restores search
+10. [ ] Use My Location → grant → card appears
+11. [ ] Use My Location → deny → recoverable error, search remains
+12. [ ] Keyboard does not cover Confirm / Continue
+13. [ ] Sticky actions clear the bottom dock + home indicator
+
+## Booking navigation
+14. [ ] Service → Duration auto-advance
+15. [ ] Duration → When auto-advance
+16. [ ] System Back unwinds steps without leaving `/book` early
+17. [ ] Clinic path skips home address entry
+
+Do not mark the installed-PWA defect resolved until items 1–13 pass on both platforms.

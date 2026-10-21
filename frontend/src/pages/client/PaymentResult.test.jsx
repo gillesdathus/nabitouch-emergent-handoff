@@ -34,7 +34,8 @@ test("verification errors remain visible with retry", async () => {
   expect(view.host.textContent).toContain("Payment verification temporarily unavailable");
   expect(view.host.textContent).not.toContain("private provider");
   h.status.mockResolvedValue({ status: "confirmed" });
-  await act(async () => view.host.querySelector("button").click());
+  // StickyActionBar portals primary actions to document.body on mobile widths.
+  await act(async () => document.querySelector("button").click());
   expect(view.host.textContent).toContain("Payment confirmed");
   view.unmount();
 });
@@ -48,14 +49,14 @@ test("signed-out and expired sessions request authentication with a return path"
   h.status.mockRejectedValue({ response: { status: 401 } });
   const view = await render();
   expect(view.host.textContent).toContain("Sign in to verify your payment");
-  expect(view.host.querySelector("a").getAttribute("href")).toContain("next=");
+  expect(document.querySelector("a").getAttribute("href")).toContain("next=");
   view.unmount();
 });
 test("only explicit cancellation asks the authenticated backend to close Checkout", async () => {
   h.status.mockResolvedValue({ status: "pending" }); h.cancel.mockResolvedValue({ status: "cancelled" });
   const view = await render();
   expect(h.cancel).not.toHaveBeenCalled();
-  await act(async () => [...view.host.querySelectorAll("button")].find((b) => b.textContent === "Cancel this checkout").click());
+  await act(async () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Cancel this checkout").click());
   expect(h.cancel).toHaveBeenCalledWith("cs_test_fixture");
   expect(view.host.textContent).toContain("Checkout cancelled");
   view.unmount();

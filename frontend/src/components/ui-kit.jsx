@@ -95,14 +95,14 @@ export function OpsTimeline({ appt, compact }) {
 }
 
 // Client-safe visit status: operational appointment phases only (not intake/consent/prep).
-export function ClientTracker({ appt }) {
+export function ClientTracker({ appt, compact = false }) {
   const progress = clientVisitProgress(appt);
   return (
     <div data-testid="client-tracker">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-nb-mute">Visit status</p>
-          <p className="mt-1 text-sm font-semibold text-nb-navy" data-testid="client-tracker-label">{progress.headline}</p>
+          <p className={`${compact ? "mt-0.5" : "mt-1"} text-sm font-semibold text-nb-navy`} data-testid="client-tracker-label">{progress.headline}</p>
         </div>
         {progress.showBar && (
           <p className="shrink-0 text-[11px] text-nb-mute" data-testid="client-tracker-phase">
@@ -111,7 +111,7 @@ export function ClientTracker({ appt }) {
         )}
       </div>
       {progress.showBar && (
-        <div className="mt-2.5 flex items-center gap-1" data-testid="client-tracker-bar" aria-hidden>
+        <div className={`${compact ? "mt-1.5" : "mt-2.5"} flex items-center gap-1`} data-testid="client-tracker-bar" aria-hidden>
           {Array.from({ length: progress.stageCount }, (_, i) => (
             <div key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-sky-100">
               <motion.div className="nb-gradient h-full" initial={{ width: 0 }} animate={{ width: i <= progress.stageIndex ? "100%" : "0%" }} transition={{ duration: 0.45, delay: i * 0.04 }} />
@@ -119,7 +119,9 @@ export function ClientTracker({ appt }) {
           ))}
         </div>
       )}
-      <p className="mt-2 text-[11px] leading-snug text-nb-mute" data-testid="client-tracker-detail">{progress.detail}</p>
+      {!compact && (
+        <p className="mt-2 text-[11px] leading-snug text-nb-mute" data-testid="client-tracker-detail">{progress.detail}</p>
+      )}
     </div>
   );
 }
