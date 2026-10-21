@@ -8,7 +8,7 @@ import { WhatsAppFab } from "@/components/ContactCards";
 import { Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
-import { BOTTOM_NAV, PUBLIC_NAV, showsMarketingFooter } from "@/lib/navigation";
+import { BOTTOM_NAV, PUBLIC_NAV, showsFocusedBookingChrome, showsMarketingFooter } from "@/lib/navigation";
 import { UNREAD_REFRESH_EVENT, visibleStaffUnreadFromInbox, visibleUnreadFromInbox } from "@/lib/team-connect";
 import { cn } from "@/lib/utils";
 import { registerPush } from "@/lib/nativeShell";
@@ -277,7 +277,8 @@ export function ClientShell() {
   const wa = idx?.settings?.whatsapp || {};
   const waPages = wa.pages || ["/contact"];
   const { pathname } = useLocation();
-  const showWa = waPages.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
+  const focusBooking = showsFocusedBookingChrome(pathname);
+  const showWa = !focusBooking && waPages.some((p) => pathname === p || (p !== "/" && pathname.startsWith(`${p}/`)));
   const [menuOpen, setMenuOpen] = useState(false);
   const headerLinks = PUBLIC_NAV.filter((item) => item.to !== "/me");
   useEffect(() => { setMenuOpen(false); }, [pathname]);
@@ -288,37 +289,45 @@ export function ClientShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen]);
   return (
-    <div className="flex min-h-[100dvh] flex-col overflow-x-clip">
-      <header className="sticky top-0 z-40 border-x-0 border-t-0 pt-[var(--nb-safe-t)] nb-glass">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-5">
-          <Lockup />
-          <nav className="hidden items-center gap-1 lg:flex" aria-label="Main">
-            {headerLinks.map((n) => (
-              <NavLink key={n.to} to={n.to} end={n.end} data-testid={`client-nav-${n.label.toLowerCase().replace(/\s/g, "-")}`} className={({ isActive }) => cn("grid h-9 place-items-center rounded-full px-3.5 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:text-nb-ink")}>{n.label}</NavLink>
-            ))}
-          </nav>
-          <div className="flex items-center gap-2">
-            {me && <Link to="/me" data-testid="client-header-greeting" className="hidden text-sm text-nb-mute lg:inline">Hi, {me.preferredName || me.firstName}</Link>}
-            <button type="button" data-testid="public-nav-toggle" aria-expanded={menuOpen} aria-controls="public-menu" aria-label={menuOpen ? "Close menu" : "Open menu"} className="nb-btn-ghost h-10 w-10 px-0 lg:hidden" onClick={() => setMenuOpen((open) => !open)}>
-              {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </button>
-            <AccountMenu />
-            <Link to="/book" data-testid="header-book-btn" className="nb-btn-primary h-10 px-5 text-sm">Book</Link>
-          </div>
-        </div>
-        {menuOpen && (
-          <nav id="public-menu" data-testid="public-nav-menu" aria-label="Main" className="absolute inset-x-0 top-full border-t border-sky-100 bg-white/95 px-5 py-3 shadow-[0_18px_40px_-24px_rgba(11,27,63,.45)] backdrop-blur lg:hidden">
-            <div className="mx-auto grid max-w-6xl gap-1">
+    <div
+      className={cn("flex min-h-[100dvh] flex-col overflow-x-clip", focusBooking && "nb-booking-focus")}
+      data-testid={focusBooking ? "client-shell-booking-focus" : "client-shell"}
+    >
+      {!focusBooking && (
+        <header className="sticky top-0 z-40 border-x-0 border-t-0 pt-[var(--nb-safe-t)] nb-glass">
+          <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-5">
+            <Lockup />
+            <nav className="hidden items-center gap-1 lg:flex" aria-label="Main">
               {headerLinks.map((n) => (
-                <NavLink key={n.to} to={n.to} end={n.end} data-testid={`client-menu-${n.label.toLowerCase().replace(/\s/g, "-")}`} className={({ isActive }) => cn("flex h-11 items-center rounded-2xl px-3 text-sm font-medium", isActive ? "bg-nb-ink text-white" : "text-nb-ink hover:bg-sky-50")}>{n.label}</NavLink>
+                <NavLink key={n.to} to={n.to} end={n.end} data-testid={`client-nav-${n.label.toLowerCase().replace(/\s/g, "-")}`} className={({ isActive }) => cn("grid h-9 place-items-center rounded-full px-3.5 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:text-nb-ink")}>{n.label}</NavLink>
               ))}
+            </nav>
+            <div className="flex items-center gap-2">
+              {me && <Link to="/me" data-testid="client-header-greeting" className="hidden text-sm text-nb-mute lg:inline">Hi, {me.preferredName || me.firstName}</Link>}
+              <button type="button" data-testid="public-nav-toggle" aria-expanded={menuOpen} aria-controls="public-menu" aria-label={menuOpen ? "Close menu" : "Open menu"} className="nb-btn-ghost h-10 w-10 px-0 lg:hidden" onClick={() => setMenuOpen((open) => !open)}>
+                {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+              </button>
+              <AccountMenu />
+              <Link to="/book" data-testid="header-book-btn" className="nb-btn-primary h-10 px-5 text-sm">Book</Link>
             </div>
-          </nav>
-        )}
-      </header>
-      <main className="nb-main-clear flex-1"><Page><Outlet /></Page>{showsMarketingFooter(pathname) && <PublicFooter />}</main>
+          </div>
+          {menuOpen && (
+            <nav id="public-menu" data-testid="public-nav-menu" aria-label="Main" className="absolute inset-x-0 top-full border-t border-sky-100 bg-white/95 px-5 py-3 shadow-[0_18px_40px_-24px_rgba(11,27,63,.45)] backdrop-blur lg:hidden">
+              <div className="mx-auto grid max-w-6xl gap-1">
+                {headerLinks.map((n) => (
+                  <NavLink key={n.to} to={n.to} end={n.end} data-testid={`client-menu-${n.label.toLowerCase().replace(/\s/g, "-")}`} className={({ isActive }) => cn("flex h-11 items-center rounded-2xl px-3 text-sm font-medium", isActive ? "bg-nb-ink text-white" : "text-nb-ink hover:bg-sky-50")}>{n.label}</NavLink>
+                ))}
+              </div>
+            </nav>
+          )}
+        </header>
+      )}
+      <main className={cn("flex-1", focusBooking ? "nb-main-clear-booking" : "nb-main-clear")}>
+        <Page><Outlet /></Page>
+        {!focusBooking && showsMarketingFooter(pathname) && <PublicFooter />}
+      </main>
       {showWa && <WhatsAppFab phone={wa.phone || "+17802356508"} />}
-      <FloatingNav items={BOTTOM_NAV} testid="client-bottom" />
+      {!focusBooking && <FloatingNav items={BOTTOM_NAV} testid="client-bottom" />}
     </div>
   );
 }

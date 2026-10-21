@@ -1,16 +1,16 @@
 /**
- * Slice 4 — Booking sticky actions use shared tokens, not hardcoded dock offsets.
+ * Booking uses in-flow step nav (no StickyActionBar) after the sequential-flow refactor.
  */
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import Booking from "./Booking";
 
 const h = vi.hoisted(() => ({
   draft: {
     step: 1,
-    bookingFlowVersion: 2,
+    bookingFlowVersion: 3,
     locationType: "home",
     address: {
       id: "ad-home",
@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
       zoneId: "z-core",
       travelFee: 0,
       quoted: true,
+      detailsSettled: true,
     },
     addressQuery: "10150 104 St NW, Edmonton",
     addressNotes: "",
@@ -38,7 +39,7 @@ const h = vi.hoisted(() => ({
     notes: "",
     paymentMethod: "self",
     selfMethod: "card",
-    guest: { firstName: "", lastName: "", email: "", phone: "", createProfile: true, dob: "", marketingConsent: false },
+    guest: { firstName: "", lastName: "", email: "", phone: "", createProfile: false, dob: "", marketingConsent: false },
   },
   patchDraft: vi.fn((p) => { Object.assign(h.draft, typeof p === "function" ? p(h.draft) : p); }),
   api: {
@@ -100,14 +101,15 @@ beforeEach(() => {
   h.draft.step = 1;
 });
 
-test("booking primary actions use StickyActionBar / nb-sticky-actions tokens", async () => {
+test("booking step actions are in-flow (no sticky action bar)", async () => {
   const view = mount();
   await act(async () => { await Promise.resolve(); });
-  const bar = document.querySelector("[data-testid=booking-sticky-actions]");
-  expect(bar).toBeTruthy();
-  expect(bar.className).toMatch(/nb-sticky-actions/);
-  expect(bar.className).not.toMatch(/bottom-\[64px\]/);
-  expect(view.host.contains(bar)).toBe(false);
+  expect(document.querySelector("[data-testid=booking-sticky-actions]")).toBeNull();
+  expect(document.querySelector(".nb-sticky-actions")).toBeNull();
+  const nav = document.querySelector("[data-testid=booking-step-nav]");
+  expect(nav).toBeTruthy();
+  expect(view.host.contains(nav)).toBe(true);
   expect(document.querySelector("[data-testid=booking-next-btn]")).toBeTruthy();
+  expect(document.querySelector("[data-testid=booking-back-btn]")).toBeTruthy();
   view.cleanup();
 });

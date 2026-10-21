@@ -7,7 +7,7 @@ import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
-import { addressSelectionPatch, BOOKING_STEP, serviceSelectionPatch } from "@/lib/booking-selection";
+import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
 
 const LOC_ICON = { home: HomeIcon, office: Building2, hotel: Hotel, event: PartyPopper, clinic: Calendar };
 const Tile = ({ on, children, ...p }) => <button type="button" {...p} className={`nb-select-tile w-full min-w-0 ${on ? "border-nb-blue bg-sky-50/70" : "border-sky-100 bg-white hover:border-sky-200"}`}>{children}</button>;
@@ -83,15 +83,11 @@ export function StepWhere() {
             value={draft.address}
             notes={draft.addressNotes}
             onNotes={(v) => patchDraft({ addressNotes: v })}
-            onAdvance={() => patchDraft({
-              step: draft.serviceSlug ? BOOKING_STEP.DURATION : BOOKING_STEP.SERVICE,
-              forceWhere: false,
-            })}
+            onAdvance={() => patchDraft({ forceWhere: false })}
             onChange={(a) => patchDraft(a
               ? addressSelectionPatch(a, {
                 query: a.line,
-                // Keep the client on Where until details settle; releasing forceWhere
-                // here avoids racing onAdvance and leaving a settled address stuck.
+                // Keep the client on Where until details settle.
                 forceWhere: a.detailsSettled !== true,
               })
               : addressSelectionPatch(null, { forceWhere: true, preserveQuery: true }))}
@@ -112,15 +108,12 @@ export function StepService() {
     return bookableCatalogueService(x) && (draft.locationType === "clinic" ? x.clinic : x.mobile);
   });
   const chooseService = (x) => {
-    if (trialFlow) {
-      patchDraft({ step: BOOKING_STEP.DURATION });
-      return;
-    }
-    patchDraft({ ...serviceSelectionPatch(x, draft, { preserveDuration: true }), step: BOOKING_STEP.DURATION });
+    if (trialFlow) return;
+    patchDraft(serviceSelectionPatch(x, draft, { preserveDuration: true }));
   };
   return (
     <div data-testid="step-service">
-      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "Tap a treatment to choose its length."} />
+      <H t={trialFlow ? "10 Minutes. On Us." : "Choose your treatment"} s={trialFlow ? "Free 10-minute neck-and-shoulder massage. Meet your massage therapist and experience Nabitouch." : "Select a treatment, then continue."} />
       <div className="grid gap-3 sm:grid-cols-2">
         {visible.map((x) => (
           <Tile key={x.slug} on={draft.serviceSlug === x.slug} data-testid={`step-service-${x.slug}`} aria-pressed={draft.serviceSlug === x.slug} onClick={() => chooseService(x)}>
@@ -152,13 +145,12 @@ export function StepDuration() {
       checkoutAmountCents: null,
       depositCents: null,
       invoiceId: null,
-      step: BOOKING_STEP.WHEN,
     });
   };
   return (
     <div data-testid="step-duration">
-      <H t={trialFlow ? "Confirm your free trial length" : "How long?"} s={trialFlow ? "Your trial is complimentary." : `${s.name} — optional enhancements first, then tap a length to continue.`} />
-      {/* Enhancements above duration so they are reachable before auto-advance. */}
+      <H t={trialFlow ? "Confirm your free trial length" : "How long?"} s={trialFlow ? "Your trial is complimentary." : `${s.name} — optional enhancements, then choose a length and continue.`} />
+      {/* Enhancements above duration so they stay reachable before Continue. */}
       {!trialFlow && idx.settings.addons?.length > 0 && (
         <div className="mb-6">
           <p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p>
@@ -266,7 +258,7 @@ export function StepWhen() {
           <button
             key={slot.time}
             type="button"
-            onClick={() => patchDraft({ date, time: slot.time, step: BOOKING_STEP.YOU })}
+            onClick={() => patchDraft({ date, time: slot.time })}
             data-testid={`step-time-${slot.time}`}
             className={`rounded-2xl border-2 px-3 py-3 text-left text-sm ${draft.time === slot.time && draft.date === date ? "border-nb-blue bg-nb-blue text-white" : "border-sky-100 bg-white"}`}
           >
@@ -281,7 +273,22 @@ export function StepWhen() {
   );
 }
 
-export function StepYou() {
+export function StepPreferences() {
+  const { draft, patchDraft } = useDemo();
+  return (
+    <div data-testid="step-preferences">
+      <H t="Session preferences" s="Optional — skip anytime. These notes do not change the service or price." />
+      <p className="mb-4 rounded-2xl bg-sky-50 p-3 text-xs text-nb-navy" data-testid="step-pressure-note">A different treatment needs its own booking.</p>
+      <p className="nb-label">Treatment goals</p>
+      <div className="flex flex-wrap gap-2">{GOALS.map((x) => <button key={x} type="button" onClick={() => patchDraft({ goals: toggle(draft.goals, x) })} data-testid={`step-goal-${x.toLowerCase().replace(/\s/g, "-")}`} className={draft.goals.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
+      <p className="nb-label mt-6">Focus areas</p>
+      <div className="flex flex-wrap gap-2">{FOCUS.map((x) => <button key={x} type="button" onClick={() => patchDraft({ focus: toggle(draft.focus, x) })} data-testid={`step-focus-${x.toLowerCase().replace(/\W+/g, "-")}`} className={draft.focus.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
+      <label className="mt-6 block"><span className="nb-label">Anything else? <span className="font-normal text-nb-mute">(optional)</span></span><textarea rows={2} className="nb-input h-auto py-3" value={draft.notes} onChange={(e) => patchDraft({ notes: e.target.value })} placeholder="Areas to avoid, music preference…" data-testid="step-notes-input" /></label>
+    </div>
+  );
+}
+
+export function StepDetails({ fieldErrors = {} } = {}) {
   const { draft, patchDraft, me, state } = useDemo();
   const g = draft.guest;
   const setG = (k, v) => patchDraft({ guest: { ...g, [k]: v } });
@@ -292,27 +299,21 @@ export function StepYou() {
     { id: "no", label: "No" },
     { id: "unsure", label: "Not sure" },
   ];
+  const err = (key) => fieldErrors[key] ? <p className="mt-1 text-xs text-rose-700" data-testid={`guest-${key}-error`}>{fieldErrors[key]}</p> : null;
   return (
-    <div>
-      {!trialFlow && (
-        <>
-          <H t="Make it yours" s="Share what you’d like from this session — your practitioner will tailor the treatment." />
-          <p className="nb-label">Treatment goals</p>
-          <div className="flex flex-wrap gap-2">{GOALS.map((x) => <button key={x} onClick={() => patchDraft({ goals: toggle(draft.goals, x) })} data-testid={`step-goal-${x.toLowerCase().replace(/\s/g, "-")}`} className={draft.goals.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
-          <p className="mt-6 rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy" data-testid="step-pressure-note">The service you select is the treatment you purchase. Notes below can mention comfort preferences. They do not change the service or its price. A different treatment needs its own booking.</p>
-          <p className="nb-label mt-6">Focus areas</p>
-          <div className="flex flex-wrap gap-2">{FOCUS.map((x) => <button key={x} onClick={() => patchDraft({ focus: toggle(draft.focus, x) })} data-testid={`step-focus-${x.toLowerCase().replace(/\W+/g, "-")}`} className={draft.focus.includes(x) ? "nb-chip-on" : "nb-chip-off"}>{x}</button>)}</div>
-          <label className="mt-6 block"><span className="nb-label">Anything else? <span className="font-normal text-nb-mute">(optional)</span></span><textarea rows={2} className="nb-input h-auto py-3" value={draft.notes} onChange={(e) => patchDraft({ notes: e.target.value })} placeholder="Areas to avoid, music preference…" data-testid="step-notes-input" /></label>
-        </>
-      )}
-      {trialFlow && <H t="Your contact details" s="We only need what is required to reserve your free 10-minute trial. Clinical intake and consent happen before treatment." />}
-
-      <div className={`nb-card p-5 ${trialFlow ? "" : "mt-8"}`} data-testid="step-you-contact">
+    <div data-testid="step-you">
+      <H
+        t="Your details"
+        s={trialFlow
+          ? "We only need what is required to reserve your free 10-minute trial. Clinical intake and consent happen before treatment."
+          : "Book as a guest with name, email, and phone. A profile is optional."}
+      />
+      <div className="nb-card p-5" data-testid="step-you-contact">
         {me ? (
           <div className="space-y-3">
             <p className="text-sm">Booking as <b>{me.firstName} {me.lastName}</b> · {me.email}{me.phone ? ` · ${me.phone}` : ""}</p>
             {trialFlow && !me.dob && (
-              <label className="block"><span className="nb-label">Date of birth</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
+              <label className="block"><span className="nb-label">Date of birth</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" />{err("dob")}</label>
             )}
             {trialFlow && (
               <div data-testid="trial-insurance-status">
@@ -322,21 +323,21 @@ export function StepYou() {
                     <button key={choice.id} type="button" onClick={() => setG("insuranceStatus", choice.id)} className={g.insuranceStatus === choice.id ? "nb-chip-on" : "nb-chip-off"} data-testid={`trial-insurance-${choice.id}`}>{choice.label}</button>
                   ))}
                 </div>
+                {err("insuranceStatus")}
                 <p className="mt-2 text-xs text-nb-mute">No policy details or proof are required for this free trial.</p>
               </div>
             )}
           </div>
         ) : (
           <>
-            <p className="font-semibold">Your details</p>
-            <p className="mb-4 text-xs text-nb-mute">{trialFlow ? "Required for your free trial reservation." : "Guest booking is fine. Create a profile if you want to rebook faster."}</p>
+            <p className="mb-4 text-xs text-nb-mute">{trialFlow ? "Required for your free trial reservation." : "Required for this visit. You do not need a password to continue."}</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {[["firstName", "First name"], ["lastName", "Last name"], ["email", "Email"], ["phone", "Phone"]].map(([k, l]) => (
-                <label key={k}><span className="nb-label">{l}</span><input className="nb-input" value={g[k]} onChange={(e) => setG(k, e.target.value)} type={k === "email" ? "email" : k === "phone" ? "tel" : "text"} data-testid={`guest-${k}-input`} /></label>))}
+                <label key={k}><span className="nb-label">{l}</span><input className={`nb-input${fieldErrors[k] ? " border-rose-400" : ""}`} value={g[k]} onChange={(e) => setG(k, e.target.value)} type={k === "email" ? "email" : k === "phone" ? "tel" : "text"} autoComplete={k === "email" ? "email" : k === "phone" ? "tel" : "name"} data-testid={`guest-${k}-input`} />{err(k)}</label>))}
             </div>
             {trialFlow && (
               <div className="mt-4 space-y-3">
-                <label className="block"><span className="nb-label">Date of birth</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
+                <label className="block"><span className="nb-label">Date of birth</span><input type="date" className={`nb-input${fieldErrors.dob ? " border-rose-400" : ""}`} value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" />{err("dob")}</label>
                 <div data-testid="trial-insurance-status">
                   <p className="nb-label">Do you have insurance coverage for massage?</p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -344,23 +345,30 @@ export function StepYou() {
                       <button key={choice.id} type="button" onClick={() => setG("insuranceStatus", choice.id)} className={g.insuranceStatus === choice.id ? "nb-chip-on" : "nb-chip-off"} data-testid={`trial-insurance-${choice.id}`}>{choice.label}</button>
                     ))}
                   </div>
+                  {err("insuranceStatus")}
                   <p className="mt-2 text-xs text-nb-mute">No policy details or proof are required for this free trial.</p>
                 </div>
               </div>
             )}
             {!trialFlow && (
-              <>
-                <label className="mt-4 flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.createProfile} onChange={(e) => setG("createProfile", e.target.checked)} data-testid="guest-create-profile-checkbox" /><span><b>Create my Nabitouch profile</b> — rebook faster, track visits and keep your preferences.</span></label>
+              <details className="mt-5 rounded-2xl border border-sky-100 bg-sky-50/40 p-4" data-testid="guest-create-profile-details" defaultOpen={Boolean(g.createProfile)}>
+                <summary className="cursor-pointer text-sm font-semibold text-nb-ink" data-testid="guest-create-profile-summary">
+                  Optional: create a Nabitouch profile
+                </summary>
+                <label className="mt-3 flex items-start gap-3 text-sm">
+                  <input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.createProfile} onChange={(e) => setG("createProfile", e.target.checked)} data-testid="guest-create-profile-checkbox" />
+                  <span>Save my details to rebook faster. Requires a password{g.createProfile ? " and birthday" : ""}.</span>
+                </label>
                 {g.createProfile && (
-                  <div className="mt-4 space-y-3 rounded-2xl bg-sky-50/60 p-4">
-                    <label className="block"><span className="nb-label">Create a password (min. 8 characters)</span><input type="password" autoComplete="new-password" className="nb-input" value={g.password || ""} onChange={(e) => setG("password", e.target.value)} data-testid="guest-password-input" /></label>
-                    <label className="block"><span className="nb-label">When is your birthday? We’d love to send you a little birthday wish!</span><input type="date" className="nb-input" value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" /></label>
-                    <p className="text-xs text-nb-mute">Your birthdate also helps us identify you and complete care or insurance records where applicable.</p>
-                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!g.smsConsent} onChange={(e) => setG("smsConsent", e.target.checked)} data-testid="guest-sms-consent-checkbox" /><span>Text me visit reminders and on-the-way updates. <span className="text-nb-mute">(Optional. Reply STOP anytime.)</span></span></label>
-                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.marketingConsent} onChange={(e) => setG("marketingConsent", e.target.checked)} data-testid="guest-marketing-consent-checkbox" /><span>Yes, send me birthday wishes, offers and wellness tips. <span className="text-nb-mute">(Optional — not required to book. Appointment messages are sent separately.)</span></span></label>
+                  <div className="mt-4 space-y-3" data-testid="guest-create-profile-fields">
+                    <label className="block"><span className="nb-label">Password (min. 8 characters)</span><input type="password" autoComplete="new-password" className={`nb-input${fieldErrors.password ? " border-rose-400" : ""}`} value={g.password || ""} onChange={(e) => setG("password", e.target.value)} data-testid="guest-password-input" />{err("password")}</label>
+                    <label className="block"><span className="nb-label">Birthday</span><input type="date" className={`nb-input${fieldErrors.dob ? " border-rose-400" : ""}`} value={g.dob} onChange={(e) => setG("dob", e.target.value)} data-testid="guest-dob-input" />{err("dob")}</label>
+                    <p className="text-xs text-nb-mute">Birthday helps identify you for care records when you create an account. It is not required for guest booking.</p>
+                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={!!g.smsConsent} onChange={(e) => setG("smsConsent", e.target.checked)} data-testid="guest-sms-consent-checkbox" /><span>Text me visit reminders and on-the-way updates. <span className="text-nb-mute">(Optional.)</span></span></label>
+                    <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 accent-[#1565F0]" checked={g.marketingConsent} onChange={(e) => setG("marketingConsent", e.target.checked)} data-testid="guest-marketing-consent-checkbox" /><span>Send me offers and wellness tips. <span className="text-nb-mute">(Optional — not required to book.)</span></span></label>
                   </div>
                 )}
-              </>
+              </details>
             )}
           </>
         )}
@@ -368,6 +376,9 @@ export function StepYou() {
     </div>
   );
 }
+
+/** @deprecated Prefer StepDetails — alias kept for existing imports. */
+export const StepYou = StepDetails;
 
 export function StepPay() {
   const { draft, patchDraft, idx, state } = useDemo();
@@ -380,7 +391,6 @@ export function StepPay() {
     paymentMethod: "self",
     payNow,
     selfMethod: payNow === "cash" ? "cash" : "card",
-    step: BOOKING_STEP.REVIEW,
   });
   if (trialFlow) {
     return (
@@ -391,7 +401,7 @@ export function StepPay() {
     );
   }
   return (
-    <div>
+    <div data-testid="step-pay">
       <H t="How would you like to pay?" s="The appointment total is calculated first. What you pay now depends on the payment policy." />
       <div className="grid gap-3 sm:grid-cols-2">
         {cardsOn && policy.mode !== "deposit" && <Tile on={selected === "full"} onClick={() => choose("full")} data-testid="step-pay-full"><CreditCard className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">Pay the full total online</p><p className="text-xs text-nb-mute">Card checkout through Stripe. Nothing is marked paid until the payment is verified.</p></Tile>}

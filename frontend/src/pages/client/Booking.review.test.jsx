@@ -188,17 +188,18 @@ describe("Booking Review mount", () => {
     const confirm = document.querySelector("[data-testid=booking-confirm-btn]");
     expect(confirm).toBeTruthy();
     expect(confirm.disabled).toBe(false);
-    expect(view.host.contains(confirm)).toBe(false);
+    expect(view.host.contains(confirm)).toBe(true);
     view.cleanup();
   });
 
-  test("Back from Review does not require a primary-action scroll hunt", async () => {
+  test("Back from Review is in-flow (no sticky action bar)", async () => {
     const view = mount("/book?step=6&service=svc-swedish");
     await view.flush(8);
-    const bar = document.querySelector("[data-testid=booking-sticky-actions]");
-    expect(bar).toBeTruthy();
+    expect(document.querySelector("[data-testid=booking-sticky-actions]")).toBeNull();
+    const nav = document.querySelector("[data-testid=booking-step-nav]");
+    expect(nav).toBeTruthy();
     expect(document.querySelector("[data-testid=booking-back-btn]")).toBeTruthy();
-    expect(view.host.contains(bar)).toBe(false);
+    expect(view.host.contains(nav)).toBe(true);
     view.cleanup();
   });
 });

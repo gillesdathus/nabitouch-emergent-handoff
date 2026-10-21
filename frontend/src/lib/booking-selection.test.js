@@ -174,8 +174,14 @@ test("rebookStepForAddress lands on When only when civic + details are complete"
 test("migrateBookingDraft inserts Duration step for v1 session drafts", () => {
   const migrated = migrateBookingDraft({ step: 2, bookingFlowVersion: 1, locationType: "home" });
   expect(migrated.step).toBe(BOOKING_STEP.WHEN);
-  expect(migrated.bookingFlowVersion).toBe(2);
+  expect(migrated.bookingFlowVersion).toBe(3);
   expect(migrateBookingDraft({ step: 1, bookingFlowVersion: 1 }).step).toBe(BOOKING_STEP.SERVICE);
+});
+
+test("migrateBookingDraft maps v2 You/Payment onto Details/Review", () => {
+  expect(migrateBookingDraft({ step: 4, bookingFlowVersion: 2 }).step).toBe(BOOKING_STEP.DETAILS);
+  expect(migrateBookingDraft({ step: 5, bookingFlowVersion: 2 }).step).toBe(BOOKING_STEP.REVIEW);
+  expect(migrateBookingDraft({ step: 6, bookingFlowVersion: 2 }).step).toBe(BOOKING_STEP.REVIEW);
 });
 
 test("normalizeLocationType never returns undefined", () => {
@@ -185,11 +191,11 @@ test("normalizeLocationType never returns undefined", () => {
   expect(normalizeLocationType("hotel")).toBe("hotel");
 });
 
-test("canJumpBookingStep blocks Review when Payment gate fails", () => {
+test("canJumpBookingStep blocks Review when Details gate fails", () => {
   const ok = [true, true, true, true, true, false];
-  expect(canJumpBookingStep(4, BOOKING_STEP.REVIEW, ok)).toBe(false);
-  expect(canJumpBookingStep(4, BOOKING_STEP.PAYMENT, ok)).toBe(true);
-  expect(canJumpBookingStep(5, BOOKING_STEP.REVIEW, [...ok.slice(0, 5), true])).toBe(true);
+  expect(canJumpBookingStep(BOOKING_STEP.PREFERENCES, BOOKING_STEP.REVIEW, ok)).toBe(false);
+  expect(canJumpBookingStep(BOOKING_STEP.PREFERENCES, BOOKING_STEP.DETAILS, ok)).toBe(true);
+  expect(canJumpBookingStep(BOOKING_STEP.DETAILS, BOOKING_STEP.REVIEW, [...ok.slice(0, 5), true])).toBe(true);
 });
 
 test("confirmAddressForBooking maps a successful geo confirm onto the draft address", async () => {

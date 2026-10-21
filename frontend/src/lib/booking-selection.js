@@ -1,24 +1,57 @@
-/** Wizard indices after Duration was split from Service (bookingFlowVersion 2). */
+/**
+ * Wizard indices (bookingFlowVersion 3):
+ * Preferences split from contact; payment lives on Review (no separate Payment step).
+ */
 export const BOOKING_STEP = {
   WHERE: 0,
   SERVICE: 1,
   DURATION: 2,
   WHEN: 3,
-  YOU: 4,
-  PAYMENT: 5,
+  PREFERENCES: 4,
+  DETAILS: 5,
   REVIEW: 6,
 };
 
-export const BOOKING_FLOW_VERSION = 2;
+/** @deprecated Use BOOKING_STEP.DETAILS — kept for older test imports during transition. */
+BOOKING_STEP.YOU = BOOKING_STEP.DETAILS;
+/** @deprecated Payment is part of Review. */
+BOOKING_STEP.PAYMENT = BOOKING_STEP.REVIEW;
+
+export const BOOKING_FLOW_VERSION = 3;
 
 export function bookingFlowLabels(trialFlow) {
   return trialFlow
-    ? ["Where", "Service", "Duration", "When", "You", "Review"]
-    : ["Where", "Service", "Duration", "When", "You", "Payment", "Review"];
+    ? ["Where", "Service", "Duration", "When", "Your details", "Review"]
+    : ["Where", "Service", "Duration", "When", "Preferences", "Your details", "Review & payment"];
 }
 
-export function bookingReviewStep(trialFlow) {
-  return trialFlow ? BOOKING_STEP.YOU + 1 : BOOKING_STEP.REVIEW;
+/** Review is always absolute index 6; trial skips Preferences (4) in navigation only. */
+export function bookingReviewStep(_trialFlow) {
+  return BOOKING_STEP.REVIEW;
+}
+
+/** Map absolute draft.step → progress / stepper index (trial compresses away Preferences). */
+export function bookingVisualStepIndex(step, trialFlow) {
+  const n = Number(step) || 0;
+  if (!trialFlow) return Math.min(n, BOOKING_STEP.REVIEW);
+  if (n <= BOOKING_STEP.WHEN) return n;
+  if (n === BOOKING_STEP.DETAILS) return 4;
+  return 5; // Review (and any stray Preferences index)
+}
+
+/** Map progress / stepper index → absolute draft.step. */
+export function bookingStepFromVisualIndex(index, trialFlow) {
+  const i = Number(index) || 0;
+  if (!trialFlow) return Math.min(i, BOOKING_STEP.REVIEW);
+  const map = [
+    BOOKING_STEP.WHERE,
+    BOOKING_STEP.SERVICE,
+    BOOKING_STEP.DURATION,
+    BOOKING_STEP.WHEN,
+    BOOKING_STEP.DETAILS,
+    BOOKING_STEP.REVIEW,
+  ];
+  return map[Math.min(i, map.length - 1)];
 }
 
 /** True when every gate before `target` is satisfied (blocks skipping Payment / Review). */
@@ -51,16 +84,23 @@ export function locationTypeBookingLabel(locationType) {
   return labels[normalizeLocationType(locationType)] || "Home";
 }
 
-/** Remap pre-Duration-step drafts so session restores land on the right screen. */
+/** Remap older drafts so session restores land on the right screen. */
 export function migrateBookingDraft(draft) {
   if (!draft || typeof draft !== "object") return draft;
   const version = Number(draft.bookingFlowVersion) || 1;
   if (version >= BOOKING_FLOW_VERSION) {
     return { ...draft, bookingFlowVersion: BOOKING_FLOW_VERSION, locationType: normalizeLocationType(draft.locationType) };
   }
-  // v1: Where0 Service1 When2 You3 Pay4 Review5 → insert Duration at 2
   let step = Number(draft.step) || 0;
-  if (step >= 2) step += 1;
+  if (version < 2) {
+    // v1: Where0 Service1 When2 You3 Pay4 Review5 → insert Duration at 2
+    if (step >= 2) step += 1;
+  }
+  if (version < 3) {
+    // v2: … When3 You4 Payment5 Review6 → Preferences4 Details5 Review6
+    if (step === 4) step = BOOKING_STEP.DETAILS;
+    else if (step >= 5) step = BOOKING_STEP.REVIEW;
+  }
   return {
     ...draft,
     step,

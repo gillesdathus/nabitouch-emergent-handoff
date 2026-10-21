@@ -49,7 +49,7 @@ const h = vi.hoisted(() => {
       notes: "",
       paymentMethod: "self",
       selfMethod: "card",
-      guest: { firstName: "", lastName: "", email: "", phone: "", createProfile: true, dob: "", marketingConsent: false },
+      guest: { firstName: "", lastName: "", email: "", phone: "", createProfile: false, dob: "", marketingConsent: false },
     },
     me: {
       id: "c-returning",

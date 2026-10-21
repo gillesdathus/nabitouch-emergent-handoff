@@ -1,5 +1,5 @@
 /**
- * Slice B — FlowStepShell / sticky CTA acceptance on short mobile viewports.
+ * Slice B — sequential booking shell: in-flow CTAs, no sticky bar, address owns mid-flow.
  * Usage: BASE_URL=http://localhost:3025 node scripts/slice-b-acceptance.mjs
  */
 import { chromium } from "playwright";
@@ -27,7 +27,7 @@ async function typeReact(page, testid, value) {
   const el = page.getByTestId(testid);
   await el.click();
   await el.fill("");
-  await el.pressSequentially(value, { delay: 12 });
+  await el.pressSequentially(value, { delay: 10 });
 }
 
 async function shot(page, name) {
@@ -48,26 +48,21 @@ async function gotoStable(page, url) {
   }
 }
 
-async function assertBarInViewport(page, vh) {
-  const metrics = await page.evaluate(() => {
+async function assertNoStickyBookingBar(page) {
+  const sticky = await page.evaluate(() => {
     const bar = document.querySelector("[data-testid=booking-sticky-actions]");
-    if (!bar) return { missing: true };
-    const box = bar.getBoundingClientRect();
-    const cs = getComputedStyle(bar);
+    const stickyClass = document.querySelector(".nb-sticky-actions");
+    const nav = document.querySelector("[data-testid=booking-step-nav]");
     return {
-      missing: false,
-      position: cs.position,
-      top: box.top,
-      bottom: box.bottom,
-      parent: bar.parentElement?.tagName || null,
+      stickyBar: !!bar,
+      stickyClass: !!stickyClass,
+      inFlowNav: !!nav,
+      navInMain: !!(nav && document.querySelector("[data-testid=booking-flow-shell]")?.contains(nav)),
     };
   });
-  if (metrics.missing) throw new Error("sticky bar missing");
-  if (metrics.parent !== "BODY") throw new Error(`bar parent ${metrics.parent}, expected BODY`);
-  if (metrics.position !== "fixed") throw new Error(`position ${metrics.position}, expected fixed`);
-  if (metrics.bottom > vh + 1) throw new Error(`bar.bottom ${metrics.bottom} > vh ${vh}`);
-  if (metrics.top < 0) throw new Error(`bar.top ${metrics.top} < 0`);
-  return metrics;
+  if (sticky.stickyBar || sticky.stickyClass) throw new Error("sticky booking actions still present");
+  if (!sticky.inFlowNav || !sticky.navInMain) throw new Error("in-flow booking-step-nav missing");
+  return sticky;
 }
 
 async function main() {
@@ -85,6 +80,12 @@ async function main() {
     await page.evaluate(() => { try { localStorage.removeItem("nt_booking_draft_v1"); } catch { /* ignore */ } });
     await gotoStable(page, `${BASE}/book`);
     await page.getByTestId("booking-regular-flow").waitFor({ state: "visible", timeout: 20000 });
+    await page.getByTestId("booking-compact-header").waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+    if (await page.getByTestId("client-bottom").count()) {
+      throw new Error("bottom nav visible during booking focus");
+    }
+    pass("bottom-nav-hidden");
+
     await page.getByTestId("step-where-home").click();
 
     // 1) During address confirm/details, shell Continue is hidden (picker owns CTAs).
@@ -112,48 +113,37 @@ async function main() {
       throw new Error("shell Continue visible on details ask");
     }
     await page.getByTestId("step-where-address-details-no").click();
+    await page.getByTestId("booking-next-btn").waitFor({ state: "visible", timeout: 15000 });
+    await assertNoStickyBookingBar(page);
+    await page.getByTestId("booking-next-btn").click();
     await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
+    pass("where-continue-to-service");
 
-    // 2) Service (incomplete): Back only — no disabled Continue clutter.
-    if (await page.getByTestId("booking-next-btn").count()) {
-      throw new Error("Continue should stay hidden until a treatment is chosen");
-    }
-    if (!(await page.getByTestId("booking-back-btn").count())) {
-      throw new Error("Back missing on Service");
-    }
-    await shot(page, "b-service-back-only");
-    pass("service-hides-continue-until-ready");
-
+    // 2) Service: Continue stays available; selection does not auto-advance.
+    await assertNoStickyBookingBar(page);
     await page.getByTestId("step-service-swedish").click();
+    await page.waitForTimeout(300);
+    if (!(await page.getByTestId("step-service").count())) {
+      throw new Error("service step auto-advanced unexpectedly");
+    }
+    await page.getByTestId("booking-next-btn").click();
     await page.getByTestId("step-duration").waitFor({ state: "visible", timeout: 15000 });
+    await shot(page, "b-duration");
+    pass("service-continue-no-auto-advance");
 
-    // 3) Duration incomplete: no Continue; after picking 60, Continue is a short-viewport fallback.
-    if (await page.getByTestId("booking-next-btn").count()) {
-      // Auto-advance may already be mid-flight; wait briefly.
-      await page.waitForTimeout(300);
-    }
-    // Landed via auto-advance on prior runs; if still on duration without selection:
-    if (await page.getByTestId("step-duration").count()) {
-      await page.getByTestId("step-duration-60").click();
-    }
-    await page.getByTestId("step-when").waitFor({ state: "visible", timeout: 15000 }).catch(async () => {
-      // If still on duration with selection, Continue must be in viewport.
-      const next = page.getByTestId("booking-next-btn");
-      if (!(await next.count())) throw new Error("Continue missing as duration fallback");
-      await assertBarInViewport(page, viewport.height);
-      await next.click();
-      await page.getByTestId("step-when").waitFor({ state: "visible", timeout: 15000 });
-    });
+    // 3) Duration → When via Continue
+    await page.getByTestId("step-duration-60").click();
+    await page.getByTestId("booking-next-btn").click();
+    await page.getByTestId("step-when").waitFor({ state: "visible", timeout: 15000 });
+    await assertNoStickyBookingBar(page);
     await shot(page, "b-when-shell");
-    const bar = await assertBarInViewport(page, viewport.height);
-    pass("when-sticky-bar-in-short-viewport", bar);
+    pass("duration-continue-to-when");
 
-    // 4) Generic "Complete this step" hint must not spam tap-advance steps.
     const hint = page.getByTestId("booking-continue-hint");
     if (await hint.count()) {
       const text = await hint.innerText();
       if (/complete this step to continue/i.test(text)) {
-        throw new Error("generic complete-step hint still shown on tap-advance step");
+        throw new Error("generic complete-step hint still shown");
       }
     }
     pass("no-generic-hint-on-when");

@@ -1,5 +1,5 @@
 import { bookedByWeek, publicBio } from "./domain";
-import { BOTTOM_NAV, PUBLIC_NAV, publicNavHasRoleButtons, showsMarketingFooter } from "./navigation";
+import { BOTTOM_NAV, PUBLIC_NAV, publicNavHasRoleButtons, showsFocusedBookingChrome, showsMarketingFooter } from "./navigation";
 import { canOpen, homeFor } from "./workspaces";
 
 test("public navigation has no role-selection buttons", () => {
@@ -19,6 +19,14 @@ test("marketing pages keep a public footer and workspaces stay closed", () => {
   expect(canOpen(null, "/practitioners")).toBe(true);
   expect(canOpen({ role: "client", workspaces: ["client"] }, "/owner/payments")).toBe(false);
   expect(homeFor({ role: "desk", workspaces: ["desk"] })).toBe("/desk");
+});
+
+test("booking route uses focused chrome without marketing dock", () => {
+  expect(showsFocusedBookingChrome("/book")).toBe(true);
+  expect(showsFocusedBookingChrome("/book/")).toBe(true);
+  expect(showsFocusedBookingChrome("/me")).toBe(false);
+  expect(showsFocusedBookingChrome("/services")).toBe(false);
+  expect(showsMarketingFooter("/book")).toBe(false);
 });
 
 test("weekly revenue uses stored bookings and public bios omit demo labels", () => {
