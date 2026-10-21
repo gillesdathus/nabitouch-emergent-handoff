@@ -4,7 +4,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, vi } from "vitest";
-import { StepDuration, StepService, StepWhen } from "./BookingSteps";
+import { StepDuration, StepPay, StepService, StepWhen } from "./BookingSteps";
 import { BOOKING_STEP } from "@/lib/booking-selection";
 import { todayISO } from "@/lib/domain";
 
@@ -56,7 +56,12 @@ vi.mock("@/store/DemoStore", () => ({
         swedish: { id: "svc-swedish", slug: "swedish", name: "Swedish", short: "Classic", prices: { 60: 120, 90: 160 }, img: "" },
         prenatal: { id: "svc-prenatal", slug: "prenatal", name: "Prenatal", short: "Care", prices: { 60: 130 }, img: "" },
       },
-      settings: { addons: [{ id: "hot-stones", name: "Hot stones", price: 15 }], clinic: { enabled: false } },
+      settings: {
+        addons: [{ id: "hot-stones", name: "Hot stones", price: 15 }],
+        clinic: { enabled: false },
+        paymentPolicy: { cashAccepted: true, mode: "choice", depositPercent: 20 },
+        cardCheckoutEnabled: true,
+      },
     },
     api: h.api,
   }),
@@ -108,11 +113,46 @@ test("selecting a duration advances to When and preserves the selected service",
   h.draft.step = BOOKING_STEP.DURATION;
   const view = mount(createElement(StepDuration));
   expect(view.host.querySelector("[data-testid='step-duration']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='step-addon-hot-stones']")).toBeTruthy();
+  act(() => { view.host.querySelector("[data-testid='step-addon-hot-stones']").click(); });
+  expect(h.draft.addons).toContain("hot-stones");
   act(() => { view.host.querySelector("[data-testid='step-duration-90']").click(); });
   const patch = h.patchDraft.mock.calls.at(-1)[0];
   expect(patch.duration).toBe(90);
   expect(patch.step).toBe(BOOKING_STEP.WHEN);
   expect(h.draft.serviceSlug).toBe("swedish");
+  expect(h.draft.addons).toContain("hot-stones");
+  view.cleanup();
+});
+
+test("selecting a time advances to You", async () => {
+  h.draft.serviceSlug = "swedish";
+  h.draft.step = BOOKING_STEP.WHEN;
+  h.draft.date = todayISO();
+  h.draft.address = {
+    line: "10150 104 St NW, Edmonton",
+    clientConfirmed: true,
+    confidence: "address",
+    lat: 53.54,
+    lng: -113.49,
+    detailsSettled: true,
+  };
+  const view = mount(createElement(StepWhen));
+  await act(async () => { await Promise.resolve(); });
+  const timeBtn = await (async () => {
+    const started = Date.now();
+    while (Date.now() - started < 2000) {
+      const el = view.host.querySelector("[data-testid='step-time-10:00']");
+      if (el) return el;
+      await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    }
+    throw new Error("missing time slot");
+  })();
+  act(() => { timeBtn.click(); });
+  expect(h.patchDraft.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
+    time: "10:00",
+    step: BOOKING_STEP.YOU,
+  }));
   view.cleanup();
 });
 
@@ -134,5 +174,17 @@ test("Back from Duration keeps the previously selected service in the draft", ()
   const view = mount(createElement(StepDuration));
   expect(h.draft.serviceSlug).toBe("prenatal");
   expect(view.host.textContent).toMatch(/Prenatal/);
+  view.cleanup();
+});
+
+test("selecting a payment choice advances to Review", () => {
+  h.draft.serviceSlug = "swedish";
+  h.draft.step = BOOKING_STEP.PAYMENT;
+  const view = mount(createElement(StepPay));
+  act(() => { view.host.querySelector("[data-testid='step-pay-cash']").click(); });
+  expect(h.patchDraft.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
+    payNow: "cash",
+    step: BOOKING_STEP.REVIEW,
+  }));
   view.cleanup();
 });

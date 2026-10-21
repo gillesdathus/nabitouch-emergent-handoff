@@ -162,6 +162,13 @@ describe("Automatic navigation", () => {
     view.cleanup();
   });
 
+  test("confirmed address payload retains detailsSettled for whereOk gate", () => {
+    expect(confirmedHome.detailsSettled).toBeUndefined();
+    const settled = { ...confirmedHome, detailsSettled: true };
+    expect(settled.detailsSettled).toBe(true);
+    expect(settled.postal).toBe("T5J 2R4");
+  });
+
   test("payment cannot be bypassed via step jump helper", () => {
     const ok = [true, true, true, true, true, false];
     expect(canJumpBookingStep(BOOKING_STEP.YOU, BOOKING_STEP.REVIEW, ok)).toBe(false);

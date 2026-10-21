@@ -149,18 +149,11 @@ export function StepDuration() {
   };
   return (
     <div data-testid="step-duration">
-      <H t={trialFlow ? "Confirm your free trial length" : "How long?"} s={trialFlow ? "Your trial is complimentary." : `${s.name} — pick a length to continue.`} />
-      <div className="grid grid-cols-3 gap-2">
-        {Object.entries(s.prices).map(([d, p]) => (
-          <Tile key={d} on={String(draft.duration) === d} onClick={() => chooseDuration(d)} data-testid={`step-duration-${d}`}>
-            <span className="block text-center text-sm font-semibold">{d} min</span>
-            <span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span>
-          </Tile>
-        ))}
-      </div>
+      <H t={trialFlow ? "Confirm your free trial length" : "How long?"} s={trialFlow ? "Your trial is complimentary." : `${s.name} — optional enhancements first, then tap a length to continue.`} />
+      {/* Enhancements above duration so they are reachable before auto-advance. */}
       {!trialFlow && idx.settings.addons?.length > 0 && (
-        <div className="mt-8">
-          <p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional — choose before a duration, or go Back)</span></p>
+        <div className="mb-6">
+          <p className="nb-label">Enhancements <span className="font-normal text-nb-mute">(optional)</span></p>
           <div className="mt-2 flex flex-wrap gap-2">
             {idx.settings.addons.map((a) => (
               <button key={a.id} type="button" onClick={() => patchDraft({ addons: toggle(draft.addons, a.id) })} data-testid={`step-addon-${a.id}`} className={draft.addons.includes(a.id) ? "nb-chip-on" : "nb-chip-off"}>
@@ -170,6 +163,14 @@ export function StepDuration() {
           </div>
         </div>
       )}
+      <div className="grid grid-cols-3 gap-2">
+        {Object.entries(s.prices).map(([d, p]) => (
+          <Tile key={d} on={String(draft.duration) === d} onClick={() => chooseDuration(d)} data-testid={`step-duration-${d}`}>
+            <span className="block text-center text-sm font-semibold">{d} min</span>
+            <span className="block text-center text-xs text-nb-mute">{trialFlow ? "Free" : money(p)}</span>
+          </Tile>
+        ))}
+      </div>
     </div>
   );
 }
@@ -248,7 +249,13 @@ export function StepWhen() {
       <p className="nb-label mt-6">{showAll ? "Open times" : "Recommended times"}{date ? ` · ${fmtDate(date)}` : ""}</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {visible.map((slot) => (
-          <button key={slot.time} type="button" onClick={() => patchDraft({ date, time: slot.time })} data-testid={`step-time-${slot.time}`} className={`rounded-2xl border-2 px-3 py-3 text-left text-sm ${draft.time === slot.time && draft.date === date ? "border-nb-blue bg-nb-blue text-white" : "border-sky-100 bg-white"}`}>
+          <button
+            key={slot.time}
+            type="button"
+            onClick={() => patchDraft({ date, time: slot.time, step: BOOKING_STEP.YOU })}
+            data-testid={`step-time-${slot.time}`}
+            className={`rounded-2xl border-2 px-3 py-3 text-left text-sm ${draft.time === slot.time && draft.date === date ? "border-nb-blue bg-nb-blue text-white" : "border-sky-100 bg-white"}`}
+          >
             <span className="block font-semibold">{fmtTime(slot.time)}</span>
             <span className={`mt-1 block text-xs ${draft.time === slot.time && draft.date === date ? "text-white/80" : "text-nb-mute"}`}>{slot.label || "Available"}</span>
           </button>
@@ -355,7 +362,12 @@ export function StepPay() {
   const policy = idx.settings.paymentPolicy || {};
   const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
   const selected = paymentChoice(draft, idx.settings);
-  const choose = (payNow) => patchDraft({ paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : "card" });
+  const choose = (payNow) => patchDraft({
+    paymentMethod: "self",
+    payNow,
+    selfMethod: payNow === "cash" ? "cash" : "card",
+    step: BOOKING_STEP.REVIEW,
+  });
   if (trialFlow) {
     return (
       <div data-testid="step-pay-trial">
