@@ -21,9 +21,11 @@ test("marketing pages keep a public footer and workspaces stay closed", () => {
   expect(homeFor({ role: "desk", workspaces: ["desk"] })).toBe("/desk");
 });
 
-test("booking route uses focused chrome without marketing dock", () => {
+test("booking and health-history routes use focused chrome without marketing dock", () => {
   expect(showsFocusedBookingChrome("/book")).toBe(true);
   expect(showsFocusedBookingChrome("/book/")).toBe(true);
+  expect(showsFocusedBookingChrome("/me/intake")).toBe(true);
+  expect(showsFocusedBookingChrome("/me/intake/")).toBe(true);
   expect(showsFocusedBookingChrome("/me")).toBe(false);
   expect(showsFocusedBookingChrome("/services")).toBe(false);
   expect(showsMarketingFooter("/book")).toBe(false);

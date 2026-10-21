@@ -1,38 +1,33 @@
-import { StickyActionBar } from "@/components/StickyActionBar";
-
 /**
- * Shared terminal / completion layout for mobile-first CTAs.
- * Primary actions sit in StickyActionBar (fixed above bottom nav + safe area).
- * Optional footer content (PWA install, tracking notes) renders below the fold
- * so it cannot push primary actions out of the first viewport.
+ * Shared terminal / completion layout.
+ * Primary actions sit in normal document flow immediately after the summary —
+ * no sticky/fixed docks and no artificial viewport-height spacing.
  */
 export function CompletionScreen({
   children,
   actions,
   footer = null,
   testid = "completion-screen",
-  actionsTestid = "completion-sticky-actions",
-  /** Client screens lift at md; keep dock longer for staff if needed. */
-  liftAt = "md",
+  actionsTestid = "completion-actions",
+  /** Kept for call-site compatibility; ignored (actions are always in-flow). */
+  liftAt: _liftAt = "md",
   className = "",
 }) {
   return (
     <div
-      className={`mx-auto flex w-full max-w-xl flex-col px-5 pt-5 text-center ${className}`.trim()}
+      className={`mx-auto flex w-full max-w-xl flex-col px-5 pb-[calc(1.25rem+var(--nb-safe-b))] pt-5 text-center ${className}`.trim()}
       data-testid={testid}
     >
-      {/* Summary only — keep first viewport free of install / tracking extras. */}
-      <div className="nb-completion-body nb-step-scroll min-w-0" data-testid={`${testid}-body`}>
+      <div className="min-w-0" data-testid={`${testid}-body`}>
         {children}
       </div>
       {actions ? (
-        <StickyActionBar testid={actionsTestid} liftAt={liftAt} stacked>
+        <div className="mt-5 w-full space-y-2" data-testid={actionsTestid}>
           {actions}
-        </StickyActionBar>
+        </div>
       ) : null}
-      {/* After primary actions in document order (below fold on mobile; after CTAs on md+). */}
       {footer ? (
-        <div className="mt-4 border-t border-sky-100 pb-[calc(var(--nb-sticky-bottom)+1rem)] pt-4 text-left md:pb-8" data-testid={`${testid}-footer`}>
+        <div className="mt-5 border-t border-sky-100 pt-4 text-left" data-testid={`${testid}-footer`}>
           {footer}
         </div>
       ) : null}

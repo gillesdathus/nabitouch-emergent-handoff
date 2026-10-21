@@ -463,6 +463,12 @@ export default function Booking() {
       || live.paymentDue?.choice === "cash"
       || (Number(live.paymentDue?.dueNowCents) === 0 && Number(live.paymentDue?.remainingCents) > 0)
     );
+    const appointmentConfirmed = live.status === "confirmed" || live.status === "assigned" || live.status === "preparing" || live.status === "en_route" || live.status === "arrived";
+    const settlementCopy = trialVisit
+      ? "Free trial request received. No payment is due. This environment does not send a confirmation text or email."
+      : cashLike
+        ? "Booking request received — not an appointment confirmation yet. No online payment collected; cash is due at the visit. This environment does not send a confirmation text or email."
+        : "Booking request received — not a payment receipt. Online card amounts are recorded only after Stripe verifies them (see payment status separately). This environment does not send a confirmation text or email.";
     return (
       <CompletionScreen
         testid="booking-confirmation"
@@ -479,25 +485,15 @@ export default function Booking() {
         )}
         footer={(
           <>
-            <p className="text-xs text-nb-mute" data-testid="booking-settlement-note">
-              {trialVisit
-                ? "This environment does not send a confirmation text or email."
-                : cashLike
-                  ? "Request confirmed — no online payment collected. Cash is due at the visit. This environment does not send a confirmation text or email."
-                  : "Request confirmed — not a payment receipt. Online card amounts are recorded only after Stripe verifies them. This environment does not send a confirmation text or email."}
-            </p>
-            <p className="mt-2 text-[11px] leading-snug text-nb-mute">
-              Visit status updates when your practitioner starts preparing or begins travel — not when health check, consent, or space prep are done.
-            </p>
             {guestTrack?.token && (
-              <p className="mt-3 text-sm">
+              <p className="text-sm">
                 <Link to={{ pathname: "/track", hash: guestTrack.token }} data-testid="guest-tracking-link" className="font-semibold text-nb-blue">Follow this visit</Link>
                 <span className="mt-1 block text-xs text-nb-mute">Expires in two hours. Only shows this appointment while location sharing is on.</span>
               </p>
             )}
-            {firstBooking && !trialVisit && <div className="mt-4"><InstallCard collapsible /></div>}
+            {firstBooking && !trialVisit && <div className={guestTrack?.token ? "mt-4" : ""}><InstallCard collapsible /></div>}
             {trialVisit && (
-              <div className="nb-card mt-4 p-4 text-left" data-testid="trial-next-cta">
+              <div className="nb-card p-4 text-left" data-testid="trial-next-cta">
                 <p className="font-semibold">Ready for a full massage?</p>
                 <p className="mt-1 text-sm text-nb-mute">Book a regular session when you are ready. Your first-booking welcome offer stays available for an eligible regular booking.</p>
                 <Link to="/book" className="nb-btn-primary mt-3 inline-flex h-11 px-5 text-sm" data-testid="trial-book-regular">Book a regular massage</Link>
@@ -523,6 +519,9 @@ export default function Booking() {
           {(live.status === "requested" || !live.practitionerId) && (
             <p className="mt-1.5 text-sm" data-testid="booking-unassigned">Booking request — a practitioner has not been assigned yet.</p>
           )}
+          {appointmentConfirmed && (
+            <p className="mt-1.5 text-sm text-nb-teal" data-testid="booking-status-confirmed">Appointment status: {live.status.replace(/_/g, " ")}.</p>
+          )}
         </CompletionHero>
         <div className="nb-card mt-3 p-3 text-left sm:mt-4 sm:p-4" data-testid="booking-confirmation-summary">
           <ClientTracker appt={live} compact />
@@ -532,6 +531,12 @@ export default function Booking() {
           {live.pricing?.welcomeOffer && (
             <p className="mt-2 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>
           )}
+        </div>
+        <div className="mt-4 space-y-2 text-left" data-testid="booking-confirmation-status">
+          <p className="text-xs text-nb-mute" data-testid="booking-settlement-note">{settlementCopy}</p>
+          <p className="text-[11px] leading-snug text-nb-mute">
+            Visit status updates when your practitioner starts preparing or begins travel — not when health check, consent, or space prep are done.
+          </p>
         </div>
       </CompletionScreen>
     );

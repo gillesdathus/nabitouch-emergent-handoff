@@ -1,6 +1,6 @@
 /**
- * Completion screens: primary actions must use the shared sticky dock so they
- * stay above the mobile bottom nav without scrolling past Install / tracking blocks.
+ * Completion screens: primary actions stay in document flow after the summary
+ * (no sticky dock / no artificial viewport gap).
  */
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -23,7 +23,7 @@ function mount(ui) {
 }
 
 describe("CompletionScreen", () => {
-  test("keeps primary actions in StickyActionBar above footer extras", () => {
+  test("keeps primary actions in-flow after summary, before footer extras", () => {
     const view = mount(createElement(
       CompletionScreen,
       {
@@ -37,16 +37,19 @@ describe("CompletionScreen", () => {
         subtitle: "NT-1 · Swedish · 60 min",
       }),
     ));
-    const actions = document.querySelector("[data-testid=completion-sticky-actions]");
+    const actions = view.host.querySelector("[data-testid=completion-actions]");
     const footer = view.host.querySelector("[data-testid=completion-screen-footer]");
     const body = view.host.querySelector("[data-testid=completion-screen-body]");
     expect(actions).toBeTruthy();
-    expect(actions.className).toMatch(/nb-sticky-actions/);
+    expect(actions.className).not.toMatch(/nb-sticky-actions/);
+    expect(document.querySelector(".nb-sticky-actions")).toBeNull();
     expect(actions.querySelector("[data-testid=primary-cta]")).toBeTruthy();
-    expect(footer.querySelector("[data-testid=install-prompt-card]")).toBeTruthy();
+    expect(view.host.contains(actions)).toBe(true);
     expect(body.contains(actions)).toBe(false);
-    expect(view.host.contains(actions)).toBe(false);
+    expect(footer.querySelector("[data-testid=install-prompt-card]")).toBeTruthy();
     expect(body.contains(footer)).toBe(false);
+    // Actions appear before footer in document order.
+    expect(actions.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     view.cleanup();
   });
 
