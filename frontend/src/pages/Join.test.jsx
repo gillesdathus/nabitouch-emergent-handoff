@@ -48,7 +48,10 @@ afterEach(() => {
 test("join password CTA is sticky and disabled until 8 characters", async () => {
   h.acceptInvite.mockResolvedValue({ message: "Password saved." });
   const view = renderJoin();
-  expect(document.querySelector("[data-testid='join-sticky-actions']")).toBeTruthy();
+  const bar = document.querySelector("[data-testid='join-sticky-actions']");
+  expect(bar).toBeTruthy();
+  expect(bar.className).toMatch(/nb-sticky-actions/);
+  expect(view.host.contains(bar)).toBe(false);
   const submit = document.querySelector("[data-testid='join-submit']");
   expect(submit.disabled).toBe(true);
   act(() => {

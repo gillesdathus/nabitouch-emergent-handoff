@@ -55,7 +55,12 @@ afterEach(() => {
 test("account step starts on identity and continues to credentials", () => {
   const view = renderWelcome();
   expect(view.host.querySelector("[data-testid='welcome-identity-title']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='welcome-step-caption']")?.textContent).toMatch(/identity/i);
   expect(view.host.querySelector("[data-testid='welcome-email']")).toBeNull();
+  const bar = document.querySelector("[data-testid='welcome-sticky-actions']");
+  expect(bar).toBeTruthy();
+  expect(bar.className).toMatch(/nb-sticky-actions/);
+  expect(view.host.contains(bar)).toBe(false);
   const continueBtn = document.querySelector("[data-testid='welcome-identity-continue']");
   expect(continueBtn).toBeTruthy();
   expect(continueBtn.disabled).toBe(true);

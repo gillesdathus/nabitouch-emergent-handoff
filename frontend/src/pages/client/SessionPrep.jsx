@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Field, Notice, Segmented, Stepper, cx } from "@/components/tide";
 import { FlowStepShell } from "@/components/FlowStepShell";
+import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen";
 import { SignaturePad } from "@/components/session/SignaturePad";
 import { RestrictionList, useSessionReadiness } from "@/components/session/SessionReadiness";
 import { api, apiError } from "@/lib/api";
@@ -119,8 +120,8 @@ function ConsentStep({ data, apptId, onDone, defaultName }) {
       )}
     >
       <div className="space-y-4" data-testid="prep-consent-step">
-        <details className="rounded-2xl bg-sky-50/70 p-4 text-sm leading-relaxed" data-testid="prep-consent-text" open>
-          <summary className="cursor-pointer font-semibold">Consent for this visit</summary>
+        <details className="rounded-2xl bg-sky-50/70 p-4 text-sm leading-relaxed" data-testid="prep-consent-text">
+          <summary className="cursor-pointer font-semibold">Consent for this visit <span className="font-normal text-nb-mute">· tap to read</span></summary>
           <div className="mt-2">{data.consentText}<p className="mt-2 text-[11px] text-nb-mute">Version {data.consentVersion}</p></div>
         </details>
         <div><p className="nb-label">Areas to avoid today</p><div className="flex flex-wrap gap-2">{AREAS.map((area) => <Chip key={area} testid={`prep-avoid-${area.replace(/\s/g, "-").toLowerCase()}`} on={r.avoidAreas.includes(area)} onClick={() => setR({ ...r, avoidAreas: r.avoidAreas.includes(area) ? r.avoidAreas.filter((x) => x !== area) : [...r.avoidAreas, area] })}>{area}</Chip>)}</div></div>
@@ -173,27 +174,40 @@ function Done({ data, appt, idx, apptId, onChange }) {
     }
   };
   return (
-    <div className="space-y-5 text-center" data-testid="prep-done">
-      <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-teal-50 text-teal-600" aria-hidden><ShieldCheck className="h-8 w-8" /></span>
-      <div>
-        <h2 className="text-xl font-semibold text-nb-ink" data-testid="prep-done-heading">You're all set!</h2>
-        <p className="mt-2 text-sm text-nb-mute" data-testid="prep-done-message">Your health check and consent are complete. You're ready for your upcoming massage.</p>
+    <CompletionScreen
+      testid="prep-done"
+      actionsTestid="prep-done-actions"
+      className="px-0"
+      actions={(
+        <div className="flex w-full flex-col gap-2 sm:flex-row">
+          <Link to="/me" className="nb-btn-primary h-12 flex-1" data-testid="prep-done-home">Back to My Nabitouch</Link>
+          <Link to="/me#upcoming-visit-card" className="nb-btn-ghost h-12 flex-1" data-testid="prep-done-appointment">View appointment</Link>
+        </div>
+      )}
+      footer={(
+        <div className="space-y-3 text-center">
+          <SaveError message={error} onRetry={() => setAsking(true)} busy={busy} testid="prep-withdraw-error" />
+          <button type="button" disabled={busy} onClick={() => setAsking(true)} className="text-sm font-semibold text-rose-700" data-testid="prep-withdraw">Withdraw my consent</button>
+          <Confirm open={asking} onOpenChange={setAsking} title="Withdraw consent for this visit?" body="Your therapist will not start, or will stop, treatment. You can sign again later if you change your mind." confirmLabel="Withdraw consent" onConfirm={withdraw} testid="prep-withdraw-confirm" />
+        </div>
+      )}
+    >
+      <CompletionHero
+        testid="prep-done-hero"
+        mark={<span className="grid h-16 w-16 place-items-center rounded-full bg-teal-50 text-teal-600" aria-hidden><ShieldCheck className="h-8 w-8" /></span>}
+        title={<span data-testid="prep-done-heading">You're all set!</span>}
+        subtitle={<span data-testid="prep-done-message">Your health check and consent are complete. You're ready for your upcoming massage.</span>}
+      />
+      <div className="mt-5 space-y-4 text-left">
+        <AppointmentSummary appt={appt} idx={idx} />
+        <p className="text-center text-xs text-nb-mute" data-testid="prep-done-saved">
+          {record?.typedName && signedAt
+            ? `Signed by ${record.typedName} at ${signedAt}. Your completed forms are saved on your account.`
+            : "Your completed forms are saved on your account and will still be here after you leave this screen."}
+        </p>
+        <div className="flex justify-center"><RestrictionList restrictions={data.restrictions} /></div>
       </div>
-      <AppointmentSummary appt={appt} idx={idx} />
-      <p className="text-xs text-nb-mute" data-testid="prep-done-saved">
-        {record?.typedName && signedAt
-          ? `Signed by ${record.typedName} at ${signedAt}. Your completed forms are saved on your account.`
-          : "Your completed forms are saved on your account and will still be here after you leave this screen."}
-      </p>
-      <div className="flex justify-center"><RestrictionList restrictions={data.restrictions} /></div>
-      <div className="flex flex-col gap-2 pt-1">
-        <Link to="/me" className="nb-btn-primary h-12 w-full" data-testid="prep-done-home">Back to My Nabitouch</Link>
-        <Link to="/me#upcoming-visit-card" className="nb-btn-ghost h-12 w-full" data-testid="prep-done-appointment">View appointment</Link>
-      </div>
-      <SaveError message={error} onRetry={() => setAsking(true)} busy={busy} testid="prep-withdraw-error" />
-      <button type="button" disabled={busy} onClick={() => setAsking(true)} className="text-sm font-semibold text-rose-700" data-testid="prep-withdraw">Withdraw my consent</button>
-      <Confirm open={asking} onOpenChange={setAsking} title="Withdraw consent for this visit?" body="Your therapist will not start, or will stop, treatment. You can sign again later if you change your mind." confirmLabel="Withdraw consent" onConfirm={withdraw} testid="prep-withdraw-confirm" />
-    </div>
+    </CompletionScreen>
   );
 }
 
@@ -203,16 +217,41 @@ export default function SessionPrep() {
   const { state, idx, me } = useDemo();
   const { data, setData, error, loading, reload } = useSessionReadiness(id, { poll: 0, enabled: !!me });
   const appt = state?.appointments.find((a) => a.id === id);
-  if (!me) return <div className="mx-auto max-w-xl px-5 py-16 text-center"><Link to={`/login?next=/me/visit/${id}/prepare`} className="nb-btn-primary">Sign in</Link></div>;
+  if (!me) {
+    return (
+      <div className="mx-auto max-w-xl px-5 py-10" data-testid="prep-signed-out">
+        <FlowStepShell
+          testid="prep-signin-shell"
+          actionsTestid="prep-signin-actions"
+          actions={<Link to={`/login?next=/me/visit/${id}/prepare`} className="nb-btn-primary h-12 w-full" data-testid="prep-signin">Sign in</Link>}
+        >
+          <div className="nb-card space-y-3 p-5 text-center">
+            <p className="text-lg font-semibold">Sign in to prepare</p>
+            <p className="text-sm text-nb-mute">Your health check and consent are saved on your account.</p>
+          </div>
+        </FlowStepShell>
+      </div>
+    );
+  }
   if (error && !data) {
     return (
       <div className="mx-auto max-w-xl px-5 py-10" data-testid="prep-load-error">
-        <div className="nb-card space-y-4 p-5 text-center">
-          <p className="text-lg font-semibold">We could not load this visit</p>
-          <p className="text-sm text-nb-mute">{apiError(error) || "Check your connection and try again. Your saved forms are not lost."}</p>
-          <button type="button" onClick={reload} className="nb-btn-primary h-12 w-full" data-testid="prep-load-retry">Try again</button>
-          <Link to="/me" className="nb-btn-ghost h-12 w-full">Back to My Nabitouch</Link>
-        </div>
+        <FlowStepShell
+          testid="prep-load-shell"
+          actionsTestid="prep-load-actions"
+          stacked
+          actions={(
+            <div className="flex w-full flex-col gap-2">
+              <button type="button" onClick={reload} className="nb-btn-primary h-12 w-full" data-testid="prep-load-retry">Try again</button>
+              <Link to="/me" className="nb-btn-ghost h-12 w-full">Back to My Nabitouch</Link>
+            </div>
+          )}
+        >
+          <div className="nb-card space-y-3 p-5 text-center">
+            <p className="text-lg font-semibold">We could not load this visit</p>
+            <p className="text-sm text-nb-mute">{apiError(error) || "Check your connection and try again. Your saved forms are not lost."}</p>
+          </div>
+        </FlowStepShell>
       </div>
     );
   }
@@ -247,19 +286,17 @@ function PrepBody({ id, nav, idx, appt, data, setData, me, needsBaseline, step }
             </FlowStepShell>
           )}
           {step === 0 && !needsBaseline && (
-            <div className="nb-card p-5">
+            <div className="nb-card overflow-hidden p-5">
               <ConfirmStep data={data} apptId={id} onDone={setData} />
             </div>
           )}
           {step === 1 && (
-            <div className="nb-card p-5">
+            <div className="nb-card overflow-hidden p-5">
               <ConsentStep data={data} apptId={id} onDone={setData} defaultName={`${me.firstName || ""} ${me.lastName || ""}`.trim()} />
             </div>
           )}
           {step === 2 && (
-            <div className="nb-card p-5">
-              <Done data={data} appt={appt} idx={idx} apptId={id} onChange={setData} />
-            </div>
+            <Done data={data} appt={appt} idx={idx} apptId={id} onChange={setData} />
           )}
         </motion.div>
       </AnimatePresence>

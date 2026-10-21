@@ -86,7 +86,16 @@ export default function Welcome() {
   return (
     <div className="mx-auto max-w-lg space-y-5 px-4 py-8" data-testid="legacy-welcome">
       <p className="nb-eyebrow">Client app</p>
-      <h1 className="text-2xl font-semibold tracking-tight">Set up your account</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {step === 0
+          ? (accountPhase === "identity" ? "Confirm who you are" : "Create your sign-in")
+          : "Set up your account"}
+      </h1>
+      <p className="text-sm text-nb-mute" data-testid="welcome-step-caption">
+        {step === 0
+          ? (accountPhase === "identity" ? "Account · identity" : "Account · sign-in")
+          : STEPS[step] || "Continue"}
+      </p>
       <ol className="flex gap-2 overflow-x-auto text-xs text-nb-mute" aria-label="Onboarding progress">
         {STEPS.map((label, index) => <li key={label} className={index === step ? "font-semibold text-nb-navy" : ""}>{label}</li>)}
       </ol>

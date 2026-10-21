@@ -145,7 +145,8 @@ function CredentialsSelf({ personId }) {
   useEffect(() => { load(); }, []); // eslint-disable-line
   const mine = rows.filter((row) => row.practitionerId === personId);
   const save = async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
+    if (!form.identifier?.trim() || !form.expiresOn) return;
     await run(() => api.addCredential({ ...form, practitionerId: personId }), "Credential submitted for review");
     setForm({ kind: "registration", identifier: "", issuingAuthority: "", province: "AB", provider: "", effectiveOn: "", expiresOn: "", documentNote: "" });
     load();
@@ -163,16 +164,25 @@ function CredentialsSelf({ personId }) {
         ))}
         {!mine.length && <li className="text-nb-mute">No credentials on file yet.</li>}
       </ul>
-      <form className="grid gap-3 sm:grid-cols-2" onSubmit={save} data-testid="pro-credential-form">
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Type</span><select className="nb-input h-10" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{CRED_KINDS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Number / policy</span><input className="nb-input h-10" required value={form.identifier} onChange={(e) => setForm({ ...form, identifier: e.target.value })} data-testid="pro-credential-identifier" /></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Issuing authority</span><input className="nb-input h-10" value={form.issuingAuthority} onChange={(e) => setForm({ ...form, issuingAuthority: e.target.value })} /></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Province</span><input className="nb-input h-10" value={form.province} onChange={(e) => setForm({ ...form, province: e.target.value })} /></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Provider (insurance)</span><input className="nb-input h-10" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} /></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Effective</span><input type="date" className="nb-input h-10" value={form.effectiveOn} onChange={(e) => setForm({ ...form, effectiveOn: e.target.value })} /></label>
-        <label className="text-xs"><span className="mb-1 block text-nb-mute">Expires</span><input type="date" required className="nb-input h-10" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="pro-credential-expires" /></label>
-        <label className="text-xs sm:col-span-2"><span className="mb-1 block text-nb-mute">Document note</span><input className="nb-input h-10" value={form.documentNote} onChange={(e) => setForm({ ...form, documentNote: e.target.value })} placeholder="Certificate on file with owner" /></label>
-        <button type="submit" className="nb-btn-primary h-10 text-sm sm:col-span-2" data-testid="pro-credential-save">Submit for verification</button>
+      <form className="space-y-3" onSubmit={save} data-testid="pro-credential-form">
+        <FlowStepShell
+          testid="pro-credential-shell"
+          actionsTestid="pro-credential-actions"
+          actions={(
+            <button type="button" className="nb-btn-primary h-12 w-full text-sm" data-testid="pro-credential-save" onClick={() => save()}>Submit for verification</button>
+          )}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Type</span><select className="nb-input h-10" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{CRED_KINDS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Number / policy</span><input className="nb-input h-10" required value={form.identifier} onChange={(e) => setForm({ ...form, identifier: e.target.value })} data-testid="pro-credential-identifier" /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Issuing authority</span><input className="nb-input h-10" value={form.issuingAuthority} onChange={(e) => setForm({ ...form, issuingAuthority: e.target.value })} /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Province</span><input className="nb-input h-10" value={form.province} onChange={(e) => setForm({ ...form, province: e.target.value })} /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Provider (insurance)</span><input className="nb-input h-10" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Effective</span><input type="date" className="nb-input h-10" value={form.effectiveOn} onChange={(e) => setForm({ ...form, effectiveOn: e.target.value })} /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">Expires</span><input type="date" required className="nb-input h-10" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="pro-credential-expires" /></label>
+            <label className="text-xs sm:col-span-2"><span className="mb-1 block text-nb-mute">Document note</span><input className="nb-input h-10" value={form.documentNote} onChange={(e) => setForm({ ...form, documentNote: e.target.value })} placeholder="Certificate on file with owner" /></label>
+          </div>
+        </FlowStepShell>
       </form>
     </section>
   );
