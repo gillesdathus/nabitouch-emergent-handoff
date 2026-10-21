@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, FileBadge, Trash2 } from "lucide-react";
+import { FlowStepShell } from "@/components/FlowStepShell";
 import { SectionHead, Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
@@ -47,38 +48,49 @@ export function ProfileFields({ person, owner = false, onSaved, onCancel }) {
   };
   return (
     <form className="space-y-3" data-testid={`profile-editor-${person.id}`} onSubmit={(event) => { event.preventDefault(); save(); }}>
-      <label className="block text-xs"><span className="mb-1 block text-nb-mute">Display name</span><input className="nb-input h-10" value={form.name} onChange={set("name")} data-testid={`profile-name-${person.id}`} /></label>
-      <label className="block text-xs"><span className="mb-1 block text-nb-mute">Designation</span><input className="nb-input h-10" value={form.designation} onChange={set("designation")} data-testid={`profile-designation-${person.id}`} placeholder="e.g. RMT" /></label>
-      <label className="block text-xs"><span className="mb-1 block text-nb-mute">Biography</span><textarea rows={3} className="nb-input h-auto py-3" value={form.bio} onChange={set("bio")} data-testid={`profile-bio-${person.id}`} /></label>
-      <label className="block text-xs"><span className="mb-1 block text-nb-mute">Experience</span><textarea rows={2} className="nb-input h-auto py-3" value={form.experience} onChange={set("experience")} data-testid={`profile-experience-${person.id}`} /></label>
-      <label className="block text-xs"><span className="mb-1 block text-nb-mute">Qualifications, one per line</span><textarea rows={3} className="nb-input h-auto py-3" value={form.qualifications} onChange={set("qualifications")} data-testid={`profile-qualifications-${person.id}`} /></label>
-      <fieldset className="text-xs">
-        <legend className="mb-1 text-nb-mute">Services offered</legend>
-        <div className="flex flex-wrap gap-2" data-testid={`profile-specialties-${person.id}`}>
-          {state.services.filter((service) => service.archived !== true).map((service) => (
-            <label key={service.slug} className="flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1">
-              <input type="checkbox" checked={form.specialties.includes(service.slug)} onChange={() => setForm((current) => ({ ...current, specialties: current.specialties.includes(service.slug) ? current.specialties.filter((item) => item !== service.slug) : [...current.specialties, service.slug] }))} />
-              {service.name}
+      <FlowStepShell
+        testid={`profile-flow-shell-${person.id}`}
+        actionsTestid={`profile-sticky-actions-${person.id}`}
+        stacked={Boolean(onCancel)}
+        actions={(
+          <div className="flex w-full gap-2">
+            {onCancel && <button type="button" className="nb-btn-ghost h-12 flex-1 px-4 text-sm" onClick={onCancel}>Cancel</button>}
+            <button type="button" className="nb-btn-primary h-12 flex-1 px-4 text-sm" data-testid={`profile-save-${person.id}`} onClick={save}>Save profile</button>
+          </div>
+        )}
+      >
+        <label className="block text-xs"><span className="mb-1 block text-nb-mute">Display name</span><input className="nb-input h-10" value={form.name} onChange={set("name")} data-testid={`profile-name-${person.id}`} /></label>
+        <label className="block text-xs"><span className="mb-1 block text-nb-mute">Designation</span><input className="nb-input h-10" value={form.designation} onChange={set("designation")} data-testid={`profile-designation-${person.id}`} placeholder="e.g. RMT" /></label>
+        <label className="block text-xs"><span className="mb-1 block text-nb-mute">Biography</span><textarea rows={3} className="nb-input h-auto py-3" value={form.bio} onChange={set("bio")} data-testid={`profile-bio-${person.id}`} /></label>
+        <label className="block text-xs"><span className="mb-1 block text-nb-mute">Experience</span><textarea rows={2} className="nb-input h-auto py-3" value={form.experience} onChange={set("experience")} data-testid={`profile-experience-${person.id}`} /></label>
+        <label className="block text-xs"><span className="mb-1 block text-nb-mute">Qualifications, one per line</span><textarea rows={3} className="nb-input h-auto py-3" value={form.qualifications} onChange={set("qualifications")} data-testid={`profile-qualifications-${person.id}`} /></label>
+        <fieldset className="text-xs">
+          <legend className="mb-1 text-nb-mute">Services offered</legend>
+          <div className="flex flex-wrap gap-2" data-testid={`profile-specialties-${person.id}`}>
+            {state.services.filter((service) => service.archived !== true).map((service) => (
+              <label key={service.slug} className="flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1">
+                <input type="checkbox" checked={form.specialties.includes(service.slug)} onChange={() => setForm((current) => ({ ...current, specialties: current.specialties.includes(service.slug) ? current.specialties.filter((item) => item !== service.slug) : [...current.specialties, service.slug] }))} />
+                {service.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {owner && (
+          <>
+            <label className="block text-xs"><span className="mb-1 block text-nb-mute">Public visibility</span>
+              <select className="nb-input h-10" value={form.profileVisibility} onChange={set("profileVisibility")} data-testid={`profile-visibility-${person.id}`}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="hidden">Hidden</option>
+              </select>
             </label>
-          ))}
-        </div>
-      </fieldset>
-      {owner && (
-        <>
-          <label className="block text-xs"><span className="mb-1 block text-nb-mute">Public visibility</span>
-            <select className="nb-input h-10" value={form.profileVisibility} onChange={set("profileVisibility")} data-testid={`profile-visibility-${person.id}`}>
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
-              <option value="hidden">Hidden</option>
-            </select>
-          </label>
-          <p className="text-xs text-nb-mute">Publishing a profile does not approve credentials, hours, or booking.</p>
-          <label className="block text-xs"><span className="mb-1 block text-nb-mute">Display order</span><input type="number" min="0" className="nb-input h-10" value={form.displayOrder} onChange={set("displayOrder")} data-testid={`profile-order-${person.id}`} /></label>
-          <label className="block text-xs"><span className="mb-1 block text-nb-mute">Public address</span><input className="nb-input h-10" value={form.slug} onChange={set("slug")} data-testid={`profile-slug-${person.id}`} /></label>
-        </>
-      )}
-      {error && <p className="text-sm text-red-700" data-testid={`profile-error-${person.id}`}>{error}</p>}
-      <div className="flex gap-2">{onCancel && <button type="button" className="nb-btn-ghost h-10 px-4 text-sm" onClick={onCancel}>Cancel</button>}<button type="submit" className="nb-btn-primary h-10 px-4 text-sm" data-testid={`profile-save-${person.id}`}>Save profile</button></div>
+            <p className="text-xs text-nb-mute">Publishing a profile does not approve credentials, hours, or booking.</p>
+            <label className="block text-xs"><span className="mb-1 block text-nb-mute">Display order</span><input type="number" min="0" className="nb-input h-10" value={form.displayOrder} onChange={set("displayOrder")} data-testid={`profile-order-${person.id}`} /></label>
+            <label className="block text-xs"><span className="mb-1 block text-nb-mute">Public address</span><input className="nb-input h-10" value={form.slug} onChange={set("slug")} data-testid={`profile-slug-${person.id}`} /></label>
+          </>
+        )}
+        {error && <p className="text-sm text-red-700" data-testid={`profile-error-${person.id}`}>{error}</p>}
+      </FlowStepShell>
     </form>
   );
 }

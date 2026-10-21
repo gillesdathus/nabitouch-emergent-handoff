@@ -194,10 +194,20 @@ test("failed health confirm keeps form and shows retry", async () => {
     view.host.querySelector("[data-testid='prep-answer-unwell-no']").click();
   });
   await act(async () => {
-    view.host.querySelector("[data-testid='prep-confirm-submit']").click();
+    document.querySelector("[data-testid='prep-confirm-submit']").click();
   });
   expect(view.host.querySelector("[data-testid='prep-confirm-error']")?.textContent).toContain("Document uploads are turned off");
   expect(view.host.querySelector("[data-testid='prep-confirm-step']")).toBeTruthy();
   expect(view.host.querySelector("[data-testid='prep-confirm-error-retry']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='prep-confirm-actions']")).toBeTruthy();
+  view.unmount();
+});
+
+test("confirm step collapses history and keeps primary CTA sticky", () => {
+  h.readiness = baseReadiness();
+  const view = renderPrep();
+  expect(view.host.querySelector("[data-testid='prep-history-summary']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='prep-confirm-submit']")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid='prep-confirm-submit']")).toBeNull();
   view.unmount();
 });
