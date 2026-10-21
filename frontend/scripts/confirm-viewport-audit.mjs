@@ -34,24 +34,25 @@ async function expectEnabled(locator) {
 
 async function bookToConfirmation(page) {
   await page.goto(`${BASE}/book`, { waitUntil: "networkidle", timeout: 60000 });
+  await page.evaluate(() => { try { localStorage.removeItem("nt_booking_draft_v1"); } catch { /* ignore */ } });
+  await page.goto(`${BASE}/book`, { waitUntil: "networkidle", timeout: 60000 });
   await page.getByTestId("booking-regular-flow").waitFor({ state: "visible", timeout: 20000 });
   await page.getByTestId("step-where-home").click();
-  await page.getByTestId("booking-next-btn").click().catch(() => {});
   await typeReact(page, "step-where-address-input", "10150 104");
   await page.waitForTimeout(900);
   await page.getByTestId("step-where-address-option-0").waitFor({ state: "visible", timeout: 15000 });
   await page.getByTestId("step-where-address-option-0").click();
-  await page.waitForTimeout(500);
-  const postal = page.getByTestId("step-where-address-postal-input");
-  if (await postal.count()) await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
+  await page.getByTestId("step-where-address-confirm-card").waitFor({ state: "visible", timeout: 15000 });
+  if (await page.getByTestId("step-where-address-postal-input").count()) {
+    await typeReact(page, "step-where-address-postal-input", "T5J 2R4");
+    await page.waitForFunction(() => {
+      const btn = document.querySelector("[data-testid=step-where-address-confirm]");
+      return btn && !btn.disabled;
+    }, null, { timeout: 5000 });
+  }
   await page.getByTestId("step-where-address-confirm").click();
   await page.getByTestId("step-where-address-details-ask").waitFor({ state: "visible", timeout: 20000 });
   await page.getByTestId("step-where-address-details-no").click();
-  await page.waitForTimeout(400);
-  const onService = page.getByTestId("step-service");
-  if (!(await onService.count())) {
-    await page.getByTestId("booking-next-btn").click();
-  }
   await page.getByTestId("step-service").waitFor({ state: "visible", timeout: 15000 });
   const swedish = page.getByTestId("step-service-swedish");
   if (await swedish.count()) await swedish.click();
@@ -76,7 +77,7 @@ async function bookToConfirmation(page) {
     }
   }
   if (!picked) throw new Error("no slots");
-  await page.getByTestId("booking-next-btn").click();
+  // Time selection auto-advances to You.
   await page.getByTestId("step-you-contact").waitFor({ state: "visible", timeout: 15000 });
   const stamp = Date.now();
   await page.getByTestId("guest-firstName-input").fill("Confirm");
@@ -85,10 +86,11 @@ async function bookToConfirmation(page) {
   await page.getByTestId("guest-phone-input").fill("7805550188");
   const createProfile = page.getByTestId("guest-create-profile-checkbox");
   if (await createProfile.count() && await createProfile.isChecked()) await createProfile.uncheck();
+  await expectEnabled(page.getByTestId("booking-next-btn"));
   await page.getByTestId("booking-next-btn").click();
   await page.getByTestId("step-pay-cash").waitFor({ state: "visible", timeout: 15000 });
+  // Cash selection auto-advances to Review.
   await page.getByTestId("step-pay-cash").click();
-  await page.getByTestId("booking-next-btn").click();
   await page.getByTestId("step-review").waitFor({ state: "visible", timeout: 20000 });
   const confirm = page.getByTestId("booking-confirm-btn");
   await expectEnabled(confirm);
