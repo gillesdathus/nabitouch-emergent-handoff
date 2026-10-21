@@ -82,3 +82,54 @@ test("weekly hours progresses days → times before save", () => {
   });
   view.unmount();
 });
+
+test("time off progresses mode → details before save", () => {
+  const onTimeOff = vi.fn();
+  const view = mount(createElement(ScheduleEditor, {
+    editor: "off",
+    onClose: vi.fn(),
+    date: "2026-10-20",
+    appointments: [],
+    onTimeOff,
+    saving: false,
+  }));
+  expect(document.querySelector("[data-testid='timeoff-mode-phase']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='timeoff-details-phase']")).toBeNull();
+  expect(document.querySelector("[data-testid='schedule-editor-off-save']")).toBeNull();
+
+  act(() => {
+    document.querySelector("[data-testid='timeoff-mode-partial']").click();
+  });
+  act(() => {
+    document.querySelector("[data-testid='schedule-editor-off-continue']").click();
+  });
+  expect(document.querySelector("[data-testid='timeoff-details-phase']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='timeoff-start']")).toBeTruthy();
+  expect(document.querySelector("[data-testid='schedule-editor-off-save']")).toBeTruthy();
+
+  act(() => {
+    document.querySelector("[data-testid='schedule-editor-off-save']").click();
+  });
+  expect(onTimeOff).toHaveBeenCalledWith(expect.objectContaining({ mode: "partial", start: "09:00", end: "17:00" }));
+  view.unmount();
+});
+
+test("break sheet queues ranges with Add to list", () => {
+  const onAddBreaks = vi.fn();
+  const view = mount(createElement(ScheduleEditor, {
+    editor: "break",
+    onClose: vi.fn(),
+    date: "2026-10-20",
+    onAddBreaks,
+    saving: false,
+  }));
+  act(() => {
+    document.querySelector("[data-testid='break-add-another']").click();
+  });
+  expect(document.querySelector("[data-testid='break-preview-list']")).toBeTruthy();
+  act(() => {
+    document.querySelector("[data-testid='schedule-editor-break-save']").click();
+  });
+  expect(onAddBreaks).toHaveBeenCalledWith([{ start: "12:00", end: "13:00" }]);
+  view.unmount();
+});

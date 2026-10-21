@@ -43,14 +43,20 @@ function ActionGrid({ onOpen, className = "" }) {
   );
 }
 
-export function ScheduleQuickActions({ onOpen }) {
+export function ScheduleQuickActions({ onOpen, hidden = false }) {
   const compact = useCompactActions();
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (hidden) setPickerOpen(false);
+  }, [hidden]);
 
   const openAction = (id) => {
     setPickerOpen(false);
     onOpen(id);
   };
+
+  if (hidden) return null;
 
   if (!compact) {
     return (

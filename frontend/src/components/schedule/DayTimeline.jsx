@@ -52,7 +52,7 @@ export function DayTimeline({
             )}
           </div>
           {onQuickAvailability && (
-            <button type="button" className="nb-btn-ghost h-9 px-3 text-xs" onClick={onQuickAvailability} data-testid="schedule-quick-hours">
+            <button type="button" className="text-xs font-semibold text-teal-900 underline-offset-2 hover:underline" onClick={onQuickAvailability} data-testid="schedule-quick-hours">
               Change hours
             </button>
           )}
@@ -71,11 +71,11 @@ export function DayTimeline({
         <EmptyState
           icon={CalendarX2}
           title="No appointments today"
-          body="Your day is clear. Use quick actions to adjust hours, add a break, or take time off."
+          body="Your day is clear. Use Adjust schedule to change hours, add a break, or take time off."
           testid="schedule-day-empty"
           action={onQuickAvailability && (
-            <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={onQuickAvailability}>
-              Set hours for this day
+            <button type="button" className="nb-btn-ghost h-10 px-4 text-sm" onClick={onQuickAvailability} data-testid="schedule-day-empty-hours">
+              Change hours for this day
             </button>
           )}
         />
