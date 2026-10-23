@@ -37,8 +37,10 @@ function settlementNote(settlement) {
   const due = Number(settlement.dueNowCents) || 0;
   const total = Number(settlement.totalCents) || 0;
   const remaining = Number(settlement.remainingCents) || 0;
-  const cashLike = settlement.choice === "cash" || (due === 0 && remaining > 0 && remaining === total);
+  const noneLike = settlement.choice === "none" || settlement.mode === "none";
+  const cashLike = settlement.choice === "cash" || (!noneLike && due === 0 && remaining > 0 && remaining === total);
   if (total === 0) return "Nothing is due online for this visit.";
+  if (noneLike && due === 0) return "No upfront payment required. Optional online payment is available later when Stripe is on — this booking is not prepaid.";
   if (cashLike) return "No payment collected online. Cash is due at the visit — this booking is not prepaid.";
   if (due > 0 && due < total) return "Deposit due online now. Remaining balance is collected later and is not paid yet.";
   return "Full total due online. It is paid only after Stripe verifies the payment.";
@@ -90,12 +92,13 @@ function Breakdown({ q, compact, settlement }) {
       {q.discount > 0 && <Row l={q.promoName || "Discount"} v={`−${money(q.discount)}`} cls="font-medium text-nb-teal" testid="breakdown-discount" />}
       {q.discount > 0 && <Row l="Discounted treatment subtotal" v={money(q.treatmentAfterDiscount)} cls="text-nb-mute" />}
       {q.addons > 0 && <Row l={`Enhancements (${q.addonList.join(", ")})`} v={money(q.addons)} />}
-      <Row l="Travel fee" v={q.travel ? money(q.travel) : "Included"} testid="breakdown-travel" />
+      {Number(q.travel) > 0 && <Row l="Travel fee" v={money(q.travel)} testid="breakdown-travel" />}
       <Row l="GST (5%)" v={money(q.tax)} testid="breakdown-tax" />
       <div className="my-2 border-t border-dashed border-sky-200" />
       <Row l="Appointment total" v={money(q.total)} cls={`font-semibold text-nb-ink ${compact ? "text-sm" : "text-lg"}`} testid="breakdown-total" />
       {settlement && <>
-        <Row l="Due now" v={formatCents(settlement.dueNowCents)} testid="breakdown-due-now" />
+        <Row l="Required now" v={formatCents(settlement.dueNowCents)} testid="breakdown-due-now" />
+        <Row l="Amount paid" v={formatCents(settlement.paidCents || 0)} testid="breakdown-paid" />
         <Row l="Remaining balance" v={formatCents(settlement.remainingCents)} testid="breakdown-remaining" />
         <p className="text-xs text-nb-mute" data-testid="breakdown-settlement-note">{settlementNote(settlement)}</p>
       </>}
@@ -319,7 +322,12 @@ export default function Booking() {
   const durationKey = String(draft.duration);
   const durationPriced = !!service && Object.prototype.hasOwnProperty.call(service.prices || {}, durationKey);
   const whenOk = !!draft.date && !!draft.time;
-  const payOk = trialFlow || !!paymentChoice(draft, idx.settings);
+  const payChoice = paymentChoice(draft, idx.settings);
+  const policyMode = idx.settings?.paymentPolicy?.mode || "none";
+  const cardsOn = idx.settings?.cardCheckoutEnabled === true;
+  const cashOn = idx.settings?.paymentPolicy?.cashAccepted === true;
+  const requiredPayBlocked = (policyMode === "deposit" || policyMode === "full") && !cardsOn && !cashOn;
+  const payOk = trialFlow || (!!payChoice && !requiredPayBlocked);
   // Absolute gates: Preferences (index 4) always optional; Details (5) required before Review.
   const ok = [whereOk, !!service, durationPriced, whenOk, true, detailsOk];
   const whereBlockedReason = !whereOk
@@ -445,7 +453,7 @@ export default function Booking() {
         campaignId: useCredit || winbackCode || followupCode ? undefined : draft.campaignId || undefined,
         recoveryCaseId: draft.recoveryCaseId || undefined,
         idempotencyKey: draft.idempotencyKey || undefined,
-        appointment: { serviceSlug: draft.serviceSlug, duration: draft.duration, date: draft.date, time: draft.time, locationType: draft.locationType, address, addonIds: trialFlow ? [] : draft.addons, paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : (payNow ? "card" : undefined), preferences: { goals: draft.goals, focus: draft.focus, notes: draft.notes }, checkedIn: false, feedback: null },
+        appointment: { serviceSlug: draft.serviceSlug, duration: draft.duration, date: draft.date, time: draft.time, locationType: draft.locationType, address, addonIds: trialFlow ? [] : draft.addons, paymentMethod: "self", payNow, selfMethod: payNow === "cash" ? "cash" : (payNow && payNow !== "none" ? "card" : undefined), preferences: { goals: draft.goals, focus: draft.focus, notes: draft.notes }, checkedIn: false, feedback: null },
       }));
       setDone(res.appointment);
       setGuestTrack(res.trackingCapability || null);
@@ -458,7 +466,12 @@ export default function Booking() {
     const live = listed?.serviceSlug ? listed : done;
     const firstBooking = (idx.clients[live.clientId]?.onlineBookings || 1) <= 1;
     const trialVisit = live.appointmentKind === "trial" || live.pricing?.campaignOfferKind === "trial" || live.serviceSlug === "ten-minutes-on-us";
-    const cashLike = !trialVisit && (
+    const noneLike = !trialVisit && (
+      live.payNow === "none"
+      || live.paymentDue?.choice === "none"
+      || live.paymentDue?.mode === "none"
+    );
+    const cashLike = !trialVisit && !noneLike && (
       live.payNow === "cash"
       || live.paymentDue?.choice === "cash"
       || (Number(live.paymentDue?.dueNowCents) === 0 && Number(live.paymentDue?.remainingCents) > 0)
@@ -466,9 +479,11 @@ export default function Booking() {
     const appointmentConfirmed = live.status === "confirmed" || live.status === "assigned" || live.status === "preparing" || live.status === "en_route" || live.status === "arrived";
     const settlementCopy = trialVisit
       ? "Free trial request received. No payment is due. This environment does not send a confirmation text or email."
-      : cashLike
-        ? "Booking request received — not an appointment confirmation yet. No online payment collected; cash is due at the visit. This environment does not send a confirmation text or email."
-        : "Booking request received — not a payment receipt. Online card amounts are recorded only after Stripe verifies them (see payment status separately). This environment does not send a confirmation text or email.";
+      : noneLike
+        ? "Booking request received — not an appointment confirmation yet. No upfront payment was required. Visit status and payment status stay separate. This environment does not send a confirmation text or email."
+        : cashLike
+          ? "Booking request received — not an appointment confirmation yet. No online payment collected; cash is due at the visit. This environment does not send a confirmation text or email."
+          : "Booking request received — not a payment receipt. Online card amounts are recorded only after Stripe verifies them (see payment status separately). This environment does not send a confirmation text or email.";
     return (
       <CompletionScreen
         testid="booking-confirmation"
@@ -676,8 +691,8 @@ export default function Booking() {
                 </div>
                 {!trialFlow && (
                   <div className="mt-6" data-testid="review-payment-section">
-                    <StepPay />
-                    <p className="mt-3 text-xs text-nb-mute" data-testid="review-payment-choice">Selected: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online" : paymentChoice(draft, idx.settings) === "cash" ? "Cash at the visit" : paymentChoice(draft, idx.settings) === "deposit" ? "Deposit online" : "Full amount online"}</b></p>
+                    <StepPay settlement={settlement} />
+                    <p className="mt-3 text-xs text-nb-mute" data-testid="review-payment-choice">Selected: <b className="text-nb-ink">{serverQuote && Number(serverQuote.total) === 0 ? "Nothing to pay online" : payChoice === "none" ? "No payment now" : payChoice === "cash" ? "Cash at the visit" : payChoice === "deposit" ? "Deposit online" : payChoice === "full" ? "Full amount online" : "Choose payment"}</b></p>
                   </div>
                 )}
               </div>
@@ -698,7 +713,7 @@ export default function Booking() {
                       data-testid="booking-confirm-btn"
                       className="nb-btn-primary h-12 w-full sm:flex-1"
                     >
-                      {submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (!serverQuote ? "Confirming the price…" : (payOk ? "Book now" : "Choose payment"))}
+                      {submitting ? "Requesting…" : trialFlow ? "Confirm free trial" : (!serverQuote ? "Confirming the price…" : (requiredPayBlocked ? "Payment unavailable" : (payOk ? "Book now" : "Choose payment")))}
                     </button>
                   )}
                   {step > 0 && (

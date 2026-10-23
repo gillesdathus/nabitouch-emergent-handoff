@@ -100,7 +100,14 @@ export function PaymentPanel({ appt, role }) {
         <div className="space-y-2">
           {cardsOn && <button type="button" onClick={() => run(async () => { const next = await api.invoiceCheckout(invoice.id, {}); setCardNote("Card payment is not confirmed until Nabitouch receives the bank notice."); return next; }, "Checkout started")} data-testid="invoice-card-btn" className="nb-btn-primary h-10 text-sm">Pay {formatCents(payableNowCents(appt, invoice))} by card</button>}
           {cardsOn && cardNote && <p className="text-xs text-nb-mute" data-testid="card-pending-note">{cardNote}</p>}
-          {!cardsOn && <p className="text-xs text-nb-mute" data-testid="card-checkout-off">Card checkout is turned off. Cash and e-Transfer remain available.</p>}
+          {!cardsOn && (
+            <p className="rounded-2xl bg-amber-50 p-3 text-xs text-amber-950" data-testid="card-checkout-off">
+              Card checkout is unavailable, so a required online payment cannot be verified here.
+              {idx.settings?.cashEnabled || idx.settings?.paymentPolicy?.cashAccepted
+                ? " Use cash or e-Transfer, or ask Nabitouch to turn Stripe on."
+                : " Ask Nabitouch to enable Stripe checkout or accept cash — this balance will not be marked paid until a verified payment arrives."}
+            </p>
+          )}
           {transfer?.recipientEmail && <div className="rounded-2xl bg-slate-50 p-3 text-xs" data-testid="etransfer-instructions"><p>{transfer.recipientName} · {transfer.recipientEmail}</p><p>{transfer.instructions}</p><button type="button" onClick={() => run(async () => { const next = await api.reportTransfer(invoice.id, `sent-${invoice.id}`.slice(0, 80)); setInvoice(next); return next; }, "Transfer reported")} data-testid="etransfer-sent-btn" className="nb-btn-ghost mt-2 h-9 text-xs">I sent the e-Transfer</button></div>}
         </div>
       )}

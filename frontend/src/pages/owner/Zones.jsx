@@ -44,7 +44,7 @@ function ZoneRow({ z }) {
 export default function Zones() {
   const { state, idx, run, api, user } = useDemo();
   const st = idx.settings;
-  const policy = st.paymentPolicy || { mode: "choice", depositType: "percent", depositPercent: 25, depositCents: 0, cashAccepted: true };
+  const policy = st.paymentPolicy || { mode: "none", depositType: "percent", depositPercent: 25, depositCents: 0, cashAccepted: true };
   const scheduling = st.scheduling || {};
   const clinic = st.clinic || {};
   const shownAddress = clinicBookable(clinic) || (clinic.address && !String(clinic.address).includes("[")) ? clinic.address : "";
@@ -75,7 +75,12 @@ export default function Zones() {
     .filter((a) => OPEN.includes(a.status) && Number.isFinite(Number(a.address?.lat)) && Number.isFinite(Number(a.address?.lng)) && a.address?.clientConfirmed === true)
     .slice(0, 50)
     .map((a) => ({ lat: Number(a.address.lat), lng: Number(a.address.lng), label: `${a.ref} · ${a.date} ${a.time}`, color: idx.practitioners[a.practitionerId]?.color || "#1565F0" })), [state.appointments, idx.practitioners]);
-  const policyLabel = { full: "Full online payment required", deposit: "Deposit required", choice: "Customer chooses full payment or deposit" };
+  const policyLabel = {
+    none: "No upfront payment required",
+    full: "Full online payment required",
+    deposit: "Deposit required",
+    choice: "Customer chooses full payment or deposit",
+  };
   return (
     <div className="space-y-6" data-testid="owner-zones">
       <SectionHead eyebrow="Mobile operations" title="Service zones & travel fees" />
@@ -120,27 +125,29 @@ export default function Zones() {
           <b>Online payment</b>
           {editing !== "payment" && (
             <div className="flex items-center justify-between gap-3">
-              <p data-testid="settings-payment-summary">{policyLabel[policy.mode] || "Customer chooses full payment or deposit"}{policy.mode !== "full" ? ` · ${policy.depositType === "fixed" ? `$${(policy.depositCents || 0) / 100}` : `${policy.depositPercent ?? 25}%`}` : ""}</p>
-              <button type="button" className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-payment-edit" onClick={() => { setMode(policy.mode); setDepositType(policy.depositType || "percent"); setDepositPercent(policy.depositPercent ?? 25); setDepositAmount(((policy.depositCents || 0) / 100).toFixed(2)); setEditing("payment"); }}>Edit</button>
+              <p data-testid="settings-payment-summary">{policyLabel[policy.mode] || "No upfront payment required"}{policy.mode === "deposit" || policy.mode === "choice" ? ` · ${policy.depositType === "fixed" ? `$${(policy.depositCents || 0) / 100}` : `${policy.depositPercent ?? 25}%`}` : ""}</p>
+              <button type="button" className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-payment-edit" onClick={() => { setMode(policy.mode === "choice" ? "none" : policy.mode); setDepositType(policy.depositType || "percent"); setDepositPercent(policy.depositPercent ?? 25); setDepositAmount(((policy.depositCents || 0) / 100).toFixed(2)); setEditing("payment"); }}>Edit</button>
             </div>
           )}
           {editing === "payment" && <>
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className="nb-input" data-testid="settings-payment-mode" aria-label="Payment policy">
-            <option value="full">Full online payment required</option>
+          <select value={mode === "choice" ? "none" : mode} onChange={(e) => setMode(e.target.value)} className="nb-input" data-testid="settings-payment-mode" aria-label="Payment requirement">
+            <option value="none">No upfront payment required</option>
             <option value="deposit">Deposit required</option>
-            <option value="choice">Customer chooses full payment or deposit</option>
+            <option value="full">Full online payment required</option>
           </select>
+          {(mode === "deposit" || mode === "choice") && <>
           <select value={depositType} onChange={(e) => setDepositType(e.target.value)} className="nb-input" data-testid="settings-deposit-type" aria-label="Deposit type">
             <option value="percent">Percentage of the booking total</option>
             <option value="fixed">Fixed CAD amount</option>
           </select>
-          {depositType === "fixed" ? <input value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} className="nb-input" data-testid="settings-deposit-amount" aria-label="Deposit amount" /> : <input type="number" value={depositPercent} onChange={(e) => setDepositPercent(e.target.value)} className="nb-input" data-testid="settings-deposit-percent" aria-label="Deposit percent" />}
+          {depositType === "fixed" ? <input value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} className="nb-input" data-testid="settings-deposit-amount" aria-label="Deposit amount" /> : <input type="number" min={1} max={100} value={depositPercent} onChange={(e) => setDepositPercent(e.target.value)} className="nb-input" data-testid="settings-deposit-percent" aria-label="Deposit percent" />}
+          </>}
           <div className="flex gap-2">
             <button type="button" onClick={() => setEditing("")} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button>
             <button type="button" onClick={savePolicy} data-testid="settings-payment-save" className="nb-btn-primary h-9 px-4 text-xs">Save payment policy</button>
           </div>
           </>}
-          <p className="text-xs text-nb-mute">The server calculates the deposit from the booking total. Cash stays unpaid until it is recorded at the visit.</p>
+          <p className="text-xs text-nb-mute">The server calculates deposits from the appointment total. Changing this setting does not alter existing bookings. Card amounts are marked paid only after Stripe verifies them.</p>
         </div>
         <div className="nb-card flex items-center gap-3 p-4 text-sm"><span className="flex-1"><b>GST rate</b><span className="block text-xs text-nb-mute">Confirm tax treatment with your accountant</span></span>{editing === "gst" ? <><input type="number" value={gst} onChange={(e) => setGst(e.target.value)} className="h-9 w-20 rounded-xl border border-sky-200 px-2" data-testid="settings-gst-input" /><button type="button" onClick={() => { setGst(st.gst * 100); setEditing(""); }} className="nb-btn-ghost h-9 px-4 text-xs">Cancel</button><button onClick={() => finish({ gst: Number(gst) / 100 }, `GST set to ${gst}%`)} data-testid="settings-gst-save" className="nb-btn-primary h-9 px-4 text-xs">Save</button></> : <><span data-testid="settings-gst-value">{st.gst * 100}%</span><button type="button" onClick={() => { setGst(st.gst * 100); setEditing("gst"); }} className="nb-btn-ghost h-9 px-4 text-xs" data-testid="settings-gst-edit">Edit</button></>}</div>
         <AddonsEditor addons={st.addons || []} />

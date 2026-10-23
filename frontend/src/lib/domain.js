@@ -227,15 +227,23 @@ export function paymentChoice(draft, settings) {
   const policy = settings?.paymentPolicy || {};
   const cardsOn = settings?.cardCheckoutEnabled === true;
   const cashOn = policy.cashAccepted === true;
-  const mode = policy.mode || 'full';
+  const mode = policy.mode || 'none';
   const allowed = [];
-  if (cardsOn && mode === 'choice') allowed.push('deposit', 'full');
-  else {
+  if (mode === 'none') {
+    allowed.push('none');
+    // Optional online payment when Stripe is available; never required for mode none.
+    if (cardsOn) allowed.push('full');
+    if (cashOn) allowed.push('cash');
+  } else if (cardsOn && mode === 'choice') {
+    allowed.push('deposit', 'full');
+    if (cashOn) allowed.push('cash');
+  } else {
     if (cardsOn && mode !== 'deposit') allowed.push('full');
     if (cardsOn && mode !== 'full') allowed.push('deposit');
+    if (cashOn) allowed.push('cash');
   }
-  if (cashOn) allowed.push('cash');
   if (draft?.payNow && allowed.includes(draft.payNow)) return draft.payNow;
+  if (mode === 'none') return 'none';
   if (!cardsOn && cashOn) return 'cash';
   return allowed[0] || '';
 }

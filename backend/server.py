@@ -2047,11 +2047,14 @@ async def create_booking(request: Request, payload: dict = Body(...)):
         appt["paymentDue"] = {
             "totalCents": due["totalCents"], "dueNowCents": due["dueNowCents"], "remainingCents": due["remainingCents"],
             "paidCents": 0, "refundedCents": 0, "status": due["status"], "prepaid": False,
+            "choice": due.get("choice"), "mode": due.get("mode"),
         }
         if due.get("insurancePrepayMode"):
             appt["paymentDue"]["insurancePrepayMode"] = due["insurancePrepayMode"]
         if due["choice"] == "cash":
             appt["selfMethod"] = "cash"
+        elif due["choice"] == "none":
+            appt["selfMethod"] = None
     flash = flash_snapshot(ts, fields.get("date"), fields.get("time"), settings.get("flashProtection"))
     if flash:
         appt["flashProtection"] = flash

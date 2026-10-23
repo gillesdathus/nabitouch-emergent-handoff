@@ -1,9 +1,10 @@
-"""Amount due now, from the server booking total. Production does not assume a deposit."""
+"""Amount due now, from the server booking total. Default is no upfront payment required."""
 from decimal import Decimal, ROUND_HALF_UP
 
-MODES = ("full", "deposit", "choice")
+# Owner-facing modes. `choice` remains accepted for settings saved before `none` existed.
+MODES = ("none", "deposit", "full", "choice")
 DEPOSIT_TYPES = ("percent", "fixed")
-CHOICES = ("full", "deposit", "cash")
+CHOICES = ("none", "full", "deposit", "cash")
 
 
 def _cents(value):
@@ -11,21 +12,21 @@ def _cents(value):
 
 
 def closed_policy():
-    """Missing production config stays full payment, with cash off, until the owner saves a policy."""
-    return {"mode": "full", "depositType": "percent", "depositPercent": 0, "depositCents": 0, "cashAccepted": False}
+    """Missing config defaults to no upfront payment. Cash stays off until the owner enables it."""
+    return {"mode": "none", "depositType": "percent", "depositPercent": 0, "depositCents": 0, "cashAccepted": False}
 
 
 def preview_policy():
-    """Proposed preview defaults. They are not written into production."""
-    return {"mode": "choice", "depositType": "percent", "depositPercent": 25, "depositCents": 0, "cashAccepted": True}
+    """Preview defaults match production: no upfront payment until the owner configures one."""
+    return {"mode": "none", "depositType": "percent", "depositPercent": 25, "depositCents": 0, "cashAccepted": True}
 
 
 def resolve_payment_policy(raw, *, production, explicit=False):
     if not explicit or not isinstance(raw, dict) or not raw:
         return closed_policy() if production else preview_policy()
-    mode = raw.get("mode") or "full"
+    mode = raw.get("mode") or "none"
     if mode not in MODES:
-        raise ValueError("Choose full payment, a deposit, or the customer's choice")
+        raise ValueError("Choose no upfront payment, a deposit, or full payment")
     deposit_type = raw.get("depositType") or "percent"
     if deposit_type not in DEPOSIT_TYPES:
         raise ValueError("A deposit is a percentage or a fixed amount")
@@ -38,6 +39,11 @@ def resolve_payment_policy(raw, *, production, explicit=False):
         raise ValueError("Deposit percent must be between 0 and 100")
     if fixed < 0:
         raise ValueError("Deposit amount cannot be negative")
+    if mode == "deposit":
+        if deposit_type == "fixed" and fixed <= 0:
+            raise ValueError("Deposit amount must be greater than zero")
+        if deposit_type == "percent" and percent <= 0:
+            raise ValueError("Deposit percent must be greater than zero")
     cash = bool(raw.get("cashAccepted")) if "cashAccepted" in raw else False
     return {"mode": mode, "depositType": deposit_type, "depositPercent": percent, "depositCents": fixed, "cashAccepted": cash}
 
@@ -61,19 +67,41 @@ def due_for_booking(total_dollars, policy, fields):
     fields = fields or {}
     if fields.get("paymentMethod") == "insurance":
         return None
+    mode = (policy or {}).get("mode") or "none"
     choice = fields.get("payNow") if fields.get("payNow") in CHOICES else ("cash" if fields.get("selfMethod") == "cash" else None)
+    if choice is None and mode == "none":
+        choice = "none"
     if not choice:
         return None
     return settlement(total_dollars, policy, choice)
 
 
 def settlement(total_dollars, policy, choice):
-    """Payable now, after the full total exists. Cash is not a prepayment."""
+    """Payable now, after the full total exists. Cash and none are not prepayments."""
     total = _cents(total_dollars)
     selected = choice if choice in CHOICES else None
-    mode = policy.get("mode") or "full"
+    mode = policy.get("mode") or "none"
     if selected is None:
-        selected = "deposit" if mode in ("deposit", "choice") and int(policy.get("depositPercent") or policy.get("depositCents") or 0) else "full"
+        if mode == "none":
+            selected = "none"
+        elif mode in ("deposit", "choice") and int(policy.get("depositPercent") or policy.get("depositCents") or 0):
+            selected = "deposit"
+        else:
+            selected = "full"
+    if selected == "none":
+        if mode not in ("none", "choice"):
+            raise ValueError("This booking requires an online payment")
+        return {
+            "totalCents": total,
+            "dueNowCents": 0,
+            "remainingCents": total,
+            "paidCents": 0,
+            "refundedCents": 0,
+            "choice": "none",
+            "mode": mode,
+            "status": "unpaid",
+            "prepaid": False,
+        }
     if selected == "cash":
         if not policy.get("cashAccepted"):
             raise ValueError("Cash is not accepted for this booking")
@@ -82,11 +110,14 @@ def settlement(total_dollars, policy, choice):
     elif selected == "full":
         if mode == "deposit":
             raise ValueError("This booking requires the deposit")
+        # Under mode none this is an optional online payment, not a booking gate.
         due = total
         status = "payment_required" if due else "paid"
     else:
         if mode == "full":
             raise ValueError("This booking requires full payment")
+        if mode == "none":
+            raise ValueError("No deposit is required for this booking")
         due = deposit_cents(total, policy)
         status = "deposit_pending" if due < total else "payment_required"
     return {
@@ -98,8 +129,33 @@ def settlement(total_dollars, policy, choice):
         "choice": selected,
         "mode": mode,
         "status": status,
-        "prepaid": False if selected == "cash" else due == total and due > 0,
+        # Never mark prepaid from intent alone — only verified receipts update paymentDue.paidCents.
+        "prepaid": False,
     }
+
+
+def required_payment_cents(visit):
+    """Amount that must be verified before the booking's required payment is satisfied."""
+    visit = visit or {}
+    due = visit.get("paymentDue") if isinstance(visit.get("paymentDue"), dict) else {}
+    pay_now = visit.get("payNow") or due.get("choice")
+    if pay_now in ("none", "cash") or pay_now is None:
+        return 0
+    stored = due.get("dueNowCents")
+    if type(stored) is int and stored >= 0:
+        return stored
+    return 0
+
+
+def required_payment_satisfied(visit):
+    """True only when verified receipts cover the required amount. Never inferred from intent alone."""
+    required = required_payment_cents(visit)
+    if required <= 0:
+        return True
+    due = visit.get("paymentDue") if isinstance(visit.get("paymentDue"), dict) else {}
+    paid = int(due.get("paidCents") or 0)
+    refunded = int(due.get("refundedCents") or 0)
+    return max(0, paid - refunded) >= required
 
 
 def authorized_checkout_cents(visit, balance_cents, received_cents=0, requested_cents=None):
@@ -166,9 +222,9 @@ def allowed_online_amounts(balance_cents, policy, received_cents=0):
         return set()
     if received > 0:
         return {balance}
-    mode = policy.get("mode") or "full"
+    mode = policy.get("mode") or "none"
     amounts = set()
-    if mode in ("full", "choice"):
+    if mode in ("full", "choice", "none"):
         amounts.add(balance)
     if mode in ("deposit", "choice"):
         try:
