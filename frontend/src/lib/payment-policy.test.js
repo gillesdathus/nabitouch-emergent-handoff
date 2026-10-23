@@ -19,10 +19,29 @@ test("a placeholder clinic address is not offered", () => {
   expect(clinicBookable({ enabled: true, address: "10150 104 St NW, Edmonton, AB" })).toBe(true);
 });
 
+test("mode none books without a required online payment", () => {
+  const settings = { cardCheckoutEnabled: false, paymentPolicy: { mode: "none", cashAccepted: true } };
+  expect(paymentChoice({}, settings)).toBe("none");
+  expect(paymentChoice({ payNow: "cash" }, settings)).toBe("cash");
+  expect(paymentChoice({ payNow: "deposit" }, settings)).toBe("none");
+});
+
+test("mode none keeps optional full payment when Stripe is on", () => {
+  const settings = { cardCheckoutEnabled: true, paymentPolicy: { mode: "none", cashAccepted: false } };
+  expect(paymentChoice({}, settings)).toBe("none");
+  expect(paymentChoice({ payNow: "full" }, settings)).toBe("full");
+});
+
 test("cash is not treated as an online prepayment when card checkout is off", () => {
   const settings = { cardCheckoutEnabled: false, paymentPolicy: { mode: "choice", cashAccepted: true } };
   expect(paymentChoice({ payNow: "deposit" }, settings)).toBe("cash");
   expect(paymentChoice({ payNow: "cash" }, settings)).toBe("cash");
+});
+
+test("deposit and full modes require a card choice when Stripe is on", () => {
+  expect(paymentChoice({}, { cardCheckoutEnabled: true, paymentPolicy: { mode: "deposit", cashAccepted: false } })).toBe("deposit");
+  expect(paymentChoice({}, { cardCheckoutEnabled: true, paymentPolicy: { mode: "full", cashAccepted: false } })).toBe("full");
+  expect(paymentChoice({ payNow: "full" }, { cardCheckoutEnabled: true, paymentPolicy: { mode: "deposit", cashAccepted: false } })).toBe("deposit");
 });
 
 test("the owner queue separates cash, deposits, and expired card checkouts", () => {
@@ -38,7 +57,7 @@ test("the owner queue separates cash, deposits, and expired card checkouts", () 
   expect(queues.review.map((row) => row.id)).toEqual(["expired"]);
 });
 
-test("customer choice keeps full payment and the deposit when card checkout is on", () => {
+test("legacy customer choice keeps full payment and the deposit when card checkout is on", () => {
   const settings = { cardCheckoutEnabled: true, paymentPolicy: { mode: "choice", cashAccepted: true } };
   expect(paymentChoice({}, settings)).toBe("deposit");
   expect(paymentChoice({ payNow: "full" }, settings)).toBe("full");

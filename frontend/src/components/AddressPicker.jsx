@@ -516,6 +516,6 @@ export function ZoneResult({ res, testid }) {
   );
   return (
     <div data-testid={`${testid}-zone-ok`} className="flex gap-3 rounded-2xl bg-teal-50 p-4 text-sm text-teal-900"><CheckCircle2 className="h-5 w-5 shrink-0 text-nb-teal" />
-      <p>We come to you in <b>{res.zone.name}</b>. Travel fee <b>{res.travel ? money(res.travel) : "included"}</b>. <span className="text-xs text-teal-700">This fee comes from Nabitouch. Arrival time is estimated on the day — it is not a confirmed arrival.</span></p></div>
+      <p>We come to you in <b>{res.zone.name}</b>.{Number(res.travel) > 0 ? <> Travel fee <b>{money(res.travel)}</b>.</> : null} <span className="text-xs text-teal-700">Arrival time is estimated on the day — it is not a confirmed arrival.</span></p></div>
   );
 }

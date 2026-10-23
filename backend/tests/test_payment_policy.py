@@ -14,6 +14,8 @@ from payment_policy import (
     collection_status,
     due_after_payment,
     due_for_booking,
+    required_payment_cents,
+    required_payment_satisfied,
     review_after_expiry,
     deposit_cents,
     preview_policy,
@@ -24,8 +26,19 @@ from recovery import apply_campaign_price
 from pricing import launch_welcome_offer, quote
 
 
+def _choice_policy(**overrides):
+    return {
+        "mode": "choice",
+        "depositType": "percent",
+        "depositPercent": 25,
+        "depositCents": 0,
+        "cashAccepted": True,
+        **overrides,
+    }
+
+
 def test_campaign_discount_is_included_before_the_deposit_is_calculated():
-    policy = {"mode": "choice", "depositType": "percent", "depositPercent": 25, "depositCents": 0, "cashAccepted": True}
+    policy = _choice_policy()
     fields = {"paymentMethod": "self", "payNow": "deposit"}
     before = due_for_booking(126, policy, fields)
     priced = apply_campaign_price({"base": 120, "addons": 0, "travel": 0, "discount": 0, "tax": 6, "total": 126}, 20, 0.05, False)
@@ -38,20 +51,33 @@ def test_campaign_discount_is_included_before_the_deposit_is_calculated():
     assert due_for_booking(priced["total"], policy, {"paymentMethod": "insurance", "payNow": "deposit"}) is None
 
 
-def test_missing_production_policy_does_not_assume_a_deposit_or_cash():
+def test_missing_production_policy_defaults_to_no_upfront_payment():
     policy = resolve_payment_policy(None, production=True)
     assert policy == closed_policy()
+    assert policy["mode"] == "none"
     assert policy["cashAccepted"] is False
     assert policy["depositPercent"] == 0
 
 
-def test_preview_proposal_is_customer_choice_with_a_quarter_deposit():
+def test_preview_defaults_to_no_upfront_payment():
     policy = resolve_payment_policy({}, production=False)
     assert policy == preview_policy()
+    assert policy["mode"] == "none"
+
+
+def test_none_mode_requires_nothing_upfront():
+    due = settlement(100.80, preview_policy(), "none")
+    assert due["dueNowCents"] == 0
+    assert due["remainingCents"] == 10080
+    assert due["paidCents"] == 0
+    assert due["status"] == "unpaid"
+    assert due["prepaid"] is False
+    assert due["choice"] == "none"
+    assert required_payment_satisfied({"payNow": "none", "paymentDue": due}) is True
 
 
 def test_swedish_welcome_offer_deposit_is_a_quarter_of_the_server_total():
-    policy = preview_policy()
+    policy = _choice_policy()
     due = settlement(100.80, policy, "deposit")
     assert due["totalCents"] == 10080
     assert due["dueNowCents"] == 2520
@@ -68,7 +94,7 @@ def test_full_payment_takes_the_whole_total():
 
 
 def test_customer_can_choose_full_payment_or_the_deposit():
-    policy = preview_policy()
+    policy = _choice_policy()
     assert settlement(100.80, policy, "full")["dueNowCents"] == 10080
     assert settlement(100.80, policy, "deposit")["dueNowCents"] == 2520
 
@@ -87,15 +113,53 @@ def test_cash_is_refused_when_the_owner_turns_it_off():
 
 
 def test_fixed_deposit_and_a_deposit_above_the_total():
-    policy = {**preview_policy(), "depositType": "fixed", "depositCents": 2000}
+    policy = {**_choice_policy(), "depositType": "fixed", "depositCents": 2000}
     assert deposit_cents(10080, policy) == 2000
     with pytest.raises(ValueError):
         deposit_cents(1500, policy)
 
 
 def test_percent_deposit_rounds_half_up():
-    policy = {**preview_policy(), "depositPercent": 25}
+    policy = {**_choice_policy(), "depositPercent": 25}
     assert deposit_cents(10081, policy) == 2520
+
+
+def test_deposit_mode_rejects_zero_or_over_total_configuration():
+    with pytest.raises(ValueError, match="greater than zero"):
+        resolve_payment_policy(
+            {"mode": "deposit", "depositType": "percent", "depositPercent": 0, "cashAccepted": False},
+            production=True, explicit=True,
+        )
+    with pytest.raises(ValueError, match="greater than the booking total"):
+        deposit_cents(1000, {"mode": "deposit", "depositType": "fixed", "depositCents": 2000})
+
+
+def test_required_payment_is_not_satisfied_until_verified_receipts_cover_due_now():
+    visit = {
+        "payNow": "deposit",
+        "paymentDue": {"totalCents": 10080, "dueNowCents": 2520, "remainingCents": 10080, "paidCents": 0, "refundedCents": 0},
+    }
+    assert required_payment_cents(visit) == 2520
+    assert required_payment_satisfied(visit) is False
+    visit["paymentDue"]["paidCents"] = 2520
+    visit["paymentDue"]["remainingCents"] = 7560
+    assert required_payment_satisfied(visit) is True
+    failed = {"payNow": "full", "paymentDue": {"dueNowCents": 10080, "paidCents": 0, "status": "payment_failed"}}
+    assert required_payment_satisfied(failed) is False
+
+
+def test_policy_config_change_does_not_rewrite_a_saved_payment_due_snapshot():
+    saved = settlement(100.80, _choice_policy(), "deposit")
+    visit = {"payNow": saved["choice"], "paymentDue": dict(saved), "status": "requested"}
+    new_policy = resolve_payment_policy(
+        {"mode": "full", "depositType": "percent", "depositPercent": 50, "cashAccepted": False},
+        production=True, explicit=True,
+    )
+    assert new_policy["mode"] == "full"
+    assert visit["paymentDue"]["dueNowCents"] == 2520
+    assert visit["paymentDue"]["mode"] == "choice"
+    assert visit["status"] == "requested"
+    assert required_payment_cents(visit) == 2520
 
 
 def _visit(pay_now, total_cents, due_now):
@@ -176,7 +240,7 @@ def test_travel_and_tax_stay_outside_the_treatment_discount_and_match_checkout()
     assert any(row["description"] == "Travel" and row["netCents"] == 1500 for row in rows)
     assert tax == 555
     assert total == 11655
-    due = due_for_booking(priced["total"], {**preview_policy(), "depositType": "percent", "depositPercent": 25}, {"payNow": "deposit"})
+    due = due_for_booking(priced["total"], _choice_policy(), {"payNow": "deposit"})
     visit = {"payNow": "deposit", "paymentDue": due}
     assert authorized_checkout_cents(visit, total, 0) == due["dueNowCents"]
     assert due["dueNowCents"] == 2914
@@ -200,10 +264,11 @@ def test_duplicate_checkout_authorization_is_the_same_cents():
 
 
 def test_partial_payment_then_the_remaining_balance():
-    policy = preview_policy()
+    policy = _choice_policy()
     assert allowed_online_amounts(10080, policy, 0) == {2520, 10080}
     assert allowed_online_amounts(7560, policy, 2520) == {7560}
     assert 10081 not in allowed_online_amounts(10080, policy, 0)
+    assert allowed_online_amounts(10080, preview_policy(), 0) == {10080}
 
 
 def test_duplicate_and_late_webhook_actions():
@@ -228,8 +293,19 @@ def test_discount_and_gst_are_in_the_total_before_the_deposit():
     assert priced["discount"] == 24
     assert priced["tax"] == 4.8
     assert priced["total"] == 100.8
-    due = settlement(priced["total"], preview_policy(), "deposit")
+    due = settlement(priced["total"], _choice_policy(), "deposit")
     assert (due["totalCents"], due["dueNowCents"], due["remainingCents"]) == (10080, 2520, 7560)
+
+
+def test_outstanding_balance_after_failed_or_partial_card_payment():
+    assert due_after_payment(10080, 0)["status"] == "unpaid"
+    partial = due_after_payment(10080, 2520)
+    assert partial["paidCents"] == 2520
+    assert partial["remainingCents"] == 7560
+    assert partial["status"] == "partially_paid"
+    assert review_after_expiry("deposit", 0) == "payment_failed"
+    assert review_after_expiry("none", 0) is None
+    assert review_after_expiry("full", 0) == "payment_failed"
 
 
 def test_expired_card_checkout_stays_for_owner_review():

@@ -380,17 +380,19 @@ export function StepDetails({ fieldErrors = {} } = {}) {
 /** @deprecated Prefer StepDetails — alias kept for existing imports. */
 export const StepYou = StepDetails;
 
-export function StepPay() {
+export function StepPay({ settlement } = {}) {
   const { draft, patchDraft, idx, state } = useDemo();
   const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
   const policy = idx.settings.paymentPolicy || {};
+  const mode = policy.mode || "none";
   const cardsOn = restrictedFlag(idx?.settings, "cardCheckoutEnabled");
   const selected = paymentChoice(draft, idx.settings);
+  const dueNow = Number(settlement?.dueNowCents);
   const choose = (payNow) => patchDraft({
     paymentMethod: "self",
     payNow,
-    selfMethod: payNow === "cash" ? "cash" : "card",
+    selfMethod: payNow === "cash" ? "cash" : payNow === "none" ? undefined : "card",
   });
   if (trialFlow) {
     return (
@@ -400,15 +402,39 @@ export function StepPay() {
       </div>
     );
   }
+  const requiresCard = mode === "deposit" || mode === "full";
+  const stripeBlocked = requiresCard && !cardsOn && !policy.cashAccepted;
   return (
     <div data-testid="step-pay">
-      <H t="How would you like to pay?" s="The appointment total is calculated first. What you pay now depends on the payment policy." />
+      <H
+        t={mode === "none" ? "Payment for this booking" : "How would you like to pay?"}
+        s={mode === "none"
+          ? "No upfront payment is required. You can still pay online later if card checkout is available."
+          : "The appointment total is calculated first. What you pay now depends on the payment policy."}
+      />
+      {Number.isInteger(dueNow) && (
+        <p className="mb-4 rounded-2xl bg-sky-50 p-4 text-sm text-nb-navy" data-testid="step-pay-required-amount">
+          {dueNow > 0
+            ? <>Amount required before payment is satisfied: <b>{formatCents(dueNow)}</b>. Nothing is marked paid until Stripe verifies the payment.</>
+            : <>No amount is required online now. Remaining balance: <b>{formatCents(settlement?.remainingCents || 0)}</b>.</>}
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
-        {cardsOn && policy.mode !== "deposit" && <Tile on={selected === "full"} onClick={() => choose("full")} data-testid="step-pay-full"><CreditCard className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">Pay the full total online</p><p className="text-xs text-nb-mute">Card checkout through Stripe. Nothing is marked paid until the payment is verified.</p></Tile>}
-        {cardsOn && policy.mode !== "full" && <Tile on={selected === "deposit"} onClick={() => choose("deposit")} data-testid="step-pay-deposit"><Wallet className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">Pay the deposit online</p><p className="text-xs text-nb-mute">{policy.depositType === "fixed" ? `Fixed deposit ${formatCents(policy.depositCents || 0)}.` : `${policy.depositPercent || 0}% of the appointment total.`} The rest stays on the balance.</p></Tile>}
+        {mode === "none" && <Tile on={selected === "none"} onClick={() => choose("none")} data-testid="step-pay-none"><Wallet className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">No payment now</p><p className="text-xs text-nb-mute">Book without an online payment. Optional card payment stays available after booking when Stripe is on.</p></Tile>}
+        {cardsOn && (mode === "full" || mode === "choice" || mode === "none") && <Tile on={selected === "full"} onClick={() => choose("full")} data-testid="step-pay-full"><CreditCard className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">{mode === "none" ? "Pay the full total online (optional)" : "Pay the full total online"}</p><p className="text-xs text-nb-mute">Card checkout through Stripe. Nothing is marked paid until the payment is verified.</p></Tile>}
+        {cardsOn && (mode === "deposit" || mode === "choice") && <Tile on={selected === "deposit"} onClick={() => choose("deposit")} data-testid="step-pay-deposit"><Wallet className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">Pay the deposit online</p><p className="text-xs text-nb-mute">{policy.depositType === "fixed" ? `Fixed deposit ${formatCents(policy.depositCents || 0)}.` : `${policy.depositPercent || 0}% of the appointment total.`} The rest stays on the balance.</p></Tile>}
         {policy.cashAccepted && <Tile on={selected === "cash"} onClick={() => choose("cash")} data-testid="step-pay-cash"><Banknote className="h-6 w-6 text-nb-blue" /><p className="mt-3 font-semibold">Pay cash at the visit</p><p className="text-xs text-nb-mute">Cash is not a prepayment. The visit is confirmed as unpaid until the balance is recorded.</p></Tile>}
       </div>
-      {!cardsOn && <p className="mt-4 text-sm text-nb-mute" data-testid="step-pay-card-off">Online card checkout is not active in this preview, so a deposit or full card payment cannot be collected here.</p>}
+      {!cardsOn && requiresCard && (
+        <p className="mt-4 rounded-2xl bg-amber-50 p-4 text-sm text-amber-950" data-testid="step-pay-stripe-unavailable">
+          Online card checkout is unavailable, so a required {mode === "deposit" ? "deposit" : "full payment"} cannot be verified here.
+          {policy.cashAccepted
+            ? " Choose cash at the visit, or ask Nabitouch to turn card checkout on."
+            : " Ask Nabitouch to enable Stripe checkout or accept cash — this booking will not be marked paid."}
+        </p>
+      )}
+      {!cardsOn && !requiresCard && <p className="mt-4 text-sm text-nb-mute" data-testid="step-pay-card-off">Online card checkout is not active, so optional card payment is not offered during booking.</p>}
+      {stripeBlocked && <p className="mt-3 text-sm font-medium text-rose-700" data-testid="step-pay-blocked">Booking cannot collect the required payment until Stripe or cash is available.</p>}
       <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-nb-mute" data-testid="step-pay-insurance-off"><ShieldCheck className="mr-2 inline h-4 w-4" />Insurance direct billing is not connected. No insurance details are collected for this booking.</p>
     </div>
   );
