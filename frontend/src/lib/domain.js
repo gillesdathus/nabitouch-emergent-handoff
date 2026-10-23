@@ -254,7 +254,21 @@ export const fmtDate = (iso, opts = { weekday: 'short', month: 'short', day: 'nu
 export const fmtTime = (hhmm) => { if (!hhmm) return ''; const [h, m] = hhmm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${pad(m)} ${h >= 12 ? 'PM' : 'AM'}`; };
 export const fmtStamp = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-CA', { timeZone: "America/Edmonton", hour: 'numeric', minute: '2-digit', timeZone: 'America/Edmonton' }) : '—');
 export const endTime = (hhmm, dur) => { const [h, m] = hhmm.split(':').map(Number); const t = h * 60 + m + Number(dur); return `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`; };
-export const fullName = (c) => (c ? `${c.preferredName || c.firstName} ${c.lastName}` : 'Guest');
+/** Display label for a client. Dedupes when first/preferred already includes last (data quirks). Does not mutate stored fields. */
+export function fullName(c) {
+  if (!c) return 'Guest';
+  const first = String(c.preferredName || c.firstName || '').trim();
+  const last = String(c.lastName || '').trim();
+  if (!first && !last) return 'Guest';
+  if (!last) return first;
+  if (!first) return last;
+  const firstLower = first.toLowerCase();
+  const lastLower = last.toLowerCase();
+  if (firstLower === lastLower) return first;
+  if (firstLower.endsWith(` ${lastLower}`) || firstLower.startsWith(`${lastLower} `)) return first;
+  if (lastLower.endsWith(` ${firstLower}`) || lastLower.startsWith(`${firstLower} `)) return last;
+  return `${first} ${last}`;
+}
 
 export function distanceKm(a, b) {
   const R = 6371, r = (x) => (x * Math.PI) / 180;
