@@ -16,7 +16,8 @@ from urllib.parse import urlencode
 import httpx
 
 EDMONTON = (-113.4938, 53.5461)
-BBOX = "-114.2,53.15,-112.8,53.8"
+# Greater Edmonton metro for autocomplete bias only — not an eligibility gate.
+BBOX = "-114.5,52.9,-112.6,53.9"
 FORWARD = "https://api.mapbox.com/search/geocode/v6/forward"
 REVERSE = "https://api.mapbox.com/search/geocode/v6/reverse"
 CACHE_SECONDS = 600
@@ -35,7 +36,9 @@ LOCAL = [
     {"id": "local-clareview", "line": "13650 50 St NW, Edmonton, AB", "area": "Clareview", "lat": 53.6015, "lng": -113.4135},
     {"id": "local-sherwood", "line": "2020 Sherwood Dr, Sherwood Park, AB", "area": "Sherwood Park", "lat": 53.5413, "lng": -113.2958},
     {"id": "local-stalbert", "line": "1 St Anne St, St. Albert, AB", "area": "St. Albert", "lat": 53.6305, "lng": -113.6256},
+    {"id": "local-spruce", "line": "400 Calahoo Rd, Spruce Grove, AB", "area": "Spruce Grove", "lat": 53.5452, "lng": -113.9104},
     {"id": "local-leduc", "line": "4950 Gateway Blvd, Leduc, AB", "area": "Leduc", "lat": 53.2594, "lng": -113.5492},
+    {"id": "local-wetaskiwin", "line": "4705 50 Ave, Wetaskiwin, AB", "area": "Wetaskiwin", "lat": 52.9694, "lng": -113.3769},
 ]
 
 
@@ -188,7 +191,7 @@ class Geocoder:
                 raise ProviderError(MAPBOX_REQUIRED)
             key = _norm(text)
             hits = [dict(item, provider="local") for item in LOCAL if key in _norm(item["line"]) or key in _norm(item["area"])]
-            hits.sort(key=lambda item: (0 if "Edmonton" in item["line"] else 1, item["line"]))
+            hits.sort(key=lambda item: item["line"])
             self._store(("suggest", key), hits[:5])
             return hits[:5]
         payload = await self.fetch(FORWARD, {

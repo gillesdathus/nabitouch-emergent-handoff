@@ -94,9 +94,9 @@ export default function Home() {
       )}
       <section className="grid items-stretch gap-6 lg:grid-cols-[1.1fr_1fr]">
         <Reveal className="order-2 flex flex-col justify-center lg:order-1">
-          <span data-testid="hero-mobile-badge" className="inline-flex w-fit max-w-full flex-wrap items-center gap-x-2 gap-y-1 self-start rounded-full px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(21,101,240,0.8)] nb-lagoon"><MapPin className="h-4 w-4 shrink-0 text-nb-turq" />Mobile massage<span className="font-medium text-white/80">We come to you in Edmonton</span></span>
+          <span data-testid="hero-mobile-badge" className="inline-flex w-fit max-w-full flex-wrap items-center gap-x-2 gap-y-1 self-start rounded-full px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_28px_-12px_rgba(21,101,240,0.8)] nb-lagoon"><MapPin className="h-4 w-4 shrink-0 text-nb-turq" />Mobile massage<span className="font-medium text-white/80">We come to you</span></span>
           <h1 className="mt-4 text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl" data-testid="hero-title">Relax, recover —<br /><span className="font-display text-[1em] font-normal italic nb-gradient-text">anywhere.</span></h1>
-          <p className="mt-4 max-w-md text-nb-mute">Registered therapists come to your home, hotel or office with everything needed. Travel and GST are always shown separately.</p>
+          <p className="mt-4 max-w-md text-nb-mute">Registered therapists come to your home, hotel or office with everything needed. Confirm a service address when you book.</p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link to="/book" data-testid="hero-book-btn" className="nb-btn-primary">Book a massage<ArrowRight className="h-4 w-4" /></Link>
             <Link to="/services" data-testid="hero-services-btn" className="nb-btn-ghost h-12">Explore services</Link>
@@ -123,7 +123,7 @@ export default function Home() {
 
       <section className="nb-card p-5" data-testid="area-check-card">
         <p className="text-sm font-semibold text-nb-ink">Do we come to you?</p>
-        <p className="mb-3 text-xs text-nb-mute">Check your address against the Edmonton service zones. The result comes from Nabitouch, not a sample list.</p>
+        <p className="mb-3 text-xs text-nb-mute">Check whether your address is eligible for a mobile visit. The result comes from Nabitouch, not a sample list.</p>
         <AddressPicker
           testid="area-check"
           query={query}
@@ -180,7 +180,7 @@ export default function Home() {
       </section>
 
       <section className="grid gap-3 sm:grid-cols-3">
-        {[[MapPin, "Tell us where", "Home, hotel or office within the Edmonton zones."], [HandHeart, "Pick your treatment", "See the treatment, travel and GST before you confirm."], [CalendarCheck, "Relax", "Follow the visit when your therapist starts sharing location."]].map(([Icon, title, body], index) => (
+        {[[MapPin, "Tell us where", "Home, hotel or office at a confirmed service address."], [HandHeart, "Pick your treatment", "See the treatment and GST before you confirm."], [CalendarCheck, "Relax", "Follow the visit when your therapist starts sharing location."]].map(([Icon, title, body], index) => (
           <Reveal key={title} i={index} className="p-5 nb-soft"><span className="text-xs font-bold text-nb-teal">0{index + 1}</span><Icon className="mt-2 h-5 w-5 text-nb-blue" /><p className="mt-2 font-semibold">{title}</p><p className="mt-1 text-sm text-nb-mute">{body}</p></Reveal>
         ))}
       </section>

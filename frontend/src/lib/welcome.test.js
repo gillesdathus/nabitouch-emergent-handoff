@@ -23,7 +23,7 @@ test("the browser does not treat a new visitor as already qualified", () => {
   expect(copy.body).toContain("20%");
   expect(copy.cta).toBe("Book my first massage");
   expect(promoBannerCopy({ ...offer, bannerHeadline: "Custom", bannerBody: "Body text", ctaLabel: "Go" })).toEqual({ headline: "Custom", body: "Body text", cta: "Go" });
-  const priced = quote({ service: swedish, duration: 60, zone: { fee: 0 }, promotions: [offer], settings, locationType: "home" });
+  const priced = quote({ service: swedish, duration: 60, zone: { fee: 0 }, promotions: [offer], settings: { ...settings, serviceCoverage: { mode: "open", travelFeesEnabled: false } }, locationType: "home" });
   expect(priced.discount).toBe(0);
   expect(priced.total).toBe(126);
 });
@@ -64,4 +64,21 @@ test("trial local quotes stay at zero including travel for home visits", () => {
   expect(priced.base).toBe(0);
   expect(priced.travel).toBe(0);
   expect(priced.total).toBe(0);
+});
+
+test("travel fees stay off unless the owner enables them", () => {
+  const off = quote({
+    service: swedish, duration: 60, zone: { fee: 15 }, km: 10, promotions: [],
+    settings: { ...settings, serviceCoverage: { mode: "open", travelFeesEnabled: false } },
+    locationType: "home", serverTravel: 15,
+  });
+  expect(off.travel).toBe(0);
+  expect(off.total).toBe(126);
+  const on = quote({
+    service: swedish, duration: 60, zone: { fee: 15 }, km: 10, promotions: [],
+    settings: { ...settings, serviceCoverage: { mode: "open", travelFeesEnabled: true } },
+    locationType: "home", serverTravel: 15,
+  });
+  expect(on.travel).toBe(15);
+  expect(on.total).toBe(141.75);
 });

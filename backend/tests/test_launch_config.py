@@ -71,6 +71,8 @@ def test_launch_seed_has_catalogue_and_no_patients():
     assert seed["settings"][0]["cancellationPolicy"]["status"] == "pending"
     assert seed["settings"][0]["cancellationPolicy"]["automaticFee"] is False
     assert seed["settings"][0]["scheduling"]["enforceAdjacentTravel"] is True
+    assert seed["settings"][0]["serviceCoverage"]["mode"] == "open"
+    assert seed["settings"][0]["serviceCoverage"]["travelFeesEnabled"] is False
     fee = seed["settings"][0]["cancellationFee"]
     assert fee["enabled"] is False and fee["noShowEnabled"] is False and fee["automaticCollection"] is False
     assert fee["published"] is False and fee["effectiveOn"] is None

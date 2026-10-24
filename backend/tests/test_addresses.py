@@ -45,9 +45,18 @@ def test_confirm_endpoint_keeps_edmonton_direction_and_rejects_a_different_stree
     assert body["civic"]["direction"] == "NW"
     assert body["accepted"] is True
     assert body["confidence"] == "address"
-    outside = requests.post(f"{API}/geo/confirm", json={"mapboxId": "local-leduc", "line": "4950 Gateway Blvd, Leduc, AB", "clientConfirmed": True}, timeout=20)
+    # Open coverage (default): Leduc is eligible when confirmed; zones mode can still reject.
+    outside = requests.post(f"{API}/geo/confirm", json={
+        "mapboxId": "local-leduc", "line": "4950 Gateway Blvd, Leduc, AB",
+        "postal": "T9E 0A1", "clientConfirmed": True,
+    }, timeout=20)
     assert outside.status_code == 200, outside.text
-    assert outside.json()["confidence"] == "unresolved" and outside.json()["accepted"] is False
+    body_out = outside.json()
+    if body_out.get("coverageMode") == "zones" or body_out.get("eligible") is False:
+        assert body_out["confidence"] == "unresolved" and body_out["accepted"] is False
+    else:
+        assert body_out.get("eligible") is True
+        assert body_out["confidence"] == "address"
     other = requests.post(f"{API}/geo/confirm", json={"line": "10150 104 Ave NW, Edmonton, AB", "clientConfirmed": True}, timeout=20)
     if other.status_code in (400, 503):
         assert "find" in other.text.lower() or "address" in other.text.lower() or "mapbox" in other.text.lower()

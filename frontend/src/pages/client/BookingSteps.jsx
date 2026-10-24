@@ -45,8 +45,8 @@ export function StepWhere() {
         s={addressFocus
           ? "One decision at a time — confirm the service address, then optional access details."
           : (trialFlow
-            ? "Your free 10-minute trial is a mobile visit at an eligible Edmonton home, office, hotel, or event address. No payment is required."
-            : (clinicShown ? "Mobile visits across Edmonton, or the clinic when it is open for booking." : "Mobile visits across Edmonton."))}
+            ? "Your free 10-minute trial is a mobile visit at an eligible home, office, hotel, or event address. No payment is required."
+            : (clinicShown ? "Mobile visits at a confirmed address, or the clinic when it is open for booking." : "Mobile visits at a confirmed address."))}
       />
       {!addressFocus && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
