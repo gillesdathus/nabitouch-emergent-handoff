@@ -2,13 +2,13 @@ import { EtransferSettings } from "@/components/EtransferSettings";
 import { WhatsAppSettings } from "@/components/WhatsAppSettings";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Switch } from "@/components/ui/switch";
-import { ZoneMap, SectionHead } from "@/components/ui-kit";
+import { Confirm, ZoneMap, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { AddressPicker } from "@/components/AddressPicker";
-import { clinicBookable, clinicSavePayload, staffActor } from "@/lib/domain";
+import { clinicBookable, clinicSavePayload, staffActor, OPEN } from "@/lib/domain";
 import { dollarsToCents } from "@/lib/billing";
-import { OPEN } from "@/lib/domain";
 import { AddonsEditor, CancellationFeeEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
+import { MunicipalityCoverage } from "@/components/settings/MunicipalityCoverage";
 import { DutyRosterPicker } from "@/components/team/DutyRosterPicker";
 
 const ZoneStreetMap = lazy(() => import("@/components/maps/ZoneStreetMap"));
@@ -58,8 +58,9 @@ export default function Zones() {
   const [depositAmount, setDepositAmount] = useState(((policy.depositCents || 0) / 100).toFixed(2));
   const [insurers, setInsurers] = useState([]);
   const [editing, setEditing] = useState("");
-  const coverage = st.serviceCoverage || { mode: "open", radiusKm: 25, travelFeesEnabled: false };
+  const coverage = st.serviceCoverage || { mode: "open", radiusKm: 25, travelFeesEnabled: false, municipalityIds: [], customMunicipalities: [] };
   const [coverageRadius, setCoverageRadius] = useState(coverage.radiusKm ?? 25);
+  const [modeConfirm, setModeConfirm] = useState(null);
   const save = (patch, msg) => run(() => api.patch("settings", "app", { ...patch, _audit: msg, _actor: staffActor(user) }), "Settings saved");
   const finish = (patch, msg) => save(patch, msg).then(() => setEditing(""));
   useEffect(() => { api.insurers().then((body) => setInsurers(body.providers || [])).catch(() => setInsurers([])); }, [api]);
@@ -84,26 +85,41 @@ export default function Zones() {
       mode: patch.mode ?? coverage.mode ?? "open",
       radiusKm: Number(patch.radiusKm ?? coverageRadius) || 25,
       travelFeesEnabled: patch.travelFeesEnabled ?? !!coverage.travelFeesEnabled,
+      municipalityIds: patch.municipalityIds ?? coverage.municipalityIds ?? [],
+      customMunicipalities: patch.customMunicipalities ?? coverage.customMunicipalities ?? [],
     };
     setCoverageRadius(next.radiusKm);
     return save({ serviceCoverage: next }, "Service coverage saved");
+  };
+  const chooseMode = (nextMode) => {
+    const current = coverage.mode || "open";
+    if (nextMode === current) return;
+    if (nextMode !== "open" && current === "open") {
+      setModeConfirm({
+        mode: nextMode,
+        title: nextMode === "zones" ? "Switch to municipality / zone coverage?" : "Switch to radius coverage?",
+        body: "This turns off open coverage. New bookings will be restricted. Existing appointments are not cancelled.",
+      });
+      return;
+    }
+    saveCoverage({ mode: nextMode });
   };
   return (
     <div className="space-y-6" data-testid="owner-zones">
       <SectionHead eyebrow="Booking" title="Service coverage" />
       <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-service-coverage">
-        <p className="text-xs text-nb-mute">Controls which confirmed addresses can continue through booking. Open coverage is the default — municipality alone never blocks a visit.</p>
+        <p className="text-xs text-nb-mute">Controls which confirmed addresses can continue through booking. Open coverage is the default and is never changed silently.</p>
         <label>
           <span className="nb-label">Coverage mode</span>
           <select
             className="nb-input"
             value={coverage.mode || "open"}
             data-testid="settings-coverage-mode"
-            onChange={(e) => saveCoverage({ mode: e.target.value })}
+            onChange={(e) => chooseMode(e.target.value)}
           >
             <option value="open">Open coverage (default)</option>
             <option value="radius">Radius-based coverage</option>
-            <option value="zones">Custom service zones</option>
+            <option value="zones">Municipality / custom zones</option>
           </select>
         </label>
         {(coverage.mode || "open") === "radius" && (
@@ -121,6 +137,13 @@ export default function Zones() {
             />
           </label>
         )}
+        {(coverage.mode || "open") === "zones" && (
+          <MunicipalityCoverage
+            coverage={coverage}
+            appointments={state.appointments}
+            onSave={(patch) => saveCoverage(patch)}
+          />
+        )}
         <label className="flex items-center justify-between gap-3">
           <span><b>Travel fees</b><span className="block text-xs text-nb-mute">Off by default. When off, no travel fee is charged or shown on new bookings.</span></span>
           <Switch
@@ -130,6 +153,19 @@ export default function Zones() {
           />
         </label>
       </div>
+      <Confirm
+        open={!!modeConfirm}
+        onOpenChange={(open) => !open && setModeConfirm(null)}
+        title={modeConfirm?.title || ""}
+        body={modeConfirm?.body || ""}
+        confirmLabel="Switch mode"
+        testid="settings-coverage-mode-confirm"
+        onConfirm={() => {
+          const next = modeConfirm?.mode;
+          setModeConfirm(null);
+          if (next) saveCoverage({ mode: next });
+        }}
+      />
       <SectionHead eyebrow="Mobile operations" title="Service zones & travel fees" className="mt-10" />
       {HAS_MAPBOX
         ? <Suspense fallback={<div className="nb-skeleton h-[340px] rounded-[var(--nb-r-lg)]" />}><ZoneStreetMap zones={state.zones} center={st.center} pins={pins} clinic={clinic.coordinatesVerified && clinic.lat ? { lat: clinic.lat, lng: clinic.lng, label: clinic.address } : null} /></Suspense>

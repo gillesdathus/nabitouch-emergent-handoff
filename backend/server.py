@@ -73,6 +73,7 @@ from offers_visibility import (
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
+from municipalities import catalogue_public as municipality_catalogue, resolve_municipality
 from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
@@ -960,11 +961,13 @@ async def locate_visit(address, zones, settings):
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     assessed = classify(hit, line or hit.get("line") or "", address.get("postal") or "", address.get("arrival"))
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+    )
     if not eligible or not zone:
         if (settings.get("clinic") or {}).get("enabled"):
-            raise HTTPException(400, "That address is outside the mobile service area. In-clinic visits are still available.")
-        raise HTTPException(400, "That address is outside the mobile service area.")
+            raise HTTPException(400, "Mobile service is not currently available at that location. In-clinic visits are still available.")
+        raise HTTPException(400, "Mobile service is not currently available at that location.")
     if address.get("clientConfirmed") is not True:
         raise HTTPException(400, "Confirm the service address before a mobile visit can be booked.")
     if assessed["confidence"] != "address" or assessed["arrivalDiscrepancy"]:
@@ -981,11 +984,22 @@ async def locate_visit(address, zones, settings):
 
 
 def _verdict(hit, zones, settings):
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    place_hint = hit.get("area") or ""
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=place_hint,
+    )
     travel = money(zone_travel(zone, km, "home", settings)) if eligible and zone else 0
+    cov = service_coverage(settings)
+    muni = resolve_municipality(
+        {"lat": hit["lat"], "lng": hit["lng"]},
+        custom=cov.get("customMunicipalities") or [],
+        place_hint=place_hint,
+    )
     if eligible and zone:
         if zone.get("id") == OPEN_ZONE["id"]:
             area_line = "This address is eligible for a mobile visit."
+        elif zone.get("municipalityId") and muni:
+            area_line = f"We come to you in {muni.get('name') or zone['name']}."
         else:
             area_line = f"We come to you in {zone['name']}."
         if travel > 0:
@@ -996,7 +1010,9 @@ def _verdict(hit, zones, settings):
         else:
             message = f"{area_line} Arrival time is estimated only once your practitioner is on the way."
     else:
-        message = "That address is outside the mobile service area. You can still book an in-clinic visit."
+        message = "Mobile service is not currently available at that location."
+        if (settings.get("clinic") or {}).get("enabled"):
+            message += " You can still book an in-clinic visit."
     return {
         "eligible": bool(eligible and zone),
         "line": hit["line"],
@@ -1005,11 +1021,12 @@ def _verdict(hit, zones, settings):
         "lng": hit["lng"],
         "mapboxId": hit.get("id") or "",
         "zone": {"id": zone["id"], "name": zone["name"], "fee": zone.get("fee") or 0, "perKm": zone.get("perKm") or 0} if zone and eligible else None,
+        "municipality": {"id": muni["id"], "name": muni["name"], "type": muni.get("type") or ""} if muni else None,
         "travel": travel,
         "km": round(km, 2),
         "provider": hit.get("provider") or "",
         "civic": parse_civic(hit.get("line") or ""),
-        "coverageMode": service_coverage(settings)["mode"],
+        "coverageMode": cov["mode"],
         "confirmedArrival": False,
         "message": message,
     }
@@ -1051,10 +1068,13 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+    )
     assessed = classify(hit, body.get("line") or "", body.get("postal") or "", body.get("arrival"))
     if not eligible:
         assessed["confidence"] = "unresolved"
+        assessed["message"] = "Mobile service is not currently available at that location."
     assessed["eligible"] = bool(eligible)
     assessed["lat"] = hit["lat"]
     assessed["lng"] = hit["lng"]
@@ -1070,6 +1090,59 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
     )
     assessed["postalNormalized"] = postal_code(body.get("postal") or "")
     return assessed
+
+
+@api.get("/geo/municipalities")
+async def geo_municipalities(request: Request):
+    """Default Edmonton-region municipality catalogue for owner coverage selection."""
+    await require(request, "owner")
+    return {
+        "source": "statcan_sgc_2021",
+        "attribution": "Statistics Canada Standard Geographical Classification (SGC) 2021 — CMA 48835 Edmonton.",
+        "municipalities": municipality_catalogue(),
+    }
+
+
+@api.post("/geo/municipality-search")
+async def geo_municipality_search(request: Request, body: dict = Body(...)):
+    """Resolve a place outside the seed catalogue using verified Mapbox place data."""
+    await require(request, "owner")
+    query = " ".join(str(body.get("q") or body.get("line") or "").split())
+    try:
+        hit = await GEO.search_place(query, client_key(request))
+    except RateLimit as exc:
+        raise HTTPException(429, str(exc)) from exc
+    except GeocodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    known = resolve_municipality({"lat": hit["lat"], "lng": hit["lng"]}, place_hint=hit.get("area") or query)
+    if known:
+        return {
+            "match": "catalogue",
+            "municipality": {
+                "id": known["id"], "csdUid": known["id"], "name": known["name"],
+                "type": known.get("type") or "", "note": known.get("note") or "",
+                "communities": list(known.get("communities") or []),
+            },
+            "suggestion": None,
+        }
+    name = hit.get("area") or query
+    custom_id = f"custom:{hit.get('id') or name}"
+    return {
+        "match": "custom",
+        "municipality": None,
+        "suggestion": {
+            "id": custom_id[:160],
+            "name": name,
+            "mapboxId": hit.get("id") or "",
+            "lat": hit["lat"],
+            "lng": hit["lng"],
+            "radiusKm": 12,
+            "source": "mapbox_place",
+            "line": hit.get("line") or "",
+        },
+    }
 
 
 @api.get("/geo/suggest")

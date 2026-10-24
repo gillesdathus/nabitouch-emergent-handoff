@@ -3,6 +3,13 @@ from datetime import datetime
 from math import asin, cos, radians, sin, sqrt
 from zoneinfo import ZoneInfo
 
+from municipalities import (
+    municipality_selected,
+    normalize_custom_municipalities,
+    normalize_municipality_ids,
+    resolve_municipality,
+)
+
 TZ = ZoneInfo("America/Edmonton")
 CLINIC_POINT = {"lat": 53.5461, "lng": -113.4938}
 BLOCKING_STATUSES = {
@@ -49,7 +56,13 @@ OPEN_ZONE = {"id": "z-open", "name": "Service area", "fee": 0, "perKm": 0, "enab
 
 def launch_service_coverage():
     """Owner Booking → Service Coverage defaults. Open coverage; travel fees off."""
-    return {"mode": "open", "radiusKm": 25, "travelFeesEnabled": False}
+    return {
+        "mode": "open",
+        "radiusKm": 25,
+        "travelFeesEnabled": False,
+        "municipalityIds": [],
+        "customMunicipalities": [],
+    }
 
 
 def service_coverage(settings):
@@ -67,19 +80,45 @@ def service_coverage(settings):
         fees_on = bool(raw.get("travelFeesEnabled"))
     else:
         fees_on = False
-    return {"mode": mode, "radiusKm": radius, "travelFeesEnabled": fees_on}
+    return {
+        "mode": mode,
+        "radiusKm": radius,
+        "travelFeesEnabled": fees_on,
+        "municipalityIds": normalize_municipality_ids(raw.get("municipalityIds")),
+        "customMunicipalities": normalize_custom_municipalities(raw.get("customMunicipalities")),
+    }
 
 
 def travel_fees_enabled(settings):
     return bool(service_coverage(settings)["travelFeesEnabled"])
 
 
-def assess_coverage(point, zones, settings):
+def _municipality_zone(muni, matched):
+    """Prefer a matching travel ring when fees apply; otherwise a named open zone."""
+    if matched:
+        out = dict(matched)
+        if muni and muni.get("id"):
+            out["municipalityId"] = muni.get("id")
+        return out
+    if not muni:
+        return dict(OPEN_ZONE)
+    return {
+        "id": f"muni-{muni.get('id')}",
+        "name": muni.get("name") or "Service area",
+        "fee": 0,
+        "perKm": 0,
+        "enabled": True,
+        "municipalityId": muni.get("id"),
+    }
+
+
+def assess_coverage(point, zones, settings, place_hint=""):
     """Return (zone, km, eligible) using the owner coverage mode.
 
     open — any geocoded point is eligible (named zone when inside a ring, else open zone).
     radius — eligible within settings.serviceCoverage.radiusKm of the service center.
-    zones — eligible only inside an enabled custom/radius ring (legacy Edmonton rings).
+    zones — eligible inside owner-selected municipalities when configured; otherwise
+            inside an enabled custom/radius ring (legacy rings).
     """
     matched, km = zone_for(point, zones, (settings or {}).get("center"))
     cov = service_coverage(settings)
@@ -91,7 +130,18 @@ def assess_coverage(point, zones, settings):
         if not eligible:
             return None, km, False
         return (matched or dict(OPEN_ZONE)), km, True
-    # Custom service zones (existing rings)
+    selected = cov.get("municipalityIds") or []
+    custom = cov.get("customMunicipalities") or []
+    if selected or custom:
+        muni = resolve_municipality(point, custom=custom, place_hint=place_hint)
+        if not muni:
+            return None, km, False
+        if muni.get("match") == "custom_radius":
+            return _municipality_zone(muni, matched), km, True
+        if municipality_selected(muni, selected):
+            return _municipality_zone(muni, matched), km, True
+        return None, km, False
+    # Legacy rings when the owner has not configured municipality coverage yet.
     return matched, km, bool(matched)
 
 
