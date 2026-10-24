@@ -8,17 +8,19 @@ if [ "${CONFIRM_HOTFIX_DEPLOY:-}" != "yes" ]; then
   exit 2
 fi
 
+# Feature tip (open coverage). Deploy script may be newer; source is pinned by SHA.
 HOTFIX_SHA="9b404c0bcaf5ceb2f0099cc1f069135ec88eee6c"
+SHORT="9b404c0"
 BRANCH="hotfix/open-service-coverage"
 REPO="https://github.com/gillesdathus/nabitouch-emergent-handoff.git"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RELEASE_ROOT="/root/nt-release"
-SRC="${RELEASE_ROOT}/nt-hotfix-9b404c0"
+SRC="${RELEASE_ROOT}/nt-hotfix-${SHORT}"
 FE_BUILD="${RELEASE_ROOT}/fe-build-open-coverage-${STAMP}"
 BACKUP_DIR="/root/nabitouch-next-backups"
 COMPOSE="/opt/nt-next/deploy/docker-compose.hostinger.yml"
-SRC_TAG="nt-next-api:src-9b404c0"
-PREV_TAG="nt-next-api:pre-9b404c0-${STAMP}"
+SRC_TAG="nt-next-api:src-${SHORT}"
+PREV_TAG="nt-next-api:pre-${SHORT}-${STAMP}"
 LIVE="/var/www/nabitouch-next"
 
 mkdir -p "$RELEASE_ROOT" "$BACKUP_DIR"
@@ -42,8 +44,10 @@ docker image inspect "$PREV_TAG" --format='prev={{.Id}}'
 
 echo "=== fetch hotfix source $HOTFIX_SHA ==="
 rm -rf "$SRC"
-git clone --depth 1 --branch "$BRANCH" "$REPO" "$SRC"
+git clone --filter=blob:none --no-checkout "$REPO" "$SRC"
 cd "$SRC"
+git fetch --depth 1 origin "$HOTFIX_SHA"
+git checkout --detach "$HOTFIX_SHA"
 GOT="$(git rev-parse HEAD)"
 test "$GOT" = "$HOTFIX_SHA"
 test -f deploy/Dockerfile.api
@@ -69,9 +73,19 @@ NEW_ID="$(docker image inspect "$SRC_TAG" --format='{{.Id}}')"
 echo "NEW_ID=$NEW_ID"
 docker tag "$SRC_TAG" nt-next-api:local
 
+ENV_FILE="/etc/nabitouch-next.env"
+set -a
+# shellcheck disable=SC1091
+. "$ENV_FILE"
+set +a
+
 rollback_api() {
   echo "Rolling back API to $PREV_TAG"
   docker tag "$PREV_TAG" nt-next-api:local
+  set -a
+  # shellcheck disable=SC1091
+  . "$ENV_FILE"
+  set +a
   docker compose -f "$COMPOSE" up -d --no-deps api
 }
 
