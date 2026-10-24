@@ -29,7 +29,7 @@ from catalog import (
 from media import build_media_router, ensure_media_indexes
 from profiles import ensure_profile_indexes, present_practitioner, read_profile, update_profile, visible_profile
 from seed import build_launch_seed, build_seed
-from auth import ALG, build_auth
+from auth import ALG, build_auth, clear_auth_cookies
 from csrf_session import session_gone_response, session_payload_from_cookies
 from fastapi import Request
 from payments import build_router, with_settle, claim_eligible
@@ -2826,10 +2826,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 cookie = request.cookies.get("csrf_token")
                 payload = session_payload_from_cookies(request)
                 if not payload:
-                    # Dead HttpOnly cookies must not block guest mutations as a fake CSRF failure.
+                    # Dead cookies must not CSRF-trap guests. MFA challenge routes still reach
+                    # their handlers (invalid challenge keeps its own status); clear cookies on the way out.
+                    if request.url.path in challenge_types:
+                        response = await call_next(request)
+                        clear_auth_cookies(response)
+                        return response
                     return session_gone_response()
                 row = await db.nt_sessions.find_one({"sid": payload.get("sid"), "revoked": False}, {"_id": 0, "csrf": 1})
                 if not row:
+                    if request.url.path in challenge_types:
+                        response = await call_next(request)
+                        clear_auth_cookies(response)
+                        return response
                     return session_gone_response()
                 if not header or not cookie or not _same(header, cookie) or not _same(row.get("csrf"), header):
                     return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
