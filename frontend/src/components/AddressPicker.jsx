@@ -214,6 +214,7 @@ export function AddressPicker({
       onChange({
         ...value, line: checked.line, unit: "", access: "", lat: checked.lat, lng: checked.lng,
         mapboxId: checked.mapboxId || value.mapboxId, postal: checked.postalNormalized || postal,
+        zoneId: checked.zone?.id || value.zoneId,
         clientConfirmed: true, detailsSettled: false, confidence: checked.confidence, travelFee: checked.travel, quoted: true,
       });
       setUnit("");

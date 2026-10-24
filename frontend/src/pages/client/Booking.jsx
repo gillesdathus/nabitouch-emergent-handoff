@@ -18,6 +18,7 @@ import {
   addressReady,
   addressSelectionPatch,
   BOOKING_STEP,
+  bookingAddressComplete,
   bookingFlowLabels,
   bookingReviewStep,
   bookingStepFromVisualIndex,
@@ -309,9 +310,10 @@ export default function Booking() {
   }, [quoteKey, api, offerEligibilityKey]);
   const trialFlow = Boolean(draft.campaignId && isTrialService(service));
   const clinic = idx.settings?.clinic || {};
+  // Open Coverage / server geoConfirm is authoritative — do not require a legacy ring match from zoneFor.
   const whereOk = draft.locationType === "clinic"
     ? (!trialFlow && clinicBookable(clinic))
-    : (!!zr?.zone && draft.address?.clientConfirmed === true && draft.address?.detailsSettled === true);
+    : bookingAddressComplete(draft.address);
   const guestContactOk = g.firstName && g.lastName && /\S+@\S+/.test(g.email) && g.phone;
   const trialExtrasOk = !trialFlowEarly || Boolean((me?.dob || g.dob) && ["yes", "no", "unsure"].includes(g.insuranceStatus));
   const guestProfileOk = trialFlowEarly || !g.createProfile || (g.dob && (g.password || "").length >= 8);
@@ -327,7 +329,9 @@ export default function Booking() {
       ? (trialFlow
         ? "The free trial is a mobile visit. Choose a home, office, hotel, or event address."
         : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
-      : "Confirm a service address to continue.")
+      : (draft.address?.clientConfirmed === true && draft.address?.detailsSettled !== true
+        ? "Choose whether you need suite or access details, then continue."
+        : "Confirm a service address to continue."))
     : "";
   const collectDetailsErrors = () => {
     const errors = {};
@@ -431,7 +435,7 @@ export default function Booking() {
       let pid = draft.practitionerId || null;
       const payNow = trialFlow ? undefined : paymentChoice(draft, idx.settings);
       const clinicPin = idx.settings.clinic || {};
-      const address = draft.locationType === "clinic" ? { line: clinicPin.address, zoneId: null, ...(Number.isFinite(Number(clinicPin.lat)) && Number.isFinite(Number(clinicPin.lng)) && clinicPin.lat !== "" && clinicPin.lng !== "" ? { lat: Number(clinicPin.lat), lng: Number(clinicPin.lng) } : {}) } : { ...draft.address, zoneId: zr?.zone?.id, notes: draft.addressNotes };
+      const address = draft.locationType === "clinic" ? { line: clinicPin.address, zoneId: null, ...(Number.isFinite(Number(clinicPin.lat)) && Number.isFinite(Number(clinicPin.lng)) && clinicPin.lat !== "" && clinicPin.lng !== "" ? { lat: Number(clinicPin.lat), lng: Number(clinicPin.lng) } : {}) } : { ...draft.address, zoneId: draft.address?.zoneId || zr?.zone?.id || null, notes: draft.addressNotes };
       const client = me ? { id: me.id } : { firstName: g.firstName, lastName: g.lastName, preferredName: "", email: g.email, phone: g.phone, dob: g.dob, insuranceStatus: g.insuranceStatus || undefined, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, hasProfile: g.createProfile, language: "English", contactMethod: "Text", addresses: [{ ...address, id: "ad-1", label: locationTypeBookingLabel(draft.locationType) }], insurance: draft.pendingInsurance ? [draft.pendingInsurance] : [], favorites: [draft.serviceSlug], preferredPractitioners: [], emergencyContact: "", photo: null };
       if (!me && g.createProfile) {
         try { await register({ email: g.email, password: g.password, firstName: g.firstName, lastName: g.lastName, phone: g.phone, dob: g.dob, marketingConsent: g.marketingConsent, smsConsent: !!g.smsConsent, profile: { addresses: client.addresses, insurance: client.insurance, favorites: client.favorites } }); }

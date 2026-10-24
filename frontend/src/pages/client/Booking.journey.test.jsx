@@ -170,6 +170,24 @@ describe("Automatic navigation", () => {
     expect(settled.postal).toBe("T5J 2R4");
   });
 
+  test("whereOk gate uses bookingAddressComplete, not legacy ring match", async () => {
+    const { bookingAddressComplete } = await import("@/lib/booking-selection");
+    const { zoneFor } = await import("@/lib/domain");
+    const settled = {
+      ...confirmedHome,
+      detailsSettled: true,
+      zoneId: "z-open",
+      quoted: true,
+      travelFee: 0,
+    };
+    const zr = zoneFor(settled, [
+      { id: "z-central", radiusKm: 8, enabled: false, fee: 0 },
+      { id: "z-outer", radiusKm: 25, enabled: false, fee: 20 },
+    ]);
+    expect(zr.zone).toBeNull();
+    expect(bookingAddressComplete(settled)).toBe(true);
+  });
+
   test("payment cannot be bypassed via step jump helper", () => {
     const ok = [true, true, true, true, true, false];
     expect(canJumpBookingStep(BOOKING_STEP.DETAILS, BOOKING_STEP.REVIEW, ok)).toBe(false);
