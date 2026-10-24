@@ -223,6 +223,7 @@ export const api = {
   geoClinicConfirm: (body) => http.post('/geo/clinic-confirm', body).then(data),
   geoMunicipalities: () => http.get('/geo/municipalities').then(data),
   geoMunicipalitySearch: (q) => http.post('/geo/municipality-search', { q }).then(data),
+  geoTravelFeeEstimates: () => http.get('/geo/travel-fee-estimates').then(data),
   mailOps: () => http.get('/notifications/operations').then(data),
   legacySchema: () => http.get('/legacy/schema').then(data),
   legacySummary: () => http.get('/legacy/summary').then(data),

@@ -17,6 +17,7 @@ const { patch, storeApi } = vi.hoisted(() => {
         ],
       }),
       geoMunicipalitySearch: async () => ({ match: "catalogue", municipality: { id: "4811052", name: "Strathcona County" } }),
+      geoTravelFeeEstimates: async () => ({ travelFeesEnabled: false, estimates: [] }),
     },
   };
 });
@@ -29,6 +30,7 @@ vi.mock("@/lib/api", () => ({
     geoClinicConfirm: async () => ({ accepted: false, navigation: "unavailable" }),
     geoMunicipalities: storeApi.geoMunicipalities,
     geoMunicipalitySearch: storeApi.geoMunicipalitySearch,
+    geoTravelFeeEstimates: storeApi.geoTravelFeeEstimates,
     teamDirectory: async () => ({ people: [] }),
   },
   apiError: () => "unavailable",

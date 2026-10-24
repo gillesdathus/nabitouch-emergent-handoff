@@ -291,6 +291,7 @@ export async function confirmAddressForBooking(api, address) {
       detailsSettled: address.detailsSettled === true,
       confidence: checked.confidence,
       travelFee: checked.travel,
+      travelCalc: checked.travelCalc || null,
       quoted: true,
     },
   };

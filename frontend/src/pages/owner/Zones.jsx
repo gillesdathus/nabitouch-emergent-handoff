@@ -9,6 +9,7 @@ import { clinicBookable, clinicSavePayload, staffActor, OPEN } from "@/lib/domai
 import { dollarsToCents } from "@/lib/billing";
 import { AddonsEditor, CancellationFeeEditor, CancellationPolicyEditor, ReminderDaysEditor, SchedulingEditor } from "@/components/settings/OwnerSettingsEditors";
 import { MunicipalityCoverage } from "@/components/settings/MunicipalityCoverage";
+import { TravelFeesConfig } from "@/components/settings/TravelFeesConfig";
 import { DutyRosterPicker } from "@/components/team/DutyRosterPicker";
 
 const ZoneStreetMap = lazy(() => import("@/components/maps/ZoneStreetMap"));
@@ -58,7 +59,7 @@ export default function Zones() {
   const [depositAmount, setDepositAmount] = useState(((policy.depositCents || 0) / 100).toFixed(2));
   const [insurers, setInsurers] = useState([]);
   const [editing, setEditing] = useState("");
-  const coverage = st.serviceCoverage || { mode: "open", radiusKm: 25, travelFeesEnabled: false, municipalityIds: [], customMunicipalities: [] };
+  const coverage = st.serviceCoverage || { mode: "open", radiusKm: 25, travelFeesEnabled: false, municipalityIds: [], customMunicipalities: [], travelFees: {} };
   const [coverageRadius, setCoverageRadius] = useState(coverage.radiusKm ?? 25);
   const [modeConfirm, setModeConfirm] = useState(null);
   const save = (patch, msg) => run(() => api.patch("settings", "app", { ...patch, _audit: msg, _actor: staffActor(user) }), "Settings saved");
@@ -87,9 +88,13 @@ export default function Zones() {
       travelFeesEnabled: patch.travelFeesEnabled ?? !!coverage.travelFeesEnabled,
       municipalityIds: patch.municipalityIds ?? coverage.municipalityIds ?? [],
       customMunicipalities: patch.customMunicipalities ?? coverage.customMunicipalities ?? [],
+      travelFees: patch.travelFees ?? coverage.travelFees ?? {},
     };
     setCoverageRadius(next.radiusKm);
-    return save({ serviceCoverage: next }, "Service coverage saved");
+    const audit = patch.travelFees || Object.prototype.hasOwnProperty.call(patch, "travelFeesEnabled")
+      ? "Travel fee policy updated"
+      : "Service coverage saved";
+    return save({ serviceCoverage: next }, audit);
   };
   const chooseMode = (nextMode) => {
     const current = coverage.mode || "open";
@@ -144,14 +149,10 @@ export default function Zones() {
             onSave={(patch) => saveCoverage(patch)}
           />
         )}
-        <label className="flex items-center justify-between gap-3">
-          <span><b>Travel fees</b><span className="block text-xs text-nb-mute">Off by default. When off, no travel fee is charged or shown on new bookings.</span></span>
-          <Switch
-            checked={!!coverage.travelFeesEnabled}
-            onCheckedChange={(v) => saveCoverage({ travelFeesEnabled: v })}
-            data-testid="settings-travel-fees-switch"
-          />
-        </label>
+        <TravelFeesConfig
+          coverage={coverage}
+          onSave={(patch) => saveCoverage(patch)}
+        />
       </div>
       <Confirm
         open={!!modeConfirm}

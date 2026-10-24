@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hotfix: owner-managed municipality service coverage (zones mode).
+# Hotfix: municipality service coverage + configurable travel-fee estimation.
 # Deploys FE static + recreates nt-next-api only. Does not touch Nginx, Mongo, Redis, or Stripe.
 # Includes CSRF stale-session lineage and Open Coverage ancestor.
 set -euo pipefail
@@ -9,7 +9,7 @@ if [ "${CONFIRM_HOTFIX_DEPLOY:-}" != "yes" ]; then
   exit 2
 fi
 
-HOTFIX_SHA="${HOTFIX_SHA:?Set HOTFIX_SHA to the municipality coverage commit to deploy}"
+HOTFIX_SHA="${HOTFIX_SHA:?Set HOTFIX_SHA to the municipality + travel-fees commit to deploy}"
 SHORT="$(printf '%s' "$HOTFIX_SHA" | cut -c1-7)"
 BRANCH="hotfix/municipality-service-coverage"
 REPO="https://github.com/gillesdathus/nabitouch-emergent-handoff.git"
@@ -23,6 +23,7 @@ SRC_TAG="nt-next-api:src-${SHORT}"
 PREV_TAG="nt-next-api:pre-muni-${SHORT}-${STAMP}"
 LIVE="/var/www/nabitouch-next"
 OPEN_COVERAGE_SHA="9b404c0bcaf5ceb2f0099cc1f069135ec88eee6c"
+MAIN_TIP_MIN="40828d3878991fc2159cfafea33115330a393eec"
 
 mkdir -p "$RELEASE_ROOT" "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
@@ -52,14 +53,22 @@ git checkout --detach "$HOTFIX_SHA"
 GOT="$(git rev-parse HEAD)"
 test "$GOT" = "$HOTFIX_SHA"
 git merge-base --is-ancestor "$OPEN_COVERAGE_SHA" HEAD
+git merge-base --is-ancestor "$MAIN_TIP_MIN" HEAD
 test -f deploy/Dockerfile.api
 test -f backend/municipalities.py
+test -f backend/travel_fees.py
 test -f frontend/src/components/settings/MunicipalityCoverage.jsx
+test -f frontend/src/components/settings/TravelFeesConfig.jsx
 grep -q "municipalityIds" backend/pricing.py
 grep -q "geo/municipalities" backend/server.py
+grep -q "geo/travel-fee-estimates" backend/server.py
+grep -q "public_service_coverage" backend/pricing.py
 grep -q "settings-coverage-locations" frontend/src/components/settings/MunicipalityCoverage.jsx
+grep -q "settings-travel-fees" frontend/src/components/settings/TravelFeesConfig.jsx
 grep -q "MunicipalityCoverage" frontend/src/pages/owner/Zones.jsx
+grep -q "TravelFeesConfig" frontend/src/pages/owner/Zones.jsx
 grep -q "geoMunicipalities" frontend/src/lib/api.js
+grep -q "geoTravelFeeEstimates" frontend/src/lib/api.js
 
 echo "=== backup live frontend ==="
 FE_TAR="${BACKUP_DIR}/frontend-live-before-muni-${STAMP}.tar.gz"
@@ -71,7 +80,7 @@ chmod 600 "${FE_TAR}.sha256"
 echo "=== build API image ==="
 docker build -f deploy/Dockerfile.api -t "$SRC_TAG" \
   --label "nabitouch.source_sha=$HOTFIX_SHA" \
-  --label "nabitouch.hotfix=municipality-service-coverage" \
+  --label "nabitouch.hotfix=municipality-travel-fees" \
   .
 NEW_ID="$(docker image inspect "$SRC_TAG" --format='{{.Id}}')"
 echo "NEW_ID=$NEW_ID"
@@ -148,8 +157,8 @@ corepack yarn build
 BUNDLE="$(grep -oE '/assets/index-[^\" ]+\.js' build/index.html | head -1)"
 test -n "$BUNDLE"
 test -f "build${BUNDLE}"
-if ! grep -Rql "geo/municipalities\|MunicipalityCoverage\|settings-coverage-locations\|serviceCoverage" build/assets/*.js 2>/dev/null; then
-  echo "Refusing: municipality coverage markers missing from build" >&2
+if ! grep -Rql "geo/municipalities\|MunicipalityCoverage\|settings-coverage-locations\|serviceCoverage\|TravelFeesConfig\|settings-travel-fees\|geo/travel-fee-estimates" build/assets/*.js 2>/dev/null; then
+  echo "Refusing: municipality / travel-fee markers missing from build" >&2
   exit 2
 fi
 
@@ -174,6 +183,10 @@ MUNI_CODE="$(curl -sS -m 10 -o /tmp/muni.json -w '%{http_code}' https://nabitouc
 test "$MUNI_CODE" = "401" -o "$MUNI_CODE" = "403"
 echo "municipalities-auth-ok code=$MUNI_CODE"
 
+EST_CODE="$(curl -sS -m 10 -o /tmp/travel-est.json -w '%{http_code}' https://nabitouch.com/api/geo/travel-fee-estimates || true)"
+test "$EST_CODE" = "401" -o "$EST_CODE" = "403"
+echo "travel-fee-estimates-auth-ok code=$EST_CODE"
+
 GUEST="$(curl -fsS -m 20 -X POST https://nabitouch.com/api/geo/check \
   -H 'Content-Type: application/json' \
   -d '{"line":"400 Calahoo Road, Spruce Grove, AB T7X 2K7","postal":"T7X 2K7"}' || true)"
@@ -182,15 +195,17 @@ import json, sys
 data = json.loads(sys.argv[1] or "{}")
 assert data.get("eligible") is True, data
 assert float(data.get("travel") or 0) == 0
-print("guest-open-coverage-ok travel=", data.get("travel"), "mode=", data.get("coverageMode"))
+assert data.get("travelFeesEnabled") is False
+print("guest-open-coverage-ok travel=", data.get("travel"), "mode=", data.get("coverageMode"), "fees=", data.get("travelFeesEnabled"))
 PY
 
-cat > "${BACKUP_DIR}/MUNICIPALITY_COVERAGE_HOTFIX_${STAMP}.manifest" <<EOF
+cat > "${BACKUP_DIR}/MUNICIPALITY_TRAVEL_FEES_HOTFIX_${STAMP}.manifest" <<EOF
 timestamp_utc=${STAMP}
-change=municipality-service-coverage
+change=municipality-service-coverage+travel-fees
 hotfix_sha=${HOTFIX_SHA}
 branch=${BRANCH}
 open_coverage_ancestor=${OPEN_COVERAGE_SHA}
+main_tip_min=${MAIN_TIP_MIN}
 frontend_backup=$(basename "$FE_TAR")
 frontend_previous=$(basename "$STAGE_TAR")
 frontend_bundle=${BUNDLE}
@@ -200,6 +215,6 @@ api_new_id=${NEW_ID}
 api_prev_id=${RUNNING_ID}
 rollback_api_tag=${PREV_TAG}
 EOF
-chmod 600 "${BACKUP_DIR}/MUNICIPALITY_COVERAGE_HOTFIX_${STAMP}.manifest"
-cat "${BACKUP_DIR}/MUNICIPALITY_COVERAGE_HOTFIX_${STAMP}.manifest"
+chmod 600 "${BACKUP_DIR}/MUNICIPALITY_TRAVEL_FEES_HOTFIX_${STAMP}.manifest"
+cat "${BACKUP_DIR}/MUNICIPALITY_TRAVEL_FEES_HOTFIX_${STAMP}.manifest"
 echo "DEPLOY_OK ${STAMP}"

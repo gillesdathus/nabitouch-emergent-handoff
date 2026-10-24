@@ -98,6 +98,8 @@ def public(u):
     body = {k: u.get(k) for k in ("id", "email", "name", "role", "subject", "preferredWorkspace", "status")}
     body["roles"] = roles
     body["role"] = u.get("role") or primary_role(roles)
+    perms = u.get("staffPerms") if isinstance(u.get("staffPerms"), dict) else {}
+    body["staffPerms"] = {"managePricing": bool(perms.get("managePricing"))}
     if is_sysadmin(u):
         body["capabilities"] = ["sysadmin"]
     return body
@@ -194,6 +196,7 @@ class StaffRolesIn(BaseModel):
     preferredWorkspace: Optional[str] = None
     status: Optional[str] = None
     practitionerId: Optional[str] = None
+    managePricing: Optional[bool] = None
 
 
 class InviteAccept(BaseModel):
@@ -1091,8 +1094,15 @@ def build_auth(db, coll, add_audit):
                 await sessions.update_many({"userId": user_id, "revoked": False}, {"$set": {"revoked": True, "revokedReason": "suspended"}})
         if body.practitionerId is not None:
             patch["subject"] = body.practitionerId or None
+        if body.managePricing is not None:
+            prior_perms = dict(account.get("staffPerms") or {})
+            prior_perms["managePricing"] = bool(body.managePricing)
+            patch["staffPerms"] = prior_perms
         await users.update_one({"id": user_id}, {"$set": patch})
-        await add_audit(owner["name"], f"Staff roles updated: {account.get('email')} → {','.join(roles)}")
+        note = f"Staff roles updated: {account.get('email')} → {','.join(roles)}"
+        if body.managePricing is not None:
+            note += f" · managePricing={'granted' if body.managePricing else 'revoked'}"
+        await add_audit(owner["name"], note)
         updated = await users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
         return await present(updated, coll)
 

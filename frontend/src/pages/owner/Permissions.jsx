@@ -104,6 +104,16 @@ function StaffAccounts() {
               <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-revoke-sessions-${u.email}`} onClick={() => revokeSessions(u)}>Revoke sessions</button>
               <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-add-desk-${u.email}`} onClick={() => setRoles(u, Array.from(new Set([...(u.roles || [u.role]), "desk"])))}>Add reception</button>
               <button type="button" className="nb-btn-ghost h-8 px-3 text-xs" data-testid={`staff-add-manager-${u.email}`} onClick={() => setRoles(u, Array.from(new Set([...(u.roles || [u.role]), "manager"])))}>Add manager</button>
+              {(u.roles || [u.role]).includes("manager") && (
+                <button
+                  type="button"
+                  className="nb-btn-ghost h-8 px-3 text-xs"
+                  data-testid={`staff-manage-pricing-${u.email}`}
+                  onClick={() => api.patchStaff(u.id, { roles: u.roles || [u.role], managePricing: !u.staffPerms?.managePricing }).then(() => { toast.success(u.staffPerms?.managePricing ? "Pricing permission revoked" : "Pricing permission granted"); load(); }).catch((err) => toast.error(apiError(err)))}
+                >
+                  {u.staffPerms?.managePricing ? "Revoke pricing" : "Allow pricing"}
+                </button>
+              )}
             </div>
           </div>
         ))}

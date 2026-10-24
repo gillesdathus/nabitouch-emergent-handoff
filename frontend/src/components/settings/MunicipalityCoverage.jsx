@@ -156,6 +156,7 @@ export function MunicipalityCoverage({
       municipalityIds: [...selected],
       customMunicipalities: custom,
       travelFeesEnabled: !!coverage.travelFeesEnabled,
+      travelFees: coverage.travelFees || {},
       radiusKm: coverage.radiusKm ?? 25,
     };
     const wasOpen = (coverage.mode || "open") !== "zones";

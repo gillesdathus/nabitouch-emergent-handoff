@@ -12,7 +12,7 @@ import { CompletionHero, CompletionScreen } from "@/components/CompletionScreen"
 import { useDemo } from "@/store/DemoStore";
 import { StepWhere, StepService, StepDuration, StepWhen, StepPreferences, StepDetails, StepPay } from "./BookingSteps";
 import { Stepper } from "@/components/tide";
-import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService } from "@/lib/domain";
+import { quote, zoneFor, money, fmtDate, fmtTime, welcomeOfferVisible, paymentChoice, clinicBookable, isTrialService, travelFeesEnabled } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import {
   addressReady,
@@ -83,15 +83,17 @@ function useKeepFocusedFieldVisible() {
   }, []);
 }
 
-function Breakdown({ q, compact, settlement }) {
+function Breakdown({ q, compact, settlement, showTravel = true }) {
   const Row = ({ l, v, cls = "", testid }) => <div className={`flex justify-between ${cls}`} data-testid={testid}><span>{l}</span><span className="tabular-nums">{v}</span></div>;
+  const travelLabel = q.travelEstimated ? "Travel fee (estimate)" : "Travel fee";
   return (
     <div className={`space-y-1.5 ${compact ? "text-xs" : "text-sm"}`} data-testid="price-breakdown">
       <Row l="Treatment" v={money(q.base)} />
       {q.discount > 0 && <Row l={q.promoName || "Discount"} v={`−${money(q.discount)}`} cls="font-medium text-nb-teal" testid="breakdown-discount" />}
       {q.discount > 0 && <Row l="Discounted treatment subtotal" v={money(q.treatmentAfterDiscount)} cls="text-nb-mute" />}
       {q.addons > 0 && <Row l={`Enhancements (${q.addonList.join(", ")})`} v={money(q.addons)} />}
-      <Row l="Travel fee" v={q.travel ? money(q.travel) : "Included"} testid="breakdown-travel" />
+      {showTravel && <Row l={travelLabel} v={q.travel ? money(q.travel) : "Included"} testid="breakdown-travel" />}
+      {showTravel && q.travelNote ? <p className="text-[11px] text-nb-mute" data-testid="breakdown-travel-note">{q.travelNote}</p> : null}
       <Row l="GST (5%)" v={money(q.tax)} testid="breakdown-tax" />
       <div className="my-2 border-t border-dashed border-sky-200" />
       <Row l="Appointment total" v={money(q.total)} cls={`font-semibold text-nb-ink ${compact ? "text-sm" : "text-lg"}`} testid="breakdown-total" />
@@ -261,10 +263,20 @@ export default function Booking() {
   }, [draft.campaignId, draft.step, service?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zr = draft.locationType !== "clinic" && draft.address ? zoneFor(draft.address, state.zones) : null;
+  const feesOn = travelFeesEnabled(idx?.settings);
   const q = quote({ service, duration: draft.duration, addons: draft.addons, zone: zr?.zone, km: zr?.km, serverTravel: draft.address?.quoted ? draft.address.travelFee : undefined, client: me || null, promotions: state.promotions, settings: idx?.settings, locationType: draft.locationType });
   const trialFlowEarly = Boolean(draft.campaignId && isTrialService(service));
   const reviewAt = bookingReviewStep(trialFlowEarly);
-  const shown = step === reviewAt && serverQuote ? serverQuote : q;
+  const rawShown = step === reviewAt && serverQuote ? serverQuote : q;
+  // Prefer settings flag; also honor a server quote that already disclosed a travel amount.
+  const showTravel = feesOn || Number(rawShown?.travel || 0) > 0 || Boolean(rawShown?.travelCalc);
+  const shown = {
+    ...rawShown,
+    travelEstimated: Boolean(rawShown?.travelCalc?.estimated || draft.address?.travelCalc?.estimated),
+    travelNote: showTravel
+      ? (rawShown?.travelCalc?.message || draft.address?.travelCalc?.message || (rawShown?.travelCalc?.status === "needs_review" ? "Travel fee needs review before it is binding." : ""))
+      : "",
+  };
   const quotePayload = step === reviewAt ? {
     useCredit,
     winbackCode,
@@ -530,7 +542,7 @@ export default function Booking() {
         <div className="nb-card mt-3 p-3 text-left sm:mt-4 sm:p-4" data-testid="booking-confirmation-summary">
           <ClientTracker appt={live} compact />
           <div className="mt-3">
-            <Breakdown q={live.pricing} settlement={live.paymentDue} compact />
+            <Breakdown q={live.pricing} settlement={live.paymentDue} compact showTravel={travelFeesEnabled(idx?.settings) || Number(live.pricing?.travel || 0) > 0} />
           </div>
           {live.pricing?.welcomeOffer && (
             <p className="mt-2 text-xs text-nb-mute" data-testid="confirmation-welcome">First-booking welcome offer applied to the treatment price.</p>
@@ -674,7 +686,7 @@ export default function Booking() {
                   {creditGroup && <label className={`flex items-center gap-4 p-5 transition-colors ${useCredit ? "tint-mint" : ""}`} data-testid="booking-credit-toggle"><Layers className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Use a package credit</b><span className="block text-xs text-nb-mute">{creditGroup.available} {creditGroup.serviceName} {creditGroup.duration} min credit{creditGroup.available === 1 ? "" : "s"} left. The credit is held now and used when the visit is completed. It does not combine with other offers.</span></span><Switch checked={useCredit} onCheckedChange={(v) => patchDraft({ useCredit: v })} data-testid="booking-credit-switch" /></label>}
                   {winback && !useCredit && <label className={`flex items-center gap-4 p-5 transition-colors ${winbackCode ? "tint-lagoon" : ""}`} data-testid="booking-winback-toggle"><HeartHandshake className="h-5 w-5 text-nb-blue" /><span className="flex-1 text-sm"><b>Welcome back · {winback.percent}% off</b><span className="block text-xs text-nb-mute">Your one-time code {winback.code} applies to the treatment price, until {fmtDate(winback.expiresAt.slice(0, 10))}. It does not combine with other offers.</span></span><Switch checked={!!winbackCode} onCheckedChange={(v) => patchDraft({ useWinback: v, useFollowup: v ? false : draft.useFollowup })} data-testid="booking-winback-switch" /></label>}
                   {followups[0] && !useCredit && !winbackCode && <label className={`flex items-center gap-4 p-5 transition-colors ${followupCode ? "tint-lagoon" : ""}`} data-testid="booking-followup-toggle"><Gift className="h-5 w-5 text-nb-teal" /><span className="flex-1 text-sm"><b>Follow-up · {followups[0].percent}% off</b><span className="block text-xs text-nb-mute">Code {followups[0].code} until {fmtDate(followups[0].expiresAt.slice(0, 10))}. Does not combine with other offers.</span></span><Switch checked={!!followupCode} onCheckedChange={(v) => patchDraft({ useFollowup: v })} data-testid="booking-followup-switch" /></label>}
-                  <div className="p-5"><Breakdown q={shown} settlement={settlement} /></div>
+                  <div className="p-5"><Breakdown q={shown} settlement={settlement} showTravel={showTravel} /></div>
                   {shown.welcomeOffer && <p className="px-5 pb-2 text-xs text-nb-mute" data-testid="booking-welcome-note">First-booking welcome offer. This preview is not a guarantee. Nabitouch confirms eligibility when you submit. It is not combined with other discounts, rewards, or referrals.</p>}
                   {quoteNote && <p className="px-5 pb-2 text-xs text-rose-700" data-testid="booking-quote-error">{quoteNote}</p>}
                 </div>
@@ -736,7 +748,7 @@ export default function Booking() {
                   </button>
                 </div>
                 {draft.time && <p className="text-xs text-nb-mute">{fmtDate(draft.date)} · {fmtTime(draft.time)}</p>}
-                <div className="mt-4"><Breakdown q={step === reviewStep && serverQuote ? serverQuote : q} settlement={step === reviewStep ? settlement : null} compact /></div>
+                <div className="mt-4"><Breakdown q={shown} settlement={step === reviewStep ? settlement : null} compact showTravel={showTravel} /></div>
               </>
             ) : <p className="mt-2 text-xs text-nb-mute">Choose a treatment to see pricing.</p>}
           </div>

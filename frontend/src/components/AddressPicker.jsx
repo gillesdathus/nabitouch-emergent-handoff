@@ -160,7 +160,7 @@ export function AddressPicker({
       const nextPostal = checked.postalNormalized || checked.civic?.postal || postal || "";
       onChange({
         line: checked.line, unit: "", access: "", lat: checked.lat, lng: checked.lng, area: checked.area,
-        mapboxId: checked.mapboxId, zoneId: checked.zone?.id, travelFee: checked.travel, quoted: true,
+        mapboxId: checked.mapboxId, zoneId: checked.zone?.id, travelFee: checked.travel, travelCalc: checked.travelCalc || null, quoted: true,
         clientConfirmed: false, detailsSettled: false, postal: nextPostal,
       });
       onQuery(checked.line);
@@ -215,7 +215,7 @@ export function AddressPicker({
         ...value, line: checked.line, unit: "", access: "", lat: checked.lat, lng: checked.lng,
         mapboxId: checked.mapboxId || value.mapboxId, postal: checked.postalNormalized || postal,
         zoneId: checked.zone?.id || value.zoneId,
-        clientConfirmed: true, detailsSettled: false, confidence: checked.confidence, travelFee: checked.travel, quoted: true,
+        clientConfirmed: true, detailsSettled: false, confidence: checked.confidence, travelFee: checked.travel, travelCalc: checked.travelCalc || null, quoted: true,
       });
       setUnit("");
       setAccess("");
