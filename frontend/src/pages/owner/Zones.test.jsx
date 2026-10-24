@@ -2,8 +2,25 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { vi } from "vitest";
 
-const patch = vi.fn(async () => ({}));
-const api = { insurers: async () => ({ providers: [] }), patch };
+const { patch, storeApi } = vi.hoisted(() => {
+  const patchFn = vi.fn(async () => ({}));
+  return {
+    patch: patchFn,
+    storeApi: {
+      insurers: async () => ({ providers: [] }),
+      patch: patchFn,
+      geoMunicipalities: async () => ({
+        municipalities: [
+          { id: "4811061", csdUid: "4811061", name: "Edmonton", type: "City", aliases: [], communities: [] },
+          { id: "4811049", csdUid: "4811049", name: "Spruce Grove", type: "City", aliases: [], communities: [] },
+          { id: "4811052", csdUid: "4811052", name: "Strathcona County", type: "Specialized municipality", aliases: ["Sherwood Park"], communities: ["Sherwood Park"], note: "Sherwood Park is a community within Strathcona County." },
+        ],
+      }),
+      geoMunicipalitySearch: async () => ({ match: "catalogue", municipality: { id: "4811052", name: "Strathcona County" } }),
+      geoTravelFeeEstimates: async () => ({ travelFeesEnabled: false, estimates: [] }),
+    },
+  };
+});
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/lib/api", () => ({
@@ -11,6 +28,9 @@ vi.mock("@/lib/api", () => ({
     etransferSettings: async () => ({ recipientEmail: "", recipientName: "", instructions: "", referenceFormat: "" }),
     geoSuggest: async () => ({ suggestions: [] }),
     geoClinicConfirm: async () => ({ accepted: false, navigation: "unavailable" }),
+    geoMunicipalities: storeApi.geoMunicipalities,
+    geoMunicipalitySearch: storeApi.geoMunicipalitySearch,
+    geoTravelFeeEstimates: storeApi.geoTravelFeeEstimates,
     teamDirectory: async () => ({ people: [] }),
   },
   apiError: () => "unavailable",
@@ -25,9 +45,10 @@ vi.mock("@/store/DemoStore", () => ({
         scheduling: {},
         clinic: { enabled: true, address: "10150 104 St NW, Edmonton, AB", lat: 53.5461, lng: -113.4938, coordinatesVerified: false, mobileEnabled: true, name: "Nabitouch" },
         paymentPolicy: { mode: "choice", depositType: "percent", depositPercent: 25, depositCents: 0, cashAccepted: true },
+        serviceCoverage: { mode: "open", radiusKm: 25, travelFeesEnabled: false, municipalityIds: [], customMunicipalities: [] },
       },
     },
-    api,
+    api: storeApi,
     user: { name: "Owner" },
     run: (work) => work(),
   }),
@@ -66,6 +87,9 @@ test("owner can set open service coverage and keep travel fees off by default", 
     mode.value = "radius";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
   });
+  const confirm = document.querySelector("[data-testid='settings-coverage-mode-confirm-confirm']");
+  expect(confirm).toBeTruthy();
+  await act(async () => { confirm.click(); });
   expect(patch.mock.calls.at(-1)[2].serviceCoverage.mode).toBe("radius");
   act(() => root.unmount());
   host.remove();

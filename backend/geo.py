@@ -267,6 +267,33 @@ class Geocoder:
             raise GeocodeError("We couldn't place that location on a street address.")
         return hits[0]
 
+    async def search_place(self, query, client_key):
+        """Verified place lookup for owner coverage additions (not visit geocoding)."""
+        text = " ".join(str(query or "").split())
+        if len(text) < 2:
+            raise GeocodeError("Enter a municipality or community name to search.")
+        if not allow(self.bucket, f"place:{client_key}", CHECK_LIMIT):
+            raise RateLimit("Too many address lookups. Wait a moment and try again.")
+        if not _token():
+            if not sample_catalog():
+                raise ProviderError(MAPBOX_REQUIRED)
+            key = _norm(text)
+            hits = [dict(item, provider="local") for item in LOCAL if key in _norm(item["area"]) or key in _norm(item["line"])]
+            if not hits:
+                raise GeocodeError("That place could not be found. Try a municipality name in Alberta.")
+            hit = hits[0]
+            return {"id": hit["id"], "line": hit["line"], "area": hit["area"], "lat": hit["lat"], "lng": hit["lng"], "provider": "local"}
+        payload = await self.fetch(FORWARD, {
+            "q": text if "alberta" in text.lower() or ", ab" in text.lower() else f"{text}, Alberta, Canada",
+            "access_token": _token(), "country": "ca", "types": "place,locality,neighborhood",
+            "limit": 3, "proximity": f"{EDMONTON[0]},{EDMONTON[1]}",
+            "permanent": _permanent_param(persist=False), "autocomplete": "false",
+        })
+        hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
+        if not hits:
+            raise GeocodeError("That place could not be found. Try a municipality name in Alberta.")
+        return hits[0]
+
 
 GEO = Geocoder()
 

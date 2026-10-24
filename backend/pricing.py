@@ -3,6 +3,14 @@ from datetime import datetime
 from math import asin, cos, radians, sin, sqrt
 from zoneinfo import ZoneInfo
 
+from municipalities import (
+    municipality_selected,
+    normalize_custom_municipalities,
+    normalize_municipality_ids,
+    resolve_municipality,
+)
+from travel_fees import CALC_VERSION, calculate_travel_fee, launch_travel_fees, normalize_travel_fees
+
 TZ = ZoneInfo("America/Edmonton")
 CLINIC_POINT = {"lat": 53.5461, "lng": -113.4938}
 BLOCKING_STATUSES = {
@@ -49,7 +57,14 @@ OPEN_ZONE = {"id": "z-open", "name": "Service area", "fee": 0, "perKm": 0, "enab
 
 def launch_service_coverage():
     """Owner Booking → Service Coverage defaults. Open coverage; travel fees off."""
-    return {"mode": "open", "radiusKm": 25, "travelFeesEnabled": False}
+    return {
+        "mode": "open",
+        "radiusKm": 25,
+        "travelFeesEnabled": False,
+        "municipalityIds": [],
+        "customMunicipalities": [],
+        "travelFees": launch_travel_fees(),
+    }
 
 
 def service_coverage(settings):
@@ -67,19 +82,53 @@ def service_coverage(settings):
         fees_on = bool(raw.get("travelFeesEnabled"))
     else:
         fees_on = False
-    return {"mode": mode, "radiusKm": radius, "travelFeesEnabled": fees_on}
+    travel_fees = normalize_travel_fees(raw.get("travelFees"))
+    return {
+        "mode": mode,
+        "radiusKm": radius,
+        "travelFeesEnabled": fees_on,
+        "municipalityIds": normalize_municipality_ids(raw.get("municipalityIds")),
+        "customMunicipalities": normalize_custom_municipalities(raw.get("customMunicipalities")),
+        "travelFees": travel_fees,
+    }
 
 
 def travel_fees_enabled(settings):
     return bool(service_coverage(settings)["travelFeesEnabled"])
 
 
-def assess_coverage(point, zones, settings):
+def public_service_coverage(raw):
+    """Client/public snapshot: only whether travel fees apply — never rates or overrides."""
+    cov = service_coverage({"serviceCoverage": raw if isinstance(raw, dict) else {}})
+    return {"travelFeesEnabled": bool(cov.get("travelFeesEnabled"))}
+
+
+def _municipality_zone(muni, matched):
+    """Prefer a matching travel ring when fees apply; otherwise a named open zone."""
+    if matched:
+        out = dict(matched)
+        if muni and muni.get("id"):
+            out["municipalityId"] = muni.get("id")
+        return out
+    if not muni:
+        return dict(OPEN_ZONE)
+    return {
+        "id": f"muni-{muni.get('id')}",
+        "name": muni.get("name") or "Service area",
+        "fee": 0,
+        "perKm": 0,
+        "enabled": True,
+        "municipalityId": muni.get("id"),
+    }
+
+
+def assess_coverage(point, zones, settings, place_hint=""):
     """Return (zone, km, eligible) using the owner coverage mode.
 
     open — any geocoded point is eligible (named zone when inside a ring, else open zone).
     radius — eligible within settings.serviceCoverage.radiusKm of the service center.
-    zones — eligible only inside an enabled custom/radius ring (legacy Edmonton rings).
+    zones — eligible inside owner-selected municipalities when configured; otherwise
+            inside an enabled custom/radius ring (legacy rings).
     """
     matched, km = zone_for(point, zones, (settings or {}).get("center"))
     cov = service_coverage(settings)
@@ -91,7 +140,18 @@ def assess_coverage(point, zones, settings):
         if not eligible:
             return None, km, False
         return (matched or dict(OPEN_ZONE)), km, True
-    # Custom service zones (existing rings)
+    selected = cov.get("municipalityIds") or []
+    custom = cov.get("customMunicipalities") or []
+    if selected or custom:
+        muni = resolve_municipality(point, custom=custom, place_hint=place_hint)
+        if not muni:
+            return None, km, False
+        if muni.get("match") == "custom_radius":
+            return _municipality_zone(muni, matched), km, True
+        if municipality_selected(muni, selected):
+            return _municipality_zone(muni, matched), km, True
+        return None, km, False
+    # Legacy rings when the owner has not configured municipality coverage yet.
     return matched, km, bool(matched)
 
 
@@ -285,22 +345,48 @@ def _calc(promo, base):
     return min(capped, base)
 
 
-def zone_travel(zone, km, location_type, settings=None):
-    """Flat zone fee, plus optional per-km amount when the owner sets one. Clinic visits stay free.
+def zone_travel(zone, km, location_type, settings=None, *, municipality_id=None, route_ok=True, route_error=None):
+    """Travel fee for a mobile visit. Clinic visits stay free.
 
+    When settings are provided, uses the configurable travel-fee policy (versioned).
     Travel fees stay off unless settings.serviceCoverage.travelFeesEnabled is true.
+    Callers that omit settings (legacy unit helpers) still compute the zone fee.
     """
     if location_type == "clinic" or not zone:
         return 0.0
-    if settings is not None and not travel_fees_enabled(settings):
-        return 0.0
     if settings is None:
-        # Callers that omit settings (legacy unit helpers) still compute the zone fee.
-        pass
-    return float(zone.get("fee") or 0) + float(zone.get("perKm") or 0) * float(km or 0)
+        return float(zone.get("fee") or 0) + float(zone.get("perKm") or 0) * float(km or 0)
+    if not travel_fees_enabled(settings):
+        return 0.0
+    calc = calculate_travel_fee(
+        settings=settings,
+        location_type=location_type,
+        driving_km=float(km) if km is not None else None,
+        municipality_id=municipality_id or zone.get("municipalityId"),
+        zone=zone,
+        route_ok=route_ok,
+        route_error=route_error,
+    )
+    return float(calc.get("fee") or 0)
 
 
-def quote(*, service, duration, addons, zone, client, promotions, settings, location_type, today=None, km=0):
+def quote(
+    *,
+    service,
+    duration,
+    addons,
+    zone,
+    client,
+    promotions,
+    settings,
+    location_type,
+    today=None,
+    km=0,
+    travel_calc=None,
+    route_ok=True,
+    route_error=None,
+    municipality_id=None,
+):
     prices = (service or {}).get("prices") or {}
     base = float(prices.get(str(duration)) or 0)
     catalog = settings.get("addons") or []
@@ -316,7 +402,26 @@ def quote(*, service, duration, addons, zone, client, promotions, settings, loca
         best = ranked[0] if ranked else None
         applied = ([best] if best else []) + [p for p in eligible if p.get("stackable")]
     discount = min(sum(_calc(p, base) for p in applied), base)
-    travel = zone_travel(zone, km, location_type, settings)
+    if travel_calc is not None:
+        travel = float(travel_calc.get("fee") or 0)
+        calc_meta = travel_calc
+    else:
+        calc_meta = calculate_travel_fee(
+            settings=settings,
+            location_type=location_type,
+            driving_km=float(km) if km is not None else None,
+            municipality_id=municipality_id or (zone or {}).get("municipalityId"),
+            zone=zone,
+            route_ok=route_ok,
+            route_error=route_error,
+        ) if settings is not None else {
+            "fee": zone_travel(zone, km, location_type, None),
+            "calcVersion": CALC_VERSION,
+            "status": "legacy",
+            "binding": True,
+            "estimated": False,
+        }
+        travel = float(calc_meta.get("fee") or 0)
     subtotal = base - discount + addons_total + travel
     if (service or {}).get("taxable") is False:
         tax = 0.0
@@ -337,4 +442,19 @@ def quote(*, service, duration, addons, zone, client, promotions, settings, loca
         "tax": tax,
         "total": money(subtotal + tax),
         "treatmentAfterDiscount": money(base - discount),
+        "travelCalc": {
+            "version": calc_meta.get("calcVersion") or CALC_VERSION,
+            "policy": calc_meta.get("policy"),
+            "status": calc_meta.get("status"),
+            "drivingKm": calc_meta.get("drivingKm"),
+            "billableKm": calc_meta.get("billableKm"),
+            "municipalityId": calc_meta.get("municipalityId"),
+            "binding": calc_meta.get("binding", True),
+            "estimated": bool(calc_meta.get("estimated")),
+            "message": calc_meta.get("message") or "",
+            "routeError": calc_meta.get("routeError"),
+            "breakdown": calc_meta.get("breakdown") or {},
+            "departure": calc_meta.get("departure"),
+            "routeProvider": calc_meta.get("routeProvider"),
+        },
     }

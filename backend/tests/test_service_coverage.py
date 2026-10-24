@@ -20,7 +20,11 @@ SAMPLES = {
 
 def test_launch_defaults_are_open_without_travel_fees():
     cov = launch_service_coverage()
-    assert cov == {"mode": "open", "radiusKm": 25, "travelFeesEnabled": False}
+    assert cov["mode"] == "open"
+    assert cov["radiusKm"] == 25
+    assert cov["travelFeesEnabled"] is False
+    assert cov["municipalityIds"] == []
+    assert cov["customMunicipalities"] == []
     assert service_coverage({})["mode"] == "open"
     assert service_coverage({})["travelFeesEnabled"] is False
 

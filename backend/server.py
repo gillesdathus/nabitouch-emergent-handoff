@@ -66,13 +66,19 @@ from recovery import (
 )
 from pricing import (
     BLOCKING_STATUSES, OPEN_ZONE, assess_coverage, client_matches_person, ensure_welcome_offer, haversine_km,
-    identity_keys, minutes, money, overlaps, quote, service_coverage, zone_travel,
+    identity_keys, minutes, money, overlaps, public_service_coverage, quote, service_coverage, travel_fees_enabled,
+    zone_travel,
 )
 from offers_visibility import (
     HISTORY_PROJECTION, matched_client_ids, provisional_offer_eligibility, resolve_offer_eligibility,
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
+from municipalities import catalogue_public as municipality_catalogue, resolve_municipality
+from travel_fees import (
+    can_manage_pricing, municipality_fee_estimates, quote_address_travel, travel_fee_settings_patch_allowed,
+    validate_travel_fees_config,
+)
 from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
@@ -507,7 +513,8 @@ def full_name(client):
 def shape_settings(docs, role):
     shaped = []
     for doc in docs:
-        if role == "owner":
+        # Managers use the owner workspace and need full coverage / travel-fee config.
+        if role in ("owner", "manager"):
             view = doc
         else:
             keys = DESK_SETTINGS if role == "desk" else CLIENT_SETTINGS if role else PUBLIC_SETTINGS
@@ -516,6 +523,8 @@ def shape_settings(docs, role):
             policy = public_cancellation(doc.get("cancellationPolicy"), role)
             if policy:
                 view["cancellationPolicy"] = policy
+            # Safe flag so booking UI can hide travel rows when fees are off.
+            view["serviceCoverage"] = public_service_coverage(doc.get("serviceCoverage"))
         view = {
             **view,
             "paymentPolicy": resolve_payment_policy(
@@ -960,15 +969,26 @@ async def locate_visit(address, zones, settings):
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     assessed = classify(hit, line or hit.get("line") or "", address.get("postal") or "", address.get("arrival"))
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+    )
     if not eligible or not zone:
         if (settings.get("clinic") or {}).get("enabled"):
-            raise HTTPException(400, "That address is outside the mobile service area. In-clinic visits are still available.")
-        raise HTTPException(400, "That address is outside the mobile service area.")
+            raise HTTPException(400, "Mobile service is not currently available at that location. In-clinic visits are still available.")
+        raise HTTPException(400, "Mobile service is not currently available at that location.")
     if address.get("clientConfirmed") is not True:
         raise HTTPException(400, "Confirm the service address before a mobile visit can be booked.")
     if assessed["confidence"] != "address" or assessed["arrivalDiscrepancy"]:
         raise HTTPException(400, "This address needs review before a mobile visit can be booked.")
+    travel_calc = await quote_address_travel(
+        settings=settings,
+        point={"lat": hit["lat"], "lng": hit["lng"]},
+        zone=zone,
+        location_type="home",
+        place_hint=hit.get("area") or "",
+    )
+    fee_km = travel_calc.get("drivingKm") if travel_calc.get("drivingKm") is not None else km
+    zone = {**zone, "_travelCalc": travel_calc}
     stored = {
         "line": hit["line"], "unit": unit, "lat": hit["lat"], "lng": hit["lng"], "zoneId": zone["id"],
         "notes": str(address.get("notes") or "")[:240],
@@ -976,28 +996,60 @@ async def locate_visit(address, zones, settings):
         "postalStatus": assessed["postalStatus"], "mapboxId": hit.get("id") or "",
         "arrival": address.get("arrival") or {"lat": hit["lat"], "lng": hit["lng"]},
         "version": 1,
+        "municipalityId": travel_calc.get("municipalityId") or zone.get("municipalityId"),
     }
-    return stored, zone, km
+    return stored, zone, fee_km
 
 
-def _verdict(hit, zones, settings):
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
-    travel = money(zone_travel(zone, km, "home", settings)) if eligible and zone else 0
+async def _verdict(hit, zones, settings):
+    place_hint = hit.get("area") or ""
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=place_hint,
+    )
+    cov = service_coverage(settings)
+    muni = resolve_municipality(
+        {"lat": hit["lat"], "lng": hit["lng"]},
+        custom=cov.get("customMunicipalities") or [],
+        place_hint=place_hint,
+    )
+    travel_calc = None
+    travel = 0
+    fee_km = km
+    if eligible and zone:
+        travel_calc = await quote_address_travel(
+            settings=settings,
+            point={"lat": hit["lat"], "lng": hit["lng"]},
+            zone=zone,
+            location_type="home",
+            place_hint=place_hint,
+        )
+        travel = money(travel_calc.get("fee") or 0)
+        if travel_calc.get("drivingKm") is not None:
+            fee_km = travel_calc["drivingKm"]
     if eligible and zone:
         if zone.get("id") == OPEN_ZONE["id"]:
             area_line = "This address is eligible for a mobile visit."
+        elif zone.get("municipalityId") and muni:
+            area_line = f"We come to you in {muni.get('name') or zone['name']}."
         else:
             area_line = f"We come to you in {zone['name']}."
-        if travel > 0:
+        if not travel_fees_enabled(settings):
+            message = f"{area_line} Arrival time is estimated only once your practitioner is on the way."
+        elif travel_calc and travel_calc.get("status") == "needs_review":
+            message = f"{area_line} Travel fee needs review — driving route is unavailable."
+        elif travel > 0:
+            label = "Estimated travel fee" if travel_calc and travel_calc.get("estimated") else "Travel fee"
             message = (
-                f"{area_line} Travel fee ${travel:.2f}. "
+                f"{area_line} {label} ${travel:.2f}. "
                 "The fee is calculated by Nabitouch, and arrival time is estimated only once your practitioner is on the way."
             )
         else:
             message = f"{area_line} Arrival time is estimated only once your practitioner is on the way."
     else:
-        message = "That address is outside the mobile service area. You can still book an in-clinic visit."
-    return {
+        message = "Mobile service is not currently available at that location."
+        if (settings.get("clinic") or {}).get("enabled"):
+            message += " You can still book an in-clinic visit."
+    out = {
         "eligible": bool(eligible and zone),
         "line": hit["line"],
         "area": hit.get("area") or "",
@@ -1005,14 +1057,28 @@ def _verdict(hit, zones, settings):
         "lng": hit["lng"],
         "mapboxId": hit.get("id") or "",
         "zone": {"id": zone["id"], "name": zone["name"], "fee": zone.get("fee") or 0, "perKm": zone.get("perKm") or 0} if zone and eligible else None,
+        "municipality": {"id": muni["id"], "name": muni["name"], "type": muni.get("type") or ""} if muni else None,
         "travel": travel,
-        "km": round(km, 2),
+        "km": round(fee_km, 2) if fee_km is not None else None,
         "provider": hit.get("provider") or "",
         "civic": parse_civic(hit.get("line") or ""),
-        "coverageMode": service_coverage(settings)["mode"],
+        "coverageMode": cov["mode"],
+        "travelFeesEnabled": travel_fees_enabled(settings),
         "confirmedArrival": False,
         "message": message,
     }
+    if travel_calc:
+        out["travelCalc"] = {
+            "version": travel_calc.get("calcVersion"),
+            "policy": travel_calc.get("policy"),
+            "status": travel_calc.get("status"),
+            "drivingKm": travel_calc.get("drivingKm"),
+            "billableKm": travel_calc.get("billableKm"),
+            "binding": travel_calc.get("binding"),
+            "estimated": bool(travel_calc.get("estimated")),
+            "message": travel_calc.get("message") or "",
+        }
+    return out
 
 
 @api.post("/geo/clinic-confirm")
@@ -1051,18 +1117,42 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+    )
     assessed = classify(hit, body.get("line") or "", body.get("postal") or "", body.get("arrival"))
     if not eligible:
         assessed["confidence"] = "unresolved"
+        assessed["message"] = "Mobile service is not currently available at that location."
     assessed["eligible"] = bool(eligible)
     assessed["lat"] = hit["lat"]
     assessed["lng"] = hit["lng"]
     assessed["line"] = hit["line"]
     assessed["mapboxId"] = hit.get("id") or ""
     assessed["zone"] = {"id": zone["id"], "name": zone["name"]} if zone and eligible else None
-    assessed["travel"] = money(zone_travel(zone, km, "home", settings)) if zone and eligible else 0
+    travel_calc = None
+    if zone and eligible:
+        travel_calc = await quote_address_travel(
+            settings=settings,
+            point={"lat": hit["lat"], "lng": hit["lng"]},
+            zone=zone,
+            location_type="home",
+            place_hint=hit.get("area") or "",
+        )
+        assessed["travel"] = money(travel_calc.get("fee") or 0)
+        assessed["travelCalc"] = {
+            "version": travel_calc.get("calcVersion"),
+            "policy": travel_calc.get("policy"),
+            "status": travel_calc.get("status"),
+            "drivingKm": travel_calc.get("drivingKm"),
+            "binding": travel_calc.get("binding"),
+            "estimated": bool(travel_calc.get("estimated")),
+            "message": travel_calc.get("message") or "",
+        }
+    else:
+        assessed["travel"] = 0
     assessed["coverageMode"] = service_coverage(settings)["mode"]
+    assessed["travelFeesEnabled"] = travel_fees_enabled(settings)
     assessed["clientConfirmed"] = body.get("clientConfirmed") is True
     assessed["accepted"] = (
         assessed["clientConfirmed"] and assessed["confidence"] == "address"
@@ -1070,6 +1160,77 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
     )
     assessed["postalNormalized"] = postal_code(body.get("postal") or "")
     return assessed
+
+
+@api.get("/geo/municipalities")
+async def geo_municipalities(request: Request):
+    """Default Edmonton-region municipality catalogue for owner coverage selection."""
+    user = await require(request)
+    from rbac import has_strict_role
+    if not (has_strict_role(user, "owner") or can_manage_pricing(user)):
+        raise HTTPException(403, "Not permitted")
+    return {
+        "source": "statcan_sgc_2021",
+        "attribution": "Statistics Canada Standard Geographical Classification (SGC) 2021 — CMA 48835 Edmonton.",
+        "municipalities": municipality_catalogue(),
+    }
+
+
+@api.get("/geo/travel-fee-estimates")
+async def geo_travel_fee_estimates(request: Request):
+    """Municipality travel-fee estimates from the configured departure point via driving routes."""
+    user = await require(request)
+    if not can_manage_pricing(user):
+        raise HTTPException(403, "Not permitted")
+    settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
+    rows = await municipality_fee_estimates(settings)
+    return {
+        "travelFeesEnabled": travel_fees_enabled(settings),
+        "disclaimer": "Estimates only — not guaranteed charges for a specific civic address.",
+        "estimates": rows,
+    }
+
+
+@api.post("/geo/municipality-search")
+async def geo_municipality_search(request: Request, body: dict = Body(...)):
+    """Resolve a place outside the seed catalogue using verified Mapbox place data."""
+    await require(request, "owner")
+    query = " ".join(str(body.get("q") or body.get("line") or "").split())
+    try:
+        hit = await GEO.search_place(query, client_key(request))
+    except RateLimit as exc:
+        raise HTTPException(429, str(exc)) from exc
+    except GeocodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ProviderError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    known = resolve_municipality({"lat": hit["lat"], "lng": hit["lng"]}, place_hint=hit.get("area") or query)
+    if known:
+        return {
+            "match": "catalogue",
+            "municipality": {
+                "id": known["id"], "csdUid": known["id"], "name": known["name"],
+                "type": known.get("type") or "", "note": known.get("note") or "",
+                "communities": list(known.get("communities") or []),
+            },
+            "suggestion": None,
+        }
+    name = hit.get("area") or query
+    custom_id = f"custom:{hit.get('id') or name}"
+    return {
+        "match": "custom",
+        "municipality": None,
+        "suggestion": {
+            "id": custom_id[:160],
+            "name": name,
+            "mapboxId": hit.get("id") or "",
+            "lat": hit["lat"],
+            "lng": hit["lng"],
+            "radiusKm": 12,
+            "source": "mapbox_place",
+            "line": hit.get("line") or "",
+        },
+    }
 
 
 @api.get("/geo/suggest")
@@ -1104,7 +1265,7 @@ async def geo_check(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(exc)) from exc
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
-    return _verdict(hit, zones, settings)
+    return await _verdict(hit, zones, settings)
 
 
 class ContactIn(BaseModel):
@@ -1520,13 +1681,29 @@ async def update_service_address(appt_id: str, request: Request, body: dict = Bo
     zones = await coll("zones").find({}, NO_ID).to_list(20)
     stored, zone, km = await locate_visit(body.get("address") or {}, zones, settings)
     old_travel = float((appt.get("pricing") or {}).get("travel") or 0)
-    new_travel = float(money(zone_travel(zone, km, "home", settings)))
+    travel_calc = (zone or {}).get("_travelCalc") or {}
+    new_travel = float(money(travel_calc.get("fee") if travel_calc else zone_travel(zone, km, "home", settings)))
     if round(new_travel, 2) != round(old_travel, 2) and body.get("approveFee") is not True:
         raise HTTPException(409, "The travel fee changes with this address. Approve the new fee before it is saved.")
     stored["version"] = int(current.get("version") or 1) + 1
     stored["history"] = (list(current.get("history") or []) + [{"version": current.get("version") or 1, "line": current.get("line"), "at": now_iso()}])[-10:]
     pricing = dict(appt.get("pricing") or {})
     pricing["travel"] = new_travel
+    if travel_calc:
+        pricing["travelCalc"] = {
+            "version": travel_calc.get("calcVersion"),
+            "policy": travel_calc.get("policy"),
+            "status": travel_calc.get("status"),
+            "drivingKm": travel_calc.get("drivingKm"),
+            "billableKm": travel_calc.get("billableKm"),
+            "municipalityId": travel_calc.get("municipalityId"),
+            "binding": travel_calc.get("binding"),
+            "estimated": bool(travel_calc.get("estimated")),
+            "message": travel_calc.get("message") or "",
+            "routeProvider": travel_calc.get("routeProvider"),
+            "departure": travel_calc.get("departure"),
+            "breakdown": travel_calc.get("breakdown") or {},
+        }
     pricing["total"] = round(float(pricing.get("total") or 0) - old_travel + new_travel, 2)
     result = await coll("appointments").update_one(
         {"id": appt_id, "address.version": int(current.get("version") or 1)},
@@ -1607,9 +1784,11 @@ async def price_welcome(*, service, duration, addons, zone, client, incoming, pr
     else:
         person["_matchedClientIds"] = await matched_client_ids(db, person)
         person["_welcomeHistory"] = await load_welcome_history(person)
+    travel_calc = (zone or {}).get("_travelCalc") if isinstance(zone, dict) else None
     quoted = quote(
         service=service, duration=duration, addons=addons, zone=zone, client=person,
         promotions=offers, settings=settings, location_type=location, km=km,
+        travel_calc=travel_calc,
     )
     return person, offers, quoted
 
@@ -2014,7 +2193,7 @@ async def create_booking(request: Request, payload: dict = Body(...)):
     appt = {"id": appt_id, "ref": f"NT-{1100 + int(seq['n'])}", "clientId": client_id, "serviceSlug": service["slug"],
             "duration": int(duration), "date": fields["date"], "time": fields["time"], "practitionerId": practitioner_id,
             "status": status, "locationType": location, "address": address, "pricing": {k: quoted[k] for k in
-            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes", "campaignTitle") if k in quoted},
+            ("base", "addons", "addonList", "discount", "promoId", "promoName", "promoCode", "welcomeOffer", "travel", "tax", "total", "treatmentAfterDiscount", "loyaltyPoints", "loyaltyService", "loyaltyTravel", "packageCredit", "creditUnit", "winback", "followUp", "campaignId", "campaignOfferKind", "complimentaryMinutes", "campaignTitle", "travelCalc") if k in quoted},
             "paymentMethod": "insurance" if fields.get("paymentMethod") == "insurance" else "self",
             "insuranceId": fields.get("insuranceId"), "selfMethod": fields.get("selfMethod"), "preferences": preferences,
             "checkedIn": False, "feedback": None, "events": [{"status": "requested", "at": ts, "actor": user["name"] if user else "client"}] +
@@ -2321,6 +2500,10 @@ async def _deliver_booking(note):
     if float(pricing.get("discount") or 0) > 0:
         label = "First-booking welcome offer" if pricing.get("welcomeOffer") else (pricing.get("promoName") or "Discount")
         rows.append((label, f"-{float(pricing['discount']):.2f}"))
+    travel_amt = float(pricing.get("travel") or 0)
+    if travel_amt > 0:
+        travel_label = "Travel fee (estimate)" if (pricing.get("travelCalc") or {}).get("estimated") else "Travel fee"
+        rows.append((travel_label, f"{travel_amt:.2f}"))
     if pricing.get("total") is not None:
         rows.append(("Total", f"{float(pricing['total']):.2f} CAD"))
     table = "".join(f'<tr><td style="padding:6px 12px 6px 0;color:#6B8296;font-size:13px">{k}</td><td style="padding:6px 0;font-size:14px;font-weight:bold">{escape(str(v))}</td></tr>' for k, v in rows)
@@ -2690,8 +2873,17 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             raise HTTPException(403, "Not permitted")
         return await update_service(db, user, doc_id, doc)
     elif name == "settings":
-        if role != "owner" or doc_id != "app":
+        from rbac import has_strict_role
+        is_owner = has_strict_role(user, "owner")
+        pricing_ok = can_manage_pricing(user)
+        if doc_id != "app" or not (is_owner or pricing_ok):
             raise HTTPException(403, "Not permitted")
+        if not is_owner:
+            # Managers with pricing permission may only change travel-fee fields.
+            if set(doc.keys()) - {"serviceCoverage", "_audit"}:
+                raise HTTPException(403, "Managers with pricing permission may only update travel fees")
+            if "serviceCoverage" not in doc:
+                raise HTTPException(403, "Not permitted")
         doc = only_fields(doc, SETTINGS_FIELDS, {"revenueTrend"})
         if "mfaEnforcePrivileged" in doc and (doc.get("mfaEnforcePrivileged") or target.get("mfaEnforcePrivileged")):
             session = await db.nt_sessions.find_one({"sid": user.get("sid"), "revoked": False})
@@ -2704,8 +2896,27 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             doc["whatsapp"] = {"pages": pages, "phone": phone or "+17802356508"}
         if "serviceCoverage" in doc:
             incoming_cov = doc["serviceCoverage"] if isinstance(doc["serviceCoverage"], dict) else {}
-            merged_cov = {**(target.get("serviceCoverage") or {}), **incoming_cov}
+            if not is_owner:
+                incoming_cov = travel_fee_settings_patch_allowed(incoming_cov, full_coverage=False)
+                if not incoming_cov:
+                    raise HTTPException(403, "Managers with pricing permission may only update travel fees")
+            if "travelFees" in incoming_cov:
+                try:
+                    validate_travel_fees_config(incoming_cov.get("travelFees") or {})
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+            prior_cov = target.get("serviceCoverage") or {}
+            merged_cov = {**prior_cov, **incoming_cov}
             doc["serviceCoverage"] = service_coverage({"serviceCoverage": merged_cov})
+            # Audit travel-fee policy changes explicitly.
+            prior_fees = (prior_cov.get("travelFees") if isinstance(prior_cov, dict) else None) or {}
+            next_fees = doc["serviceCoverage"].get("travelFees") or {}
+            fee_flip = bool(prior_cov.get("travelFeesEnabled")) != bool(doc["serviceCoverage"].get("travelFeesEnabled"))
+            if fee_flip or prior_fees != next_fees:
+                audit_msg = (
+                    audit_msg
+                    or f"Travel fee policy updated (enabled={doc['serviceCoverage'].get('travelFeesEnabled')})"
+                )
         if "clinic" in doc:
             incoming = doc["clinic"] if isinstance(doc["clinic"], dict) else {}
             confirmation = incoming.get("confirmation") if isinstance(incoming.get("confirmation"), dict) else {}
