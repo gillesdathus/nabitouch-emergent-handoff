@@ -37,6 +37,7 @@ const acceptedConfirm = {
   lng: -113.49,
   mapboxId: "local-downtown",
   travel: 0,
+  zone: { id: "z-open", name: "Service area", fee: 0 },
 };
 
 function Harness({ onAdvance } = {}) {
@@ -110,15 +111,33 @@ test("autocomplete selection hides search and shows read-only confirm card", asy
 
 test("Confirm Address opens additional-details choice; No advances", async () => {
   const onAdvance = vi.fn();
+  let confirmed = null;
+  function TrackConfirm() {
+    const [query, setQuery] = useState("");
+    const [value, setValue] = useState(null);
+    return (
+      <AddressPicker
+        value={value}
+        onChange={(v) => { confirmed = v; setValue(v); }}
+        query={query}
+        onQuery={setQuery}
+        onAdvance={onAdvance}
+      />
+    );
+  }
   api.geoConfirm.mockResolvedValue({ ...acceptedConfirm });
-  const view = mount(<Harness onAdvance={onAdvance} />);
+  const view = mount(<TrackConfirm />);
   await pickDowntown(view);
   await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(confirmed.zoneId).toBe("z-open");
+  expect(confirmed.detailsSettled).toBe(false);
   expect(await view.find("address-details-ask")).toBeTruthy();
   expect(view.host.querySelector("[data-testid=address-unit-input]")).toBeNull();
   expect((await view.find("address-details-prompt")).textContent).toMatch(/suite, buzzer/i);
   await act(async () => { (await view.find("address-details-no")).click(); });
   expect(onAdvance).toHaveBeenCalledTimes(1);
+  expect(confirmed.detailsSettled).toBe(true);
+  expect(confirmed.zoneId).toBe("z-open");
   expect(await view.find("address-confirm-card")).toBeTruthy();
   expect((await view.find("address-confirmed")).textContent).toMatch(/Address confirmed/);
   view.cleanup();

@@ -143,6 +143,19 @@ test("bookingAddressComplete requires detailsSettled for this booking", () => {
   expect(bookingAddressComplete(officeStale)).toBe(false);
 });
 
+test("bookingAddressComplete does not require a legacy zoneId (Open Coverage)", () => {
+  const openCoverageAddr = {
+    ...homeReady,
+    detailsSettled: true,
+    zoneId: "z-open",
+    quoted: true,
+    travelFee: 0,
+  };
+  expect(bookingAddressComplete(openCoverageAddr)).toBe(true);
+  const { zoneId: _omit, ...withoutZone } = openCoverageAddr;
+  expect(bookingAddressComplete(withoutZone)).toBe(true);
+});
+
 test("preferredBookingAddress prefers a confirmed row over an unconfirmed primary", () => {
   expect(preferredBookingAddress({ addresses: [officeStale, homeReady] })).toBe(homeReady);
   expect(preferredBookingAddress({ addresses: [officeStale] })).toBe(officeStale);
