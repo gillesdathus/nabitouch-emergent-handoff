@@ -30,6 +30,7 @@ from media import build_media_router, ensure_media_indexes
 from profiles import ensure_profile_indexes, present_practitioner, read_profile, update_profile, visible_profile
 from seed import build_launch_seed, build_seed
 from auth import ALG, build_auth
+from csrf_session import session_gone_response, session_payload_from_cookies
 from fastapi import Request
 from payments import build_router, with_settle, claim_eligible
 from billing import build_billing_router, clear_billing, ensure_billing
@@ -72,6 +73,7 @@ from offers_visibility import (
 )
 from rewards import build_rewards_router, release_redemption, reserve_redemption, settle_appointment_points, validate_rewards
 from geo import GEO, GeocodeError, ProviderError, RateLimit, CHECK_LIMIT, allow
+from municipalities import catalogue_public, resolve_municipality
 from addresses import classify, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
@@ -959,11 +961,13 @@ async def locate_visit(address, zones, settings):
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     assessed = classify(hit, line or hit.get("line") or "", address.get("postal") or "", address.get("arrival"))
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+    )
     if not eligible or not zone:
         if (settings.get("clinic") or {}).get("enabled"):
-            raise HTTPException(400, "That address is outside the mobile service area. In-clinic visits are still available.")
-        raise HTTPException(400, "That address is outside the mobile service area.")
+            raise HTTPException(400, "Mobile service is not currently available at that location. In-clinic visits are still available.")
+        raise HTTPException(400, "Mobile service is not currently available at that location.")
     if address.get("clientConfirmed") is not True:
         raise HTTPException(400, "Confirm the service address before a mobile visit can be booked.")
     if assessed["confidence"] != "address" or assessed["arrivalDiscrepancy"]:
@@ -980,11 +984,22 @@ async def locate_visit(address, zones, settings):
 
 
 def _verdict(hit, zones, settings):
-    zone, km, eligible = assess_coverage({"lat": hit["lat"], "lng": hit["lng"]}, zones, settings)
+    place_hint = hit.get("area") or ""
+    zone, km, eligible = assess_coverage(
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=place_hint,
+    )
     travel = money(zone_travel(zone, km, "home", settings)) if eligible and zone else 0
+    cov = service_coverage(settings)
+    muni = resolve_municipality(
+        {"lat": hit["lat"], "lng": hit["lng"]},
+        custom=cov.get("customMunicipalities") or [],
+        place_hint=place_hint,
+    )
     if eligible and zone:
         if zone.get("id") == OPEN_ZONE["id"]:
             area_line = "This address is eligible for a mobile visit."
+        elif zone.get("municipalityId") and muni:
+            area_line = f"We come to you in {muni.get('name') or zone['name']}."
         else:
             area_line = f"We come to you in {zone['name']}."
         if travel > 0:
@@ -995,7 +1010,9 @@ def _verdict(hit, zones, settings):
         else:
             message = f"{area_line} Arrival time is estimated only once your practitioner is on the way."
     else:
-        message = "That address is outside the mobile service area. You can still book an in-clinic visit."
+        message = "Mobile service is not currently available at that location."
+        if (settings.get("clinic") or {}).get("enabled"):
+            message += " You can still book an in-clinic visit."
     return {
         "eligible": bool(eligible and zone),
         "line": hit["line"],
@@ -1004,11 +1021,12 @@ def _verdict(hit, zones, settings):
         "lng": hit["lng"],
         "mapboxId": hit.get("id") or "",
         "zone": {"id": zone["id"], "name": zone["name"], "fee": zone.get("fee") or 0, "perKm": zone.get("perKm") or 0} if zone and eligible else None,
+        "municipality": {"id": muni["id"], "name": muni["name"], "type": muni.get("type") or ""} if muni else None,
         "travel": travel,
         "km": round(km, 2),
         "provider": hit.get("provider") or "",
         "civic": parse_civic(hit.get("line") or ""),
-        "coverageMode": service_coverage(settings)["mode"],
+        "coverageMode": cov["mode"],
         "confirmedArrival": False,
         "message": message,
     }
@@ -2823,24 +2841,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if has_session and not challenge_authenticated and not request.headers.get("authorization", "").lower().startswith("bearer ") and request.url.path not in self.EXEMPT:
                 header = request.headers.get("x-csrf-token")
                 cookie = request.cookies.get("csrf_token")
-                if not header or not cookie or not _same(header, cookie):
-                    return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
-                payload = None
-                for candidate in (request.cookies.get("access_token"), request.cookies.get("refresh_token")):
-                    if not candidate:
-                        continue
-                    try:
-                        payload = jwt.decode(candidate, os.environ["JWT_SECRET"], algorithms=[ALG])
-                        break
-                    except jwt.ExpiredSignatureError:
-                        continue
-                    except jwt.InvalidTokenError:
-                        payload = None
-                        break
+                payload = session_payload_from_cookies(request)
                 if not payload:
-                    return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
+                    # Dead HttpOnly cookies must not block guest mutations as a fake CSRF failure.
+                    return session_gone_response()
                 row = await db.nt_sessions.find_one({"sid": payload.get("sid"), "revoked": False}, {"_id": 0, "csrf": 1})
-                if not row or not _same(row.get("csrf"), header):
+                if not row:
+                    return session_gone_response()
+                if not header or not cookie or not _same(header, cookie) or not _same(row.get("csrf"), header):
                     return JSONResponse({"detail": "CSRF token missing or invalid"}, status_code=403)
         return await call_next(request)
 

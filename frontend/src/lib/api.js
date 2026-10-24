@@ -11,6 +11,12 @@ const csrfToken = () => {
   const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : null;
 };
+/** Guest-safe address probes only — never replay bookings, payments, or admin mutations. */
+const GUEST_SAFE_RECOVERY = new Set(["/geo/check", "/geo/confirm"]);
+const guestSafeRecovery = (url) => {
+  const path = String(url || "").replace(/^https?:\/\/[^/?#]+/i, "").replace(/^\/api(?=\/)/, "").split(/[?#]/)[0];
+  return GUEST_SAFE_RECOVERY.has(path);
+};
 http.interceptors.request.use((cfg) => {
   const method = (cfg.method || 'get').toUpperCase();
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -21,12 +27,24 @@ http.interceptors.request.use((cfg) => {
 });
 http.interceptors.response.use(null, async (err) => {
   const cfg = err.config;
-  if (err.response?.status === 401 && !cfg._retry && !cfg.url.startsWith('/auth/') && !String(cfg.url).includes('/training/')) {
+  if (!cfg) return Promise.reject(err);
+  const url = String(cfg.url || '');
+  if (err.response?.status === 401 && !cfg._retry && !url.startsWith('/auth/') && !url.includes('/training/')) {
     cfg._retry = true;
     if (isNative()) {
       try { await native.refresh(); delete cfg.headers.Authorization; return http(cfg); } catch { return Promise.reject(err); }
     }
-    try { refreshing = refreshing || http.post('/auth/refresh'); await refreshing; refreshing = null; return http(cfg); } catch { refreshing = null; }
+    try {
+      refreshing = refreshing || http.post('/auth/refresh');
+      await refreshing;
+      refreshing = null;
+      return http(cfg);
+    } catch {
+      refreshing = null;
+      // After dead-session cookie clear, retry only idempotent guest address probes.
+      if (guestSafeRecovery(url)) return http(cfg);
+      return Promise.reject(err);
+    }
   }
   return Promise.reject(err);
 });
