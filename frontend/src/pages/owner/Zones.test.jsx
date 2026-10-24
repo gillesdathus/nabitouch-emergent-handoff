@@ -52,3 +52,21 @@ test("an unconfirmed clinic edit drops coordinates instead of keeping downtown",
   act(() => root.unmount());
   host.remove();
 }, 20000);
+
+test("owner can set open service coverage and keep travel fees off by default", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(createElement(Zones)); });
+  const mode = host.querySelector("[data-testid='settings-coverage-mode']");
+  expect(mode).toBeTruthy();
+  expect(mode.value).toBe("open");
+  expect(host.querySelector("[data-testid='settings-travel-fees-switch']")).toBeTruthy();
+  await act(async () => {
+    mode.value = "radius";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(patch.mock.calls.at(-1)[2].serviceCoverage.mode).toBe("radius");
+  act(() => root.unmount());
+  host.remove();
+}, 20000);

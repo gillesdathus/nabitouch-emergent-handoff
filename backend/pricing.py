@@ -43,6 +43,58 @@ def zone_for(point, zones, center=None):
     return None, km
 
 
+COVERAGE_MODES = ("open", "radius", "zones")
+OPEN_ZONE = {"id": "z-open", "name": "Service area", "fee": 0, "perKm": 0, "enabled": True}
+
+
+def launch_service_coverage():
+    """Owner Booking → Service Coverage defaults. Open coverage; travel fees off."""
+    return {"mode": "open", "radiusKm": 25, "travelFeesEnabled": False}
+
+
+def service_coverage(settings):
+    """Normalize coverage settings. Missing mode defaults to open; travel fees default off."""
+    raw = (settings or {}).get("serviceCoverage")
+    raw = raw if isinstance(raw, dict) else {}
+    mode = raw.get("mode") if raw.get("mode") in COVERAGE_MODES else "open"
+    try:
+        radius = float(raw.get("radiusKm") if raw.get("radiusKm") is not None else 25)
+    except (TypeError, ValueError):
+        radius = 25.0
+    if radius < 0:
+        radius = 0.0
+    if "travelFeesEnabled" in raw:
+        fees_on = bool(raw.get("travelFeesEnabled"))
+    else:
+        fees_on = False
+    return {"mode": mode, "radiusKm": radius, "travelFeesEnabled": fees_on}
+
+
+def travel_fees_enabled(settings):
+    return bool(service_coverage(settings)["travelFeesEnabled"])
+
+
+def assess_coverage(point, zones, settings):
+    """Return (zone, km, eligible) using the owner coverage mode.
+
+    open — any geocoded point is eligible (named zone when inside a ring, else open zone).
+    radius — eligible within settings.serviceCoverage.radiusKm of the service center.
+    zones — eligible only inside an enabled custom/radius ring (legacy Edmonton rings).
+    """
+    matched, km = zone_for(point, zones, (settings or {}).get("center"))
+    cov = service_coverage(settings)
+    mode = cov["mode"]
+    if mode == "open":
+        return (matched or dict(OPEN_ZONE)), km, True
+    if mode == "radius":
+        eligible = km <= float(cov["radiusKm"] or 0)
+        if not eligible:
+            return None, km, False
+        return (matched or dict(OPEN_ZONE)), km, True
+    # Custom service zones (existing rings)
+    return matched, km, bool(matched)
+
+
 def _today():
     return datetime.now(TZ)
 
@@ -233,10 +285,18 @@ def _calc(promo, base):
     return min(capped, base)
 
 
-def zone_travel(zone, km, location_type):
-    """Flat zone fee, plus optional per-km amount when the owner sets one. Clinic visits stay free."""
+def zone_travel(zone, km, location_type, settings=None):
+    """Flat zone fee, plus optional per-km amount when the owner sets one. Clinic visits stay free.
+
+    Travel fees stay off unless settings.serviceCoverage.travelFeesEnabled is true.
+    """
     if location_type == "clinic" or not zone:
         return 0.0
+    if settings is not None and not travel_fees_enabled(settings):
+        return 0.0
+    if settings is None:
+        # Callers that omit settings (legacy unit helpers) still compute the zone fee.
+        pass
     return float(zone.get("fee") or 0) + float(zone.get("perKm") or 0) * float(km or 0)
 
 
@@ -256,7 +316,7 @@ def quote(*, service, duration, addons, zone, client, promotions, settings, loca
         best = ranked[0] if ranked else None
         applied = ([best] if best else []) + [p for p in eligible if p.get("stackable")]
     discount = min(sum(_calc(p, base) for p in applied), base)
-    travel = zone_travel(zone, km, location_type)
+    travel = zone_travel(zone, km, location_type, settings)
     subtotal = base - discount + addons_total + travel
     if (service or {}).get("taxable") is False:
         tax = 0.0

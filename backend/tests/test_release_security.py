@@ -177,8 +177,12 @@ def test_stale_cookie_does_not_block_mfa_challenge():
         assert body.get("mfaRequired") is True and not started.cookies.get("access_token")
         if body.get("enrollmentRequired"):
             refused = session.post(f"{API}/auth/mfa/enroll", json={"challenge": "invalid"}, timeout=20)
-            assert refused.status_code == 403
-            assert session.post(f"{API}/auth/mfa/enroll", json={}, timeout=20).status_code == 403
+            # Invalid challenge is rejected by the MFA handler (not CSRF-trapped by stale cookies).
+            assert refused.status_code == 401, refused.text
+            assert "CSRF" not in refused.text
+            empty = session.post(f"{API}/auth/mfa/enroll", json={}, timeout=20)
+            assert empty.status_code in (401, 403), empty.text
+            assert "CSRF" not in empty.text
             enrolled = session.post(f"{API}/auth/mfa/enroll", json={"challenge": body["challenge"]}, timeout=20)
             assert enrolled.status_code == 200 and enrolled.json().get("secret"), enrolled.text
             invalid_code = session.post(f"{API}/auth/mfa/confirm", json={"challenge": body["challenge"], "code": "invalid"}, timeout=20)

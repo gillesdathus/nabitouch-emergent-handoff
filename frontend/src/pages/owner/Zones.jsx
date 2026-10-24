@@ -58,9 +58,12 @@ export default function Zones() {
   const [depositAmount, setDepositAmount] = useState(((policy.depositCents || 0) / 100).toFixed(2));
   const [insurers, setInsurers] = useState([]);
   const [editing, setEditing] = useState("");
+  const coverage = st.serviceCoverage || { mode: "open", radiusKm: 25, travelFeesEnabled: false };
+  const [coverageRadius, setCoverageRadius] = useState(coverage.radiusKm ?? 25);
   const save = (patch, msg) => run(() => api.patch("settings", "app", { ...patch, _audit: msg, _actor: staffActor(user) }), "Settings saved");
   const finish = (patch, msg) => save(patch, msg).then(() => setEditing(""));
   useEffect(() => { api.insurers().then((body) => setInsurers(body.providers || [])).catch(() => setInsurers([])); }, [api]);
+  useEffect(() => { setCoverageRadius(coverage.radiusKm ?? 25); }, [coverage.radiusKm]);
   const saveAddress = () => finish({ clinic: clinicSavePayload(clinic, clinicQuery || address, clinicPick) }, "Clinic address saved without enabling bookings");
   const savePolicy = () => {
     const fixed = dollarsToCents(depositAmount);
@@ -76,13 +79,62 @@ export default function Zones() {
     .slice(0, 50)
     .map((a) => ({ lat: Number(a.address.lat), lng: Number(a.address.lng), label: `${a.ref} · ${a.date} ${a.time}`, color: idx.practitioners[a.practitionerId]?.color || "#1565F0" })), [state.appointments, idx.practitioners]);
   const policyLabel = { full: "Full online payment required", deposit: "Deposit required", choice: "Customer chooses full payment or deposit" };
+  const saveCoverage = (patch) => {
+    const next = {
+      mode: patch.mode ?? coverage.mode ?? "open",
+      radiusKm: Number(patch.radiusKm ?? coverageRadius) || 25,
+      travelFeesEnabled: patch.travelFeesEnabled ?? !!coverage.travelFeesEnabled,
+    };
+    setCoverageRadius(next.radiusKm);
+    return save({ serviceCoverage: next }, "Service coverage saved");
+  };
   return (
     <div className="space-y-6" data-testid="owner-zones">
-      <SectionHead eyebrow="Mobile operations" title="Service zones & travel fees" />
+      <SectionHead eyebrow="Booking" title="Service coverage" />
+      <div className="nb-card space-y-3 p-4 text-sm" data-testid="settings-service-coverage">
+        <p className="text-xs text-nb-mute">Controls which confirmed addresses can continue through booking. Open coverage is the default — municipality alone never blocks a visit.</p>
+        <label>
+          <span className="nb-label">Coverage mode</span>
+          <select
+            className="nb-input"
+            value={coverage.mode || "open"}
+            data-testid="settings-coverage-mode"
+            onChange={(e) => saveCoverage({ mode: e.target.value })}
+          >
+            <option value="open">Open coverage (default)</option>
+            <option value="radius">Radius-based coverage</option>
+            <option value="zones">Custom service zones</option>
+          </select>
+        </label>
+        {(coverage.mode || "open") === "radius" && (
+          <label>
+            <span className="nb-label">Coverage radius (km from service center)</span>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              className="nb-input"
+              value={coverageRadius}
+              data-testid="settings-coverage-radius"
+              onChange={(e) => setCoverageRadius(Number(e.target.value))}
+              onBlur={() => saveCoverage({ radiusKm: coverageRadius })}
+            />
+          </label>
+        )}
+        <label className="flex items-center justify-between gap-3">
+          <span><b>Travel fees</b><span className="block text-xs text-nb-mute">Off by default. When off, no travel fee is charged or shown on new bookings.</span></span>
+          <Switch
+            checked={!!coverage.travelFeesEnabled}
+            onCheckedChange={(v) => saveCoverage({ travelFeesEnabled: v })}
+            data-testid="settings-travel-fees-switch"
+          />
+        </label>
+      </div>
+      <SectionHead eyebrow="Mobile operations" title="Service zones & travel fees" className="mt-10" />
       {HAS_MAPBOX
         ? <Suspense fallback={<div className="nb-skeleton h-[340px] rounded-[var(--nb-r-lg)]" />}><ZoneStreetMap zones={state.zones} center={st.center} pins={pins} clinic={clinic.coordinatesVerified && clinic.lat ? { lat: clinic.lat, lng: clinic.lng, label: clinic.address } : null} /></Suspense>
         : <ZoneMap zones={state.zones} height={300} pins={pins} />}
-      <p className="text-[11px] text-nb-mute">Pins show upcoming visits whose address the client confirmed. Practitioner locations appear only on the live fleet during an authorized trip.</p>
+      <p className="text-[11px] text-nb-mute">Pins show upcoming visits whose address the client confirmed. Rings apply when coverage mode is radius or custom zones. Practitioner locations appear only on the live fleet during an authorized trip.</p>
       <div className="space-y-3">{state.zones.map((z) => <ZoneRow key={z.id} z={z} />)}</div>
       <SectionHead eyebrow="Service locations" title="Mobile is on. In-clinic stays off until you activate it." className="mt-10" />
       <div className="grid gap-4 md:grid-cols-2">

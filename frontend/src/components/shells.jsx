@@ -235,7 +235,7 @@ function PublicFooter() {
             <Link to="/book">Book</Link>
           </nav>
           <p>Massage therapy may support relaxation and comfort; individual results vary and are not guaranteed. Insurance coverage depends on your plan and practitioner eligibility.</p>
-          <p>Mobile massage in Edmonton. The price you confirm is the price Nabitouch stores for the visit.</p>
+          <p>Mobile massage at a confirmed address. The price you confirm is the price Nabitouch stores for the visit.</p>
           <Attribution className="md:text-right" />
         </div>
       </div>

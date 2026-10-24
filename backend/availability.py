@@ -1509,7 +1509,7 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
     return {
         "recommendations": unique[:3],
         "slots": unique,
-        "travelFee": money(zone_travel(zone, km, "home")) if zone and location != "clinic" else 0,
+        "travelFee": money(zone_travel(zone, km, "home", settings)) if zone and location != "clinic" else 0,
         "zone": zone_name(zone) if location != "clinic" else "",
     }
 

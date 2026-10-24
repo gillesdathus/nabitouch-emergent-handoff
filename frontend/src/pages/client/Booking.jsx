@@ -327,7 +327,7 @@ export default function Booking() {
       ? (trialFlow
         ? "The free trial is a mobile visit. Choose a home, office, hotel, or event address."
         : "In-clinic booking is not open right now. Choose a mobile visit from the options above, or book another treatment.")
-      : "Confirm a service address in our Edmonton zones to continue.")
+      : "Confirm a service address to continue.")
     : "";
   const collectDetailsErrors = () => {
     const errors = {};

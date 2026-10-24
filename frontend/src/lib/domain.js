@@ -270,6 +270,15 @@ export function zoneFor(point, zones, center = CLINIC_POINT) {
   return { zone: z || null, km };
 }
 
+/** Travel fees stay off unless the owner enables them under Booking → Service Coverage. */
+export function travelFeesEnabled(settings) {
+  const cov = settings?.serviceCoverage;
+  if (cov && Object.prototype.hasOwnProperty.call(cov, "travelFeesEnabled")) {
+    return !!cov.travelFeesEnabled;
+  }
+  return false;
+}
+
 export const travelMinutes = (km) => Math.round(8 + km * 2.2);
 
 export function staffActor(user) {
@@ -412,8 +421,9 @@ export function quote({ service, duration, addons = [], zone, client, promotions
   const applied = [...(best ? [best] : []), ...eligible.filter((p) => p.stackable && p.eligibility !== "first_online")];
   const discount = Math.min(applied.reduce((s, p) => s + calc(p), 0), base);
   const trialVisit = isTrialService(service);
-  const localTravel = (locationType === 'clinic' || trialVisit) ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
-  const travel = (locationType === 'clinic' || trialVisit) ? 0 : (typeof serverTravel === 'number' ? serverTravel : localTravel);
+  const feesOn = travelFeesEnabled(settings);
+  const localTravel = (locationType === 'clinic' || trialVisit || !feesOn) ? 0 : (zone?.fee || 0) + (Number(zone?.perKm) || 0) * (Number(km) || 0);
+  const travel = (locationType === 'clinic' || trialVisit) ? 0 : (typeof serverTravel === 'number' ? (feesOn ? serverTravel : 0) : localTravel);
   const subtotal = base - discount + addonsTotal + travel;
   const tax = Math.round(subtotal * (settings?.gst ?? 0.05) * 100) / 100;
   return {

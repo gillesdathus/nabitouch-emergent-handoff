@@ -303,7 +303,7 @@ export function AddressPicker({
               <MapPin className="mt-0.5 h-4 w-4 text-nb-teal" />
               <span>
                 <span className="block text-sm font-medium text-nb-ink">{item.label}</span>
-                <span className="text-xs text-nb-mute">{item.area || "Edmonton area"}</span>
+                <span className="text-xs text-nb-mute">{item.area || "Suggested address"}</span>
               </span>
             </button>
           </li>
@@ -477,7 +477,7 @@ export function AddressPicker({
         <input
           data-testid={`${testid}-input`}
           className="nb-input pl-11"
-          placeholder="Street address in Edmonton or nearby"
+          placeholder="Street address, city, and province"
           value={q}
           role="combobox"
           aria-expanded={open}
@@ -514,8 +514,12 @@ export function ZoneResult({ res, testid }) {
     <div data-testid={`${testid}-zone-outside`} className="flex gap-3 rounded-2xl bg-amber-50 p-4 text-sm text-amber-800"><AlertCircle className="h-5 w-5 shrink-0" />
       <p>{res.message}</p></div>
   );
+  const body = res.message || (
+    <>We come to you in <b>{res.zone?.name || "the service area"}</b>.{Number(res.travel) > 0 ? <> Travel fee <b>{money(res.travel)}</b>.</> : null}{" "}
+      <span className="text-xs text-teal-700">Arrival time is estimated on the day — it is not a confirmed arrival.</span></>
+  );
   return (
     <div data-testid={`${testid}-zone-ok`} className="flex gap-3 rounded-2xl bg-teal-50 p-4 text-sm text-teal-900"><CheckCircle2 className="h-5 w-5 shrink-0 text-nb-teal" />
-      <p>We come to you in <b>{res.zone.name}</b>. Travel fee <b>{res.travel ? money(res.travel) : "included"}</b>. <span className="text-xs text-teal-700">This fee comes from Nabitouch. Arrival time is estimated on the day — it is not a confirmed arrival.</span></p></div>
+      <p>{body}</p></div>
   );
 }

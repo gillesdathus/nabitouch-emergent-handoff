@@ -85,15 +85,25 @@ def test_edmonton_suggestion_and_zone_fee(sarah):
     assert appointment["address"]["lat"] != 53.2594
 
 
-def test_unsupported_location_is_rejected_even_with_inside_coordinates(sarah):
-    checked = requests.post(f"{API}/geo/check", json={
-        "line": "4950 Gateway Blvd, Leduc, AB", "mapboxId": "local-leduc", "lat": 53.5461, "lng": -113.4938,
-    }, timeout=20)
-    assert checked.status_code == 200, checked.text
-    assert checked.json()["eligible"] is False
-    booked = _book(sarah, {"line": "4950 Gateway Blvd, Leduc, AB", "mapboxId": "local-leduc", "lat": 53.5461, "lng": -113.4938})
-    assert booked.status_code == 400
-    assert "outside" in booked.text.lower()
+def test_unsupported_location_is_rejected_in_zones_mode(sarah, owner):
+    """Custom service zones still reject outside rings; open coverage does not."""
+    prior = requests.get(f"{API}/state", headers=owner, timeout=20).json()["settings"]
+    prior_cov = dict(prior.get("serviceCoverage") or {})
+    try:
+        patched = requests.patch(f"{API}/settings/app", headers=owner, json={
+            "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
+        }, timeout=20)
+        assert patched.status_code == 200, patched.text
+        checked = requests.post(f"{API}/geo/check", json={
+            "line": "4950 Gateway Blvd, Leduc, AB", "mapboxId": "local-leduc", "lat": 53.5461, "lng": -113.4938,
+        }, timeout=20)
+        assert checked.status_code == 200, checked.text
+        assert checked.json()["eligible"] is False
+        booked = _book(sarah, {"line": "4950 Gateway Blvd, Leduc, AB", "mapboxId": "local-leduc", "lat": 53.5461, "lng": -113.4938})
+        assert booked.status_code == 400
+        assert "outside" in booked.text.lower()
+    finally:
+        requests.patch(f"{API}/settings/app", headers=owner, json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
 
 def test_unresolved_address_is_rejected(sarah):
@@ -107,25 +117,37 @@ def test_unresolved_address_is_rejected(sarah):
     assert booked.status_code in (400, 503)
 
 
-def test_travel_fee_tamper_uses_the_sherwood_zone(sarah):
-    booked = _book(sarah, {
-        "line": "2020 Sherwood Dr, Sherwood Park, AB", "mapboxId": "local-sherwood",
-        "postal": "T8A 2G4", "clientConfirmed": True,
-        "lat": 53.5461, "lng": -113.4938,
-    }, pricing={"total": 1, "travel": 0, "discount": 0}, day="2027-08-03")
-    assert booked.status_code == 200, booked.text
-    pricing = booked.json()["appointment"]["pricing"]
-    assert pricing["travel"] == 15
-    assert pricing["total"] != 1
-    assert booked.json()["appointment"]["address"]["line"].startswith("2020 Sherwood")
+def test_travel_fee_tamper_uses_the_sherwood_zone(sarah, owner):
+    prior = requests.get(f"{API}/state", headers=owner, timeout=20).json()["settings"]
+    prior_cov = dict(prior.get("serviceCoverage") or {})
+    try:
+        assert requests.patch(f"{API}/settings/app", headers=owner, json={
+            "serviceCoverage": {**prior_cov, "mode": prior_cov.get("mode") or "open", "travelFeesEnabled": True},
+        }, timeout=20).status_code == 200
+        booked = _book(sarah, {
+            "line": "2020 Sherwood Dr, Sherwood Park, AB", "mapboxId": "local-sherwood",
+            "postal": "T8A 2G4", "clientConfirmed": True,
+            "lat": 53.5461, "lng": -113.4938,
+        }, pricing={"total": 1, "travel": 0, "discount": 0}, day="2027-08-03")
+        assert booked.status_code == 200, booked.text
+        pricing = booked.json()["appointment"]["pricing"]
+        assert pricing["travel"] == 15
+        assert pricing["total"] != 1
+        assert booked.json()["appointment"]["address"]["line"].startswith("2020 Sherwood")
+    finally:
+        requests.patch(f"{API}/settings/app", headers=owner, json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
 
 def test_distance_rate_is_added_on_the_server(owner):
     state = requests.get(f"{API}/state", headers=owner, timeout=20).json()
     zone = next(item for item in state["zones"] if item["id"] == "z-inner")
+    prior_cov = dict((state.get("settings") or {}).get("serviceCoverage") or {})
     patched = requests.patch(f"{API}/zones/z-inner", headers=owner, json={"perKm": 1}, timeout=20)
     assert patched.status_code == 200, patched.text
     try:
+        assert requests.patch(f"{API}/settings/app", headers=owner, json={
+            "serviceCoverage": {**prior_cov, "mode": prior_cov.get("mode") or "open", "travelFeesEnabled": True},
+        }, timeout=20).status_code == 200
         checked = requests.post(f"{API}/geo/check", json={"mapboxId": "local-sherwood"}, timeout=20)
         assert checked.status_code == 200, checked.text
         body = checked.json()
@@ -133,6 +155,7 @@ def test_distance_rate_is_added_on_the_server(owner):
         assert body["zone"]["perKm"] == 1
     finally:
         requests.patch(f"{API}/zones/z-inner", headers=owner, json={"perKm": zone.get("perKm") or 0}, timeout=20)
+        requests.patch(f"{API}/settings/app", headers=owner, json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
 
 def test_clinic_booking_skips_geocoding(sarah):

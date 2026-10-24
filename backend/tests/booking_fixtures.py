@@ -40,6 +40,46 @@ LEDUC_OUTSIDE = {
     "clientConfirmed": True,
 }
 
+SPRUCE_GROVE = {
+    "label": "Home",
+    "line": "400 Calahoo Rd, Spruce Grove, AB",
+    "postal": "T7X 2K7",
+    "mapboxId": "local-spruce",
+    "lat": 53.5452,
+    "lng": -113.9104,
+    "clientConfirmed": True,
+}
+
+ST_ALBERT = {
+    "label": "Home",
+    "line": "1 St Anne St, St. Albert, AB",
+    "postal": "T8N 1E9",
+    "mapboxId": "local-stalbert",
+    "lat": 53.6305,
+    "lng": -113.6256,
+    "clientConfirmed": True,
+}
+
+SHERWOOD_PARK = {
+    "label": "Home",
+    "line": "2020 Sherwood Dr, Sherwood Park, AB",
+    "postal": "T8A 2G4",
+    "mapboxId": "local-sherwood",
+    "lat": 53.5413,
+    "lng": -113.2958,
+    "clientConfirmed": True,
+}
+
+WETASKIWIN = {
+    "label": "Home",
+    "line": "4705 50 Ave, Wetaskiwin, AB",
+    "postal": "T9A 0R8",
+    "mapboxId": "local-wetaskiwin",
+    "lat": 52.9694,
+    "lng": -113.3769,
+    "clientConfirmed": True,
+}
+
 TZ = ZoneInfo("America/Edmonton")
 
 

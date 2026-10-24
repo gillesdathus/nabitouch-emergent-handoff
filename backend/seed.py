@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from availability import draft_schedule, launch_clinic, launch_policy, launch_practitioner
-from pricing import launch_welcome_offer
+from pricing import launch_service_coverage, launch_welcome_offer
 from rewards import launch_rewards
 from package_program import launch_package_program
 from config import is_production
@@ -324,6 +324,7 @@ def build_seed():
                  "rewards": launch_rewards(),
                  "packageProgram": launch_package_program(),
                  "center": {"lat": 53.5461, "lng": -113.4938},
+                 "serviceCoverage": launch_service_coverage(),
                  "revenueTrend": [{"week": f"W{i + 1}", "revenue": v} for i, v in enumerate(weeks)]}]
     audit = [{"id": f"au-{i}", "at": ago(200 - i * 30), "actor": a, "action": m, "appointmentId": x}
              for i, (a, m, x) in enumerate([

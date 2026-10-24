@@ -238,14 +238,32 @@ class TestAddress:
         r = book(sarah, address={**ADDR_OK, "clientConfirmed": False})
         assert r.status_code == 400 and "Confirm the service address" in r.text, r.text
 
-    def test_out_of_area(self, sarah):
-        r = book(sarah, address=dict(LEDUC_OUTSIDE))
-        assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+    def test_out_of_area_in_zones_mode(self, sarah, owner):
+        settings = owner.get(f"{API}/state", timeout=20).json()["settings"]
+        row = settings[0] if isinstance(settings, list) else settings
+        prior_cov = dict((row or {}).get("serviceCoverage") or {})
+        try:
+            assert owner.patch(f"{API}/settings/app", json={
+                "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
+            }, timeout=20).status_code == 200
+            r = book(sarah, address=dict(LEDUC_OUTSIDE))
+            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+        finally:
+            owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
     @pytest.mark.skipif(os.environ.get("MAPBOX_LIVE") != "true", reason="Toronto geocoding needs a live Mapbox token")
-    def test_out_of_area_live_mapbox(self, sarah):
-        r = book(sarah, address={"label": "X", "line": "100 Queen St W, Toronto, ON", "postal": "M5H 2N2", "lat": 43.6532, "lng": -79.3832, "clientConfirmed": True})
-        assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+    def test_out_of_area_live_mapbox_zones_mode(self, sarah, owner):
+        settings = owner.get(f"{API}/state", timeout=20).json()["settings"]
+        row = settings[0] if isinstance(settings, list) else settings
+        prior_cov = dict((row or {}).get("serviceCoverage") or {})
+        try:
+            assert owner.patch(f"{API}/settings/app", json={
+                "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
+            }, timeout=20).status_code == 200
+            r = book(sarah, address={"label": "X", "line": "100 Queen St W, Toronto, ON", "postal": "M5H 2N2", "lat": 43.6532, "lng": -79.3832, "clientConfirmed": True})
+            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+        finally:
+            owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
     def test_booking_marks_saved_address(self, sarah, owner):
         mongo(lambda db: db.nt_clients.update_one({"id": "c-sarah", "addresses.id": "ad-sarah"}, {"$unset": {"addresses.$.clientConfirmed": "", "addresses.$.confidence": ""}}))
