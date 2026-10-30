@@ -102,5 +102,66 @@ def test_invite_verify_replay_expiry_revoke_and_conflict():
     created = requests.post(f"{API}/legacy/patients/{revoke_target}/invite", headers=owner, json={}, timeout=20)
     revoked = requests.post(f"{API}/legacy/invitations/{created.json()['id']}/revoke", headers=owner, timeout=20)
     assert revoked.status_code == 200
-    dead = requests.post(f"{API}/legacy/invitations/open", json={"token": created.json()["link"].split('#', 1)[1]}, timeout=20)
+    dead = requests.post(f"{API}/legacy/invitations/open", json={"token": created.json()["link"].split("#", 1)[1]}, timeout=20)
     assert dead.status_code == 410
+    patient = requests.get(f"{API}/legacy/patients/{revoke_target}", headers=owner, timeout=20).json()
+    assert patient["status"] == "invitation_expired"
+
+
+def test_batch_preview_eligible_exclusions_and_exact_send():
+    owner = _login(_required("OWNER_EMAIL"), _required("OWNER_PASSWORD"))
+    suffix = uuid.uuid4().hex[:8]
+    ready_id = _stage(owner, f"ok-{suffix}", email=f"ok.{suffix}@example.com", phone="7805550111")
+    blocked_id = _stage(
+        owner, f"bad-{suffix}",
+        email="", phone="",
+        first_name="No", last_name="Contact",
+    )
+    listed = requests.get(f"{API}/legacy/patients", headers=owner, params={"q": f"bad-{suffix}"}, timeout=20).json()
+    assert listed["items"][0]["id"] == blocked_id
+    eligible = requests.get(f"{API}/legacy/invitations/eligible", headers=owner, params={"q": suffix}, timeout=20)
+    assert eligible.status_code == 200, eligible.text
+    body = eligible.json()
+    assert body["autoExpand"] is False
+    assert ready_id in body["ids"]
+    assert blocked_id not in body["ids"]
+    preview = requests.post(
+        f"{API}/legacy/invitations/preview",
+        headers=owner,
+        json={"ids": [ready_id, blocked_id, "leg-missing"]},
+        timeout=20,
+    )
+    assert preview.status_code == 200, preview.text
+    data = preview.json()
+    assert data["willSend"] is False and data["autoSendOnImport"] is False
+    assert data["ready"] == [ready_id]
+    assert blocked_id in data["blocked"] and "leg-missing" in data["blocked"]
+    assert data["confirmCount"] == 1 and data["requestedCount"] == 3
+    assert data["recipients"][0]["destination"] == f"ok.{suffix}@example.com"
+    assert data["recipients"][0]["channel"] == "email"
+    assert data["template"]["includesClinicalDetail"] is False
+    assert data["template"]["marketingConsent"] is False
+    assert "allerg" not in (data["template"].get("previewText") or "").lower()
+    refused = requests.post(
+        f"{API}/legacy/invitations/send",
+        headers=owner,
+        json={"ids": [ready_id], "confirm": False},
+        timeout=20,
+    )
+    assert refused.status_code == 400
+    sent = requests.post(
+        f"{API}/legacy/invitations/send",
+        headers=owner,
+        json={"ids": [ready_id, blocked_id], "confirm": True},
+        timeout=20,
+    )
+    assert sent.status_code == 200, sent.text
+    payload = sent.json()
+    assert payload["autoExpanded"] is False
+    assert payload["sentCount"] == 1 and payload["failedCount"] == 1
+    assert payload["sent"][0]["patientId"] == ready_id
+    assert payload["failed"][0]["patientId"] == blocked_id
+    history = requests.get(f"{API}/legacy/invitations", headers=owner, params={"patientId": ready_id}, timeout=20)
+    assert history.status_code == 200
+    assert history.json()["items"]
+    assert history.json()["items"][0]["outcome"] in ("open", "delivery_error")

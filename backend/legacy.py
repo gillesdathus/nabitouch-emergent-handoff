@@ -208,15 +208,42 @@ async def _load_invite(db, raw):
     return row
 
 
+def _block_reason(row):
+    if not row:
+        return "not_found"
+    if row.get("clientId"):
+        return "already_linked"
+    if row.get("duplicateOf"):
+        return "duplicate_identity"
+    readiness = row.get("invitationReadiness") or ""
+    if readiness in ("requires_identity_reconciliation", "requires_contact_verification"):
+        return readiness
+    if row.get("status") not in ("imported", "ready_to_invite", "invitation_expired", "invited"):
+        return f"status_{row.get('status') or 'unknown'}"
+    if not (row.get("hasEmail") or row.get("hasPhone")):
+        return "missing_contact"
+    return None
+
+
+def _invite_channel(row):
+    if row.get("hasEmail"):
+        return "email"
+    if row.get("hasPhone"):
+        return "sms_manual"
+    return "none"
+
+
 def build_legacy_router(db, coll, add_audit, user_from):
     r = APIRouter(prefix="/api/legacy")
 
     async def owner(request: Request):
+        from rbac import has_role
         user = await user_from(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
-        if user.get("role") != "owner":
-            raise HTTPException(403, "Legacy records are limited to the owner")
+        # Owner or manager only — never desk/practitioner invitation management.
+        if not has_role(user, "owner", "manager"):
+            raise HTTPException(403, "Invitation management is limited to the owner or manager")
         return user
 
     async def audit(actor, action, record_id=None):
@@ -491,33 +518,87 @@ def build_legacy_router(db, coll, add_audit, user_from):
         return await _issue(user, row, body.get("email"))
 
     def _invite_eligible(row):
-        if not row:
-            return False
-        if row.get("duplicateOf") or row.get("clientId"):
-            return False
-        if row.get("invitationReadiness") in ("requires_identity_reconciliation", "requires_contact_verification"):
-            return False
-        if row["status"] not in ("imported", "ready_to_invite", "invitation_expired"):
-            return False
-        return bool(row.get("hasEmail") or row.get("hasPhone"))
+        return _block_reason(row) is None
+
+    async def _recipient_view(row):
+        profile = open_tree(row.get("profile") or {})
+        public = _public_list_row(row, profile)
+        channel = _invite_channel(row)
+        destination = public["email"] if channel == "email" else (public["phone"] if channel != "none" else "")
+        reason = _block_reason(row)
+        return {
+            "id": public["id"],
+            "sourceId": public["sourceId"],
+            "firstName": public["firstName"],
+            "lastName": public["lastName"],
+            "destination": destination,
+            "channel": channel,
+            "status": public["status"],
+            "invitationReadiness": public["invitationReadiness"],
+            "eligible": reason is None,
+            "reason": reason,
+            "activated": public["status"] == "activated" or bool(public.get("clientId")),
+            "clientId": public.get("clientId"),
+        }
+
+    @r.get("/invitations/eligible")
+    async def eligible_invites(request: Request, q: str = "", status: str = ""):
+        """Exact eligible id set for the current patient filter. Never expands beyond the filter."""
+        await owner(request)
+        query = {}
+        if status in STATUSES:
+            query["status"] = status
+        rows = await db.nt_legacy_patients.find(query, {"_id": 0}).to_list(2000)
+        needle = q.strip().lower()
+        ids = []
+        for row in rows:
+            profile = open_tree(row.get("profile") or {})
+            item = _public_list_row(row, profile)
+            if needle:
+                hay = " ".join([item["firstName"], item["lastName"], item["email"], item["phone"], item["sourceId"], item["address"]]).lower()
+                if needle not in hay:
+                    continue
+            if _invite_eligible(row):
+                ids.append(row["id"])
+        return {"ids": ids, "total": len(ids), "filter": {"q": q, "status": status}, "autoExpand": False}
 
     @r.post("/invitations/preview")
     async def preview_invites(request: Request):
         await owner(request)
         body = await request.json()
-        ids = body.get("ids") or []
-        ready, blocked = [], []
+        # Preserve caller order; never invent ids outside the submitted set.
+        ids = [str(item) for item in (body.get("ids") or []) if item]
+        ready, blocked, recipients, excluded = [], [], [], []
         for record_id in ids:
-            row = await db.nt_legacy_patients.find_one(
-                {"id": record_id},
-                {"_id": 0, "id": 1, "status": 1, "hasEmail": 1, "hasPhone": 1,
-                 "duplicateOf": 1, "clientId": 1, "invitationReadiness": 1},
-            )
-            if _invite_eligible(row):
+            row = await db.nt_legacy_patients.find_one({"id": record_id}, {"_id": 0})
+            view = await _recipient_view(row) if row else {
+                "id": record_id, "sourceId": "", "firstName": "", "lastName": "",
+                "destination": "", "channel": "none", "status": "", "invitationReadiness": None,
+                "eligible": False, "reason": "not_found", "activated": False, "clientId": None,
+            }
+            if view["eligible"]:
                 ready.append(record_id)
+                recipients.append(view)
             else:
                 blocked.append(record_id)
-        return {"ready": ready, "blocked": blocked, "willSend": False}
+                excluded.append(view)
+        subject, _html = invitation_message("https://nabitouch.com/welcome#preview-only")
+        return {
+            "ready": ready,
+            "blocked": blocked,
+            "recipients": recipients,
+            "excluded": excluded,
+            "confirmCount": len(ready),
+            "requestedCount": len(ids),
+            "template": {
+                "subject": subject,
+                "previewText": "Use this private link to set up your Nabitouch account. It expires and can be used once.",
+                "includesClinicalDetail": False,
+                "marketingConsent": False,
+            },
+            "willSend": False,
+            "autoSendOnImport": False,
+        }
 
     @r.get("/invitations")
     async def list_invitations(request: Request):
@@ -529,10 +610,37 @@ def build_legacy_router(db, coll, add_audit, user_from):
             query,
             {"_id": 0, "tokenHash": 0},
         ).sort("createdAt", -1).to_list(200)
-        open_count = sum(1 for row in rows if not row.get("usedAt") and not row.get("revokedAt"))
+        patient_ids = list({row["patientId"] for row in rows if row.get("patientId")})
+        names = {}
+        if patient_ids:
+            for patient in await db.nt_legacy_patients.find({"id": {"$in": patient_ids}}, {"_id": 0}).to_list(len(patient_ids)):
+                profile = open_tree(patient.get("profile") or {})
+                names[patient["id"]] = {
+                    "firstName": profile.get("firstName") or "",
+                    "lastName": profile.get("lastName") or "",
+                    "patientStatus": patient.get("status"),
+                    "clientId": patient.get("clientId"),
+                }
+        items = []
+        for row in rows:
+            item = dict(row)
+            meta = names.get(row.get("patientId")) or {}
+            item.update(meta)
+            if row.get("usedAt") or meta.get("clientId") or meta.get("patientStatus") == "activated":
+                item["outcome"] = "activated" if (meta.get("clientId") or meta.get("patientStatus") == "activated") else "used"
+            elif row.get("revokedAt"):
+                item["outcome"] = "revoked"
+            elif row.get("expiresAt", "") < now_iso():
+                item["outcome"] = "expired"
+            elif row.get("delivery") in ("not-sent", "sms_not_implemented"):
+                item["outcome"] = "delivery_error"
+            else:
+                item["outcome"] = "open"
+            items.append(item)
+        open_count = sum(1 for row in items if row.get("outcome") == "open")
         return {
-            "items": rows,
-            "total": len(rows),
+            "items": items,
+            "total": len(items),
             "openCount": open_count,
             "autoSendOnImport": False,
             "smsInvitesEnabled": False,
@@ -544,13 +652,31 @@ def build_legacy_router(db, coll, add_audit, user_from):
         body = await request.json()
         if body.get("confirm") is not True:
             raise HTTPException(400, "Confirm the batch before invitations are sent")
-        sent = []
-        for record_id in body.get("ids") or []:
+        # Exact approved set only — never expand to all imported patients.
+        ids = [str(item) for item in (body.get("ids") or []) if item]
+        sent, failed = [], []
+        for record_id in ids:
             row = await db.nt_legacy_patients.find_one({"id": record_id})
             if not row:
+                failed.append({"patientId": record_id, "error": "not_found", "status": 404})
                 continue
-            sent.append(await _issue(user, row))
-        return {"sent": [{"id": item["id"], "patientId": item["patientId"], "delivery": item["delivery"]} for item in sent]}
+            try:
+                item = await _issue(user, row)
+                sent.append({
+                    "id": item["id"], "patientId": item["patientId"],
+                    "delivery": item["delivery"], "channel": item["channel"],
+                })
+            except HTTPException as exc:
+                failed.append({"patientId": record_id, "error": exc.detail, "status": exc.status_code})
+        await audit(user["email"], "legacy_invite_batch", None)
+        return {
+            "sent": sent,
+            "failed": failed,
+            "requested": len(ids),
+            "sentCount": len(sent),
+            "failedCount": len(failed),
+            "autoExpanded": False,
+        }
 
     @r.post("/invitations/{invite_id}/revoke")
     async def revoke_invite(invite_id: str, request: Request):
@@ -561,8 +687,12 @@ def build_legacy_router(db, coll, add_audit, user_from):
         )
         if not updated:
             raise HTTPException(404, "Invitation not found")
+        await db.nt_legacy_patients.update_one(
+            {"id": updated["patientId"], "status": "invited"},
+            {"$set": {"status": "invitation_expired", "updatedAt": now_iso()}},
+        )
         await audit(user["email"], "legacy_invite_revoke", updated["patientId"])
-        return {"revoked": True}
+        return {"revoked": True, "patientId": updated["patientId"]}
 
     @r.post("/invitations/open")
     async def open_invite(request: Request):
