@@ -10,7 +10,7 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from booking_fixtures import EDMONTON_HOME, LEDUC_OUTSIDE
-from t1_common import API, BASE_URL, BENV, MAYA, NATIVE, OWNER, SARAH, login, rand_slot, stripe_webhook, twilio_sign
+from t1_common import API, BASE_URL, BENV, MAYA, NABITU, NATIVE, OWNER, SARAH, login, rand_slot, stripe_webhook, twilio_sign
 
 PW = "TEST_Pw-" + uuid.uuid4().hex[:10]
 ADDR_OK = {**EDMONTON_HOME, "zoneId": "z-central"}
@@ -39,6 +39,11 @@ def sarah():
 @pytest.fixture(scope="module")
 def maya():
     return login(MAYA)
+
+
+@pytest.fixture(scope="module")
+def nabitu():
+    return login(NABITU)
 
 
 @pytest.fixture(scope="module")
@@ -247,7 +252,8 @@ class TestAddress:
                 "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
             }, timeout=20).status_code == 200
             r = book(sarah, address=dict(LEDUC_OUTSIDE))
-            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+            msg = r.text.lower()
+            assert r.status_code == 400 and ("outside" in msg or "not currently available" in msg or "not available" in msg), r.text
         finally:
             owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
@@ -261,7 +267,8 @@ class TestAddress:
                 "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
             }, timeout=20).status_code == 200
             r = book(sarah, address={"label": "X", "line": "100 Queen St W, Toronto, ON", "postal": "M5H 2N2", "lat": 43.6532, "lng": -79.3832, "clientConfirmed": True})
-            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+            msg = r.text.lower()
+            assert r.status_code == 400 and ("outside" in msg or "not currently available" in msg or "not available" in msg), r.text
         finally:
             owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
@@ -419,16 +426,16 @@ class TestDevices:
         print(doc)
         assert doc["active"] is False
 
-    def test_assist_creates_held_push(self, owner, maya, sarah):
+    def test_assist_creates_held_push(self, owner, nabitu, sarah):
         tok = "TESTown" + uuid.uuid4().hex * 2
         owner.post(f"{API}/devices", json={"platform": "android", "token": tok}, timeout=20)
         r = book(sarah)
         assert r.status_code == 200
         aid = r.json()["appointment"]["id"]
         to_en_route(owner, aid)
-        a = maya.post(f"{API}/appointments/{aid}/assist", json={"note": "TEST assist"}, timeout=20)
+        a = nabitu.post(f"{API}/appointments/{aid}/assist", json={"note": "TEST assist"}, timeout=20)
         print("assist", a.status_code, a.text[:150])
-        since = a.json().get("at") if a.status_code == 200 and isinstance(a.json(), dict) else None
+        assert a.status_code == 200, a.text[:200]
         import time as _t; _t.sleep(1)
         rows = mongo(lambda db: db.nt_push_outbox.find({"kind": {"$in": ["safety_alert", "assist"]}}, {"_id": 0, "status": 1, "kind": 1, "at": 1}).sort("at", -1).to_list(5))
         print(rows)

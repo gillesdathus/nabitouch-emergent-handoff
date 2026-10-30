@@ -342,6 +342,7 @@ def build_auth(db, coll, add_audit):
             return
         demo_pw = hash_pw(os.environ["DEMO_PASSWORD"])
         demos = [("sarah.demo@example.com", "Sarah Thompson", "client", "c-sarah"),
+                 ("nabitu.demo@example.com", "Nabitu Kahindo", "practitioner", "p-nabitu-kahindo"),
                  ("maya.demo@example.com", "Maya Chen", "practitioner", "p-maya"),
                  ("liam.demo@example.com", "Liam Fournier", "practitioner", "p-liam"),
                  ("priya.demo@example.com", "Priya Sandhu", "practitioner", "p-priya"),

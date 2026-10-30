@@ -9,7 +9,7 @@ import requests
 from pymongo import MongoClient
 
 from booking_fixtures import EDMONTON_HOME, book_appointment
-from t1_common import API, BENV, MAYA, OWNER, SAMPLE_PW, SARAH, login
+from t1_common import API, BENV, NABITU, OWNER, SAMPLE_PW, SARAH, login
 
 pytestmark = pytest.mark.real_consent
 DB = MongoClient(BENV["MONGO_URL"])[BENV["DB_NAME"]]
@@ -31,7 +31,8 @@ def sarah():
 
 @pytest.fixture(scope="module")
 def maya():
-    return login(MAYA)
+    # Fixture name retained for suite call sites; subject is the sole treating therapist.
+    return login(NABITU)
 
 
 def book(owner, slug="swedish", day_offset=(20, 200), times=("09:00", "12:00", "16:00"), practitioner=None):
@@ -259,8 +260,8 @@ class TestIntakeConsent:
         assert maya.put(f"{API}/turnaround/config", json={"clinicCleanupMin": 12}, timeout=20).status_code == 403
         assert owner.put(f"{API}/turnaround/config", json={"clinicCleanupMin": 121}, timeout=20).status_code == 400
         assert owner.put(f"{API}/turnaround/config", json={"byService": {"swedish": -1}}, timeout=20).status_code == 400
-        r = owner.put(f"{API}/turnaround/config", json={"byPractitioner": {"p-maya": 25}}, timeout=20)
-        assert r.status_code == 200 and r.json()["byPractitioner"]["p-maya"] == 25
+        r = owner.put(f"{API}/turnaround/config", json={"byPractitioner": {"p-nabitu-kahindo": 25}}, timeout=20)
+        assert r.status_code == 200 and r.json()["byPractitioner"]["p-nabitu-kahindo"] == 25
 
     def test_practitioner_override_and_appointment_override(self, owner, sarah, maya):
         aid = S["a2"]
@@ -277,7 +278,7 @@ class TestIntakeConsent:
 
     def test_restore_config(self, owner):
         DB.nt_settings.update_one({"id": "app"}, {"$set": {"turnaround": S.get("cfg") or {}}} if S.get("cfg") else {"$unset": {"turnaround": ""}})
-        assert owner.get(f"{API}/turnaround/config", timeout=20).json()["byPractitioner"].get("p-maya") is None
+        assert owner.get(f"{API}/turnaround/config", timeout=20).json()["byPractitioner"].get("p-nabitu-kahindo") is None
 
     def test_next_booking_at_risk_alert(self, owner, sarah, maya):
         end_if_active()
@@ -317,7 +318,7 @@ class TestIntakeConsent:
         b = owner.get(f"{API}/ops/turnaround", timeout=30)
         assert b.status_code == 200
         d = b.json()
-        entry = next(p for p in d["practitioners"] if p["practitionerId"] == "p-maya")
+        entry = next(p for p in d["practitioners"] if p["practitionerId"] == "p-nabitu-kahindo")
         assert entry["appointmentId"] == S["n1"] and entry["state"] in ("in_session", "treatment_overtime")
         assert "intake" not in str(entry).lower() and "allerg" not in str(d).lower()
         alert = next(a for a in d["alerts"] if a["appointmentId"] == S["n1"])
@@ -349,7 +350,7 @@ class TestIntakeConsent:
         clear_test_next()
 
     def test_booking_engine_respects_cleanup_buffer(self, owner):
-        # booking an adjacent slot fails once p-maya's cleanup buffer is 120 and succeeds again after restore
+        # booking an adjacent slot fails once Nabitu's cleanup buffer is 120 and succeeds again after restore
         first = book(owner, day_offset=(150, 300), times=("09:00",))
         day = first["date"]
         body = lambda: {"source": "reception", "practitionerId": "p-nabitu-kahindo", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
@@ -357,7 +358,7 @@ class TestIntakeConsent:
                                         "addressId": "ad-sarah", "address": ADDR}}
         cfg = DB.nt_settings.find_one({"id": "app"}, {"_id": 0, "turnaround": 1}).get("turnaround")
         try:
-            assert owner.put(f"{API}/turnaround/config", json={"byPractitioner": {"p-maya": 120}}, timeout=20).status_code == 200
+            assert owner.put(f"{API}/turnaround/config", json={"byPractitioner": {"p-nabitu-kahindo": 120}}, timeout=20).status_code == 200
             blocked = owner.post(f"{API}/bookings", json=body(), timeout=40)
             print("blocked", blocked.status_code, blocked.text[:150])
             assert blocked.status_code in (400, 409)

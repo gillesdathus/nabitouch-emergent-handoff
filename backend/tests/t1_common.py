@@ -43,6 +43,9 @@ BENV = {**_backend_env(), **os.environ}
 OWNER = (_need("OWNER_EMAIL"), _need("OWNER_PASSWORD"))
 SAMPLE_PW = _need("DEMO_PASSWORD", "SAMPLE_PW")
 SARAH = ("sarah.demo@example.com", SAMPLE_PW)
+# Sole bookable therapist — use for treating-practitioner clinical workflows.
+NABITU = ("nabitu.demo@example.com", SAMPLE_PW)
+# Non-bookable demo practitioner — keep for isolation / unauthorized-access asserts.
 MAYA = ("maya.demo@example.com", SAMPLE_PW)
 NATIVE = {"X-Nabitouch-Client": "native"}
 
