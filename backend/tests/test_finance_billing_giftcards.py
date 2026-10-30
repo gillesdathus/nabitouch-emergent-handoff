@@ -105,7 +105,7 @@ class TestPay:
         assert r.status_code == 403
 
     def test_statement_generate_approve_pdf(self, owner, pro):
-        r = owner.post(f"{BASE_URL}/api/finance/statements", json={"start": "2025-01-01", "end": "2026-12-31", "practitionerId": "p-maya"})
+        r = owner.post(f"{BASE_URL}/api/finance/statements", json={"start": "2025-01-01", "end": "2026-12-31", "practitionerId": "p-nabitu-kahindo"})
         assert r.status_code == 200, r.text[:200]
         st = r.json()[0]
         assert st["status"] == "draft"
@@ -121,7 +121,7 @@ class TestPay:
         assert p.status_code == 200 and p.content[:4] == b"%PDF"
 
     def test_statement_draft_delete(self, owner):
-        r = owner.post(f"{BASE_URL}/api/finance/statements", json={"start": "2025-01-01", "end": "2026-12-31", "practitionerId": "p-maya"})
+        r = owner.post(f"{BASE_URL}/api/finance/statements", json={"start": "2025-01-01", "end": "2026-12-31", "practitionerId": "p-nabitu-kahindo"})
         if r.status_code == 409:
             pytest.skip("period already covered by an approved statement from an earlier run (data-dependent)")
         sid = r.json()[0]["id"]

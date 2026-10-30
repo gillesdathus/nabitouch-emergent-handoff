@@ -25,7 +25,7 @@ def _login(email, password):
 
 def _book(headers, when):
     response = requests.post(f"{API}/bookings", headers=headers, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": "2027-12-02", "time": when,
             "locationType": "clinic", "paymentMethod": "self",

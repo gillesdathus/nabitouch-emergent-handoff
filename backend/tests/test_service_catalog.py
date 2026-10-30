@@ -209,7 +209,7 @@ def test_archived_and_disabled_services_cannot_be_quoted_or_booked():
         try:
             assigned = requests.put(f"{api}/practitioners/p-maya/services", headers=owner, json={"specialties": original + [slug]}, timeout=20)
             assert assigned.status_code == 200, assigned.text
-            still_closed = requests.post(f"{api}/bookings/quote", json={"appointment": appointment, "practitionerId": "p-maya"}, timeout=20)
+            still_closed = requests.post(f"{api}/bookings/quote", json={"appointment": appointment, "practitionerId": "p-nabitu-kahindo"}, timeout=20)
             assert still_closed.status_code == 400
         finally:
             requests.put(f"{api}/practitioners/p-maya/services", headers=owner, json={"specialties": original}, timeout=20)
@@ -232,7 +232,7 @@ def test_historical_prices_survive_a_catalogue_edit_and_block_deletion():
         day = 1 + (uuid.uuid4().int % 27)
         booked = requests.post(f"{api}/bookings", json={
             "source": "online",
-            "practitionerId": "p-maya",
+            "practitionerId": "p-nabitu-kahindo",
             "client": {"firstName": "Price", "lastName": "Guest", "email": f"{slug}@example.com", "phone": f"780557{uuid.uuid4().int % 10000:04d}"},
             "appointment": {
                 "serviceSlug": slug, "duration": 60, "date": f"2031-06-{day:02d}", "time": "11:00",

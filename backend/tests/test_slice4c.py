@@ -25,7 +25,7 @@ def test_a_claim_update_notifies_only_that_client_without_insurer_details():
     sarah = _login("sarah.demo@example.com", _required("DEMO_PASSWORD"))
     liam = _login("liam.demo@example.com", _required("DEMO_PASSWORD"))
     booked = requests.post(f"{API}/bookings", headers=sarah, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-06-{(uuid.uuid4().int % 27) + 1:02d}", "time": "15:00",
             "locationType": "clinic", "paymentMethod": "insurance",

@@ -154,7 +154,7 @@ def test_booking_example_com_sends_no_email(owner_h):
     sarah_h = _login("sarah.demo@example.com", DEMO_PW)
     before = requests.get(f"{API}/state", headers=owner_h).json()["audit"]
     before_count = sum(1 for a in before if a.get("action", "").endswith("confirmation email sent"))
-    body = {"client": {}, "practitionerId": "p-maya",
+    body = {"client": {}, "practitionerId": "p-nabitu-kahindo",
             "appointment": {"date": "2026-11-15", "time": "10:00", "duration": 60,
                             "serviceSlug": "swedish",
                             "address": {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown", "postal": "T5J 2R4", "clientConfirmed": True, "lat": 53.53, "lng": -113.5},
@@ -184,7 +184,7 @@ def test_booking_real_email_triggers_send(owner_h):
         if created.status_code != 200:
             pytest.skip(f"{TEST_CLIENT_EMAIL} exists with a different password")
     h = _login(TEST_CLIENT_EMAIL, TEST_CLIENT_PW)
-    body = {"client": {}, "practitionerId": "p-maya",
+    body = {"client": {}, "practitionerId": "p-nabitu-kahindo",
             "appointment": {"date": "2026-11-16", "time": "11:00", "duration": 60,
                             "serviceSlug": "swedish",
                             "address": {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown", "postal": "T5J 2R4", "clientConfirmed": True, "lat": 53.53, "lng": -113.5},

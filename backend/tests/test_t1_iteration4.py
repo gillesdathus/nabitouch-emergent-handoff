@@ -75,7 +75,7 @@ def book(sess, service="swedish", duration=60, extra=None, address=None, locatio
         appt = {"serviceSlug": service, "duration": duration, "date": d, "time": t, "locationType": location, "paymentMethod": "self"}
         if location == "home":
             appt.update({"addressId": "ad-sarah", "address": address or ADDR_OK})
-        body = {"source": "online", "practitionerId": "p-maya", "appointment": appt, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:12]}
+        body = {"source": "online", "practitionerId": "p-nabitu-kahindo", "appointment": appt, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:12]}
         body.update(extra or {})
         last = sess.post(f"{API}/bookings", json=body, timeout=40)
         if last.status_code == 409 and any(w in last.text.lower() for w in ("slot", "available", "taken", "booked", "travel", "time")) and "credit" not in last.text.lower():
@@ -442,7 +442,7 @@ class TestBookingBilling:
         # just as book() does, while keeping every other error a test failure.
         for _ in range(25):
             d, t = rand_slot()
-            q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-maya", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
+            q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-nabitu-kahindo", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
                                                            "locationType": "home", "address": ADDR_OK, "addressId": "ad-sarah"}}, timeout=30)
             if not (q.status_code == 409 and any(word in q.text.lower() for word in ("slot", "available", "taken", "booked", "travel", "time")) and "credit" not in q.text.lower()):
                 break

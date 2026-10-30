@@ -34,6 +34,12 @@ def test_explicit_nabitu_accepted():
     assert mode == "explicit"
 
 
+def test_live_production_nabitu_alias_accepted():
+    pid, mode = normalize_requested_practitioner_id("p-f3a4279b")
+    assert pid == "p-f3a4279b"
+    assert mode == "explicit"
+
+
 @pytest.mark.parametrize("requested", ["p-maya", "p-jordan", "p-dathus", "owner-uuid", "p-liam"])
 def test_unauthorized_practitioner_ids_rejected(requested):
     with pytest.raises(HTTPException) as raised:

@@ -180,7 +180,7 @@ def book(owner):
     for d in range(30, 250, 3):
         day = (datetime.now(TZ).date() + timedelta(days=d)).isoformat()
         for t in ("08:00", "11:00", "17:00"):
-            body = {"source": "reception", "practitionerId": "p-maya", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
+            body = {"source": "reception", "practitionerId": "p-nabitu-kahindo", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
                     "appointment": {"serviceSlug": "swedish", "duration": 60, "date": day, "time": t, "locationType": "home", "paymentMethod": "self",
                                     "addressId": "ad-sarah", "address": ADDR}}
             b = owner.post(f"{API}/bookings", json=body, timeout=40)
@@ -191,7 +191,7 @@ def book(owner):
 
 class TestInvite:
     def test_completion_prepares_one_held_invite(self, owner):
-        if DB.nt_appointments.find_one({"practitionerId": "p-maya", "status": "in_session"}):
+        if DB.nt_appointments.find_one({"practitionerId": "p-nabitu-kahindo", "status": "in_session"}):
             pytest.skip("p-maya already in session")
         appt = book(owner)
         aid = appt["id"]
@@ -244,7 +244,7 @@ class TestClientRatings:
         other = DB.nt_appointments.find_one({"practitionerId": {"$nin": ["p-maya", None]}, "status": {"$in": REVIEWABLE}}, {"id": 1})
         if other:
             assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": other["id"], "rating": 3}, timeout=20).status_code == 404
-        pend = DB.nt_appointments.find_one({"practitionerId": "p-maya", "status": {"$in": ["confirmed", "assigned"]}}, {"id": 1})
+        pend = DB.nt_appointments.find_one({"practitionerId": "p-nabitu-kahindo", "status": {"$in": ["confirmed", "assigned"]}}, {"id": 1})
         if pend:
             assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": pend["id"], "rating": 3}, timeout=20).status_code == 409
 

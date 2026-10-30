@@ -83,8 +83,10 @@ WETASKIWIN = {
 TZ = ZoneInfo("America/Edmonton")
 
 
-def resolve_bookable_practitioner_id(session, api, preferred="p-maya"):
-    """Prefer the demo practitioner when seeded; otherwise use any bookable staff."""
+def resolve_bookable_practitioner_id(session, api, preferred="p-nabitu-kahindo"):
+    """Prefer the designated sole therapist when seeded; otherwise any bookable staff."""
+    from staff_identity import CANONICAL_PRACTITIONER_ID
+    preferred = preferred or CANONICAL_PRACTITIONER_ID
     state = session.get(f"{api}/state", timeout=40)
     if state.status_code != 200:
         pytest.fail(f"fixture state failed: HTTP {state.status_code}")
@@ -96,6 +98,8 @@ def resolve_bookable_practitioner_id(session, api, preferred="p-maya"):
     ids = {person["id"] for person in bookable if person.get("id")}
     if preferred and preferred in ids:
         return preferred
+    if CANONICAL_PRACTITIONER_ID in ids:
+        return CANONICAL_PRACTITIONER_ID
     if bookable:
         return bookable[0]["id"]
     pytest.fail("fixture database has no bookable practitioner")

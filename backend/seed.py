@@ -129,12 +129,28 @@ def build_seed():
     def exp(v):
         return d(int(v))
 
-    practitioners = [{**p, "licenseExpiry": exp(p["licenseExpiry"]), "insuranceExpiry": exp(p["insuranceExpiry"])}
+    practitioners = [{**p, "licenseExpiry": exp(p["licenseExpiry"]), "insuranceExpiry": exp(p["insuranceExpiry"]),
+                      "bookable": False, "available": False, "onboardingStatus": "archived_demo"}
                      for p in PRACTITIONERS]
+    # Sole designated therapist for booking paths (Checkpoint B/C). Historical demo rows keep prior ids.
+    from availability import launch_practitioner
+    nabitu = {
+        **launch_practitioner(),
+        "available": True,
+        "bookable": True,
+        "onboardingStatus": "approved",
+        "specialties": ["deep-tissue", "swedish", "sports", "hot-stone", "prenatal", "foot-reflexology", "scalp", "senior", "mobile"],
+        "licenseExpiry": exp("+400"),
+        "insuranceExpiry": exp("+400"),
+        "directBilling": True,
+        "base": {"lat": 53.5461, "lng": -113.4938},
+        "bio": "Designated NabiTouch therapist (demo).",
+    }
+    practitioners = [nabitu] + practitioners
 
     clients = [
         client("c-sarah", "Sarah", "Thompson", f"1990-{today.month:02d}-{min(today.day + 12, 28):02d}", "sarah",
-               marketingConsent=True, favorites=["deep-tissue", "hot-stone"], preferredPractitioners=["p-maya"],
+               marketingConsent=True, favorites=["deep-tissue", "hot-stone"], preferredPractitioners=["p-nabitu-kahindo"],
                loyaltyPoints=340, onlineBookings=3, preferredName="Sarah",
                insurance=[{"id": "ins-sarah", "insurer": "Sample Benefits Co. (demo)", "policy": "DEMO-448120",
                            "memberId": "MBR-0093321", "holderName": "Sarah Thompson", "relationship": "Self",

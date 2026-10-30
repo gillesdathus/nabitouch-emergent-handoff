@@ -98,7 +98,7 @@ class TestBookingLinksToNewClient:
         # Create appointment via /api/book (matches frontend api.book)
         appt = {
             "client": {"id": cid},
-            "practitionerId": "p-maya",
+            "practitionerId": "p-nabitu-kahindo",
             "actor": "Book Flow",
             "appointment": {
                 "serviceSlug": "swedish", "duration": 60,

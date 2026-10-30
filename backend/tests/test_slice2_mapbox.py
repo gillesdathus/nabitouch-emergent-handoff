@@ -48,7 +48,7 @@ def desk():
 def _book(headers, address, location="home", pricing=None, when="10:00", day="2027-08-02"):
     return requests.post(f"{API}/bookings", headers=headers, json={
         "source": "online",
-        "practitionerId": "p-maya",
+        "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": day, "time": when,
             "locationType": location, "paymentMethod": "self",

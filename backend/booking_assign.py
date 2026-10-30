@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+import os
+
 from staff_identity import CANONICAL_PRACTITIONER_ID, CANONICAL_PRACTITIONER_NAME
 
 # Terminal / historical statuses that are not open schedule demand.
@@ -18,22 +20,40 @@ CANCELLED_STATUSES = frozenset({
     "cancelled", "no_show", "interrupted",
 })
 
+# Live Hostinger Nabitu subject predates the launch canonical id. Do not invent merges;
+# accept either id as the same designated therapist.
+DESIGNATED_PRACTITIONER_ALIASES = frozenset({
+    CANONICAL_PRACTITIONER_ID,
+    "p-f3a4279b",
+})
+
 
 def designated_practitioner_id():
-    return CANONICAL_PRACTITIONER_ID
+    override = (os.environ.get("DESIGNATED_PRACTITIONER_ID") or "").strip()
+    return override or CANONICAL_PRACTITIONER_ID
+
+
+def is_designated_practitioner_id(practitioner_id):
+    text = str(practitioner_id or "").strip()
+    if not text:
+        return False
+    if text == designated_practitioner_id():
+        return True
+    return text in DESIGNATED_PRACTITIONER_ALIASES
 
 
 def normalize_requested_practitioner_id(requested):
     """Map client/admin requests onto the sole designated therapist.
 
-    Empty / any / wildcard → Nabitu. Explicit Nabitu id → accepted.
-    Any other id → rejected (never assign Dathus or demo therapists).
+    Empty / any / wildcard → Nabitu. Explicit Nabitu id (canonical or live alias) → accepted.
+    Any other id → rejected (never assign Dathus or unrelated therapists).
     """
     text = str(requested or "").strip()
+    designated = designated_practitioner_id()
     if not text or text.lower() in {"any", "any_available", "available", "*"}:
-        return CANONICAL_PRACTITIONER_ID, "auto"
-    if text == CANONICAL_PRACTITIONER_ID:
-        return CANONICAL_PRACTITIONER_ID, "explicit"
+        return designated, "auto"
+    if is_designated_practitioner_id(text):
+        return designated if text == designated else text, "explicit"
     raise HTTPException(
         409,
         f"Nabitouch currently assigns massage visits to {CANONICAL_PRACTITIONER_NAME} only.",
@@ -68,6 +88,15 @@ async def resolve_booking_practitioner(
     practitioner_id, mode = normalize_requested_practitioner_id(requested_id)
     person = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0})
     if not person:
+        # Production may still use the pre-canonical Nabitu id; resolve by exact launch name.
+        person = await coll("practitioners").find_one(
+            {"name": {"$regex": f"^{CANONICAL_PRACTITIONER_NAME}$", "$options": "i"}},
+            {"_id": 0},
+        )
+        if person and person.get("id"):
+            practitioner_id = person["id"]
+            mode = mode if mode == "explicit" else "auto_name"
+    if not person:
         raise HTTPException(
             409,
             f"{CANONICAL_PRACTITIONER_NAME} is not configured as an active therapist yet. "
@@ -101,13 +130,21 @@ async def resolve_booking_practitioner(
 def filter_recommendation_people(people, requested_id=None):
     """Restrict slot search to the designated therapist (or an explicit Nabitu request)."""
     practitioner_id, _mode = normalize_requested_practitioner_id(requested_id)
-    matched = [person for person in (people or []) if person and person.get("id") == practitioner_id]
+    matched = [
+        person for person in (people or [])
+        if person and (
+            person.get("id") == practitioner_id
+            or is_designated_practitioner_id(person.get("id"))
+            or str(person.get("name") or "").strip().lower() == CANONICAL_PRACTITIONER_NAME.lower()
+        )
+    ]
     if not matched:
         raise HTTPException(
             409,
             f"{CANONICAL_PRACTITIONER_NAME} is not available for online booking yet.",
         )
-    return matched, practitioner_id
+    live_id = matched[0].get("id") or practitioner_id
+    return matched, live_id
 
 
 def categorize_appointment(appt):
@@ -122,7 +159,7 @@ def categorize_appointment(appt):
         return "cancelled_or_historical"
     if not pid:
         return "unassigned"
-    if pid == CANONICAL_PRACTITIONER_ID:
+    if is_designated_practitioner_id(pid):
         return "assigned_nabitu"
     return "assigned_other"
 

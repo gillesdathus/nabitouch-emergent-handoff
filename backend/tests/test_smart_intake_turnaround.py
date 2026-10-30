@@ -74,13 +74,13 @@ def make_ready(sarah, aid, restrictions=None):
 
 def clear_test_next():
     # earlier runs leave TEST bookings on today's p-maya schedule; retire them so 'next' is deterministic (test data only)
-    DB.nt_appointments.update_many({"practitionerId": "p-maya", "idempotencyKey": {"$regex": "^c-sarah:TEST_"}, "status": {"$in": ["confirmed", "assigned", "preparing"]},
+    DB.nt_appointments.update_many({"practitionerId": "p-nabitu-kahindo", "idempotencyKey": {"$regex": "^c-sarah:TEST_"}, "status": {"$in": ["confirmed", "assigned", "preparing"]},
                                     "date": datetime.now(TZ).date().isoformat()}, {"$set": {"status": "cancelled"}})
 
 
 def end_if_active():
     # make sure p-maya has no in_session left over from earlier runs
-    for a in DB.nt_appointments.find({"practitionerId": "p-maya", "status": "in_session"}):
+    for a in DB.nt_appointments.find({"practitionerId": "p-nabitu-kahindo", "status": "in_session"}):
         DB.nt_appointments.update_one({"id": a["id"]}, {"$set": {"status": "soap_pending"}})
 
 
@@ -339,7 +339,7 @@ class TestIntakeConsent:
         maya.post(f"{API}/appointments/{S['n1']}/turnaround/ready", json={}, timeout=20)
         assert maya.get(f"{API}/reports/turnaround", timeout=20).status_code == 403
         today = datetime.now(TZ).date().isoformat()
-        r = owner.get(f"{API}/reports/turnaround", params={"start": today, "end": today, "practitionerId": "p-maya"}, timeout=30)
+        r = owner.get(f"{API}/reports/turnaround", params={"start": today, "end": today, "practitionerId": "p-nabitu-kahindo"}, timeout=30)
         assert r.status_code == 200
         s = r.json()["summary"]
         for k in ("sessions", "avgBookedMin", "avgActualMin", "overtimeCount", "avgCleanupMin", "cleanupOverruns", "onTimeStarts", "lateStarts", "travelDelays", "conflicts"):
@@ -352,7 +352,7 @@ class TestIntakeConsent:
         # booking an adjacent slot fails once p-maya's cleanup buffer is 120 and succeeds again after restore
         first = book(owner, day_offset=(150, 300), times=("09:00",))
         day = first["date"]
-        body = lambda: {"source": "reception", "practitionerId": "p-maya", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
+        body = lambda: {"source": "reception", "practitionerId": "p-nabitu-kahindo", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
                         "appointment": {"serviceSlug": "swedish", "duration": 60, "date": day, "time": "11:00", "locationType": "home", "paymentMethod": "self",
                                         "addressId": "ad-sarah", "address": ADDR}}
         cfg = DB.nt_settings.find_one({"id": "app"}, {"_id": 0, "turnaround": 1}).get("turnaround")

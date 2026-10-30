@@ -162,7 +162,8 @@ test("When seeds draft.date so the highlighted day matches Continue eligibility"
   const view = mount(createElement(StepWhen));
   await act(async () => { await Promise.resolve(); });
   expect(h.patchDraft.mock.calls.some((c) => c[0]?.date === todayISO())).toBe(true);
-  expect(view.host.querySelector("[data-testid='step-pract-any']")?.textContent).toMatch(/Any Available Practitioner/);
+  // Sole-therapist mode removes the multi-practitioner picker from When.
+  expect(view.host.querySelector("[data-testid='step-pract-any']")).toBeNull();
   view.cleanup();
 });
 

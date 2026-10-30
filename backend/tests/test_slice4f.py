@@ -54,7 +54,7 @@ def test_stored_balance_can_be_repaired_from_the_ledger_without_a_replica_set():
     assert body["liveEnabled"] is False
     assert "sk_" not in json.dumps(body)
     booked = requests.post(f"{API}/bookings", headers=sarah, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-09-{(uuid.uuid4().int % 27) + 1:02d}", "time": "16:00",
             "locationType": "clinic", "paymentMethod": "self",
@@ -108,7 +108,7 @@ def test_upload_names_are_stored_safely_and_noterro_stays_unverified():
     owner = _login(_required("OWNER_EMAIL"), _required("OWNER_PASSWORD"))
     sarah = _login("sarah.demo@example.com", _required("DEMO_PASSWORD"))
     booked = requests.post(f"{API}/bookings", headers=sarah, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-10-{(uuid.uuid4().int % 27) + 1:02d}", "time": "09:30",
             "locationType": "clinic", "paymentMethod": "insurance",
