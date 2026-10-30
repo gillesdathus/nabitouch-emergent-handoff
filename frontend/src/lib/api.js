@@ -235,6 +235,7 @@ export const api = {
   legacyRollback: (id) => http.post(`/legacy/batches/${id}/rollback`, {}).then(data),
   legacyInvite: (id, body) => http.post(`/legacy/patients/${id}/invite`, body || {}).then(data),
   legacyInvitePreview: (ids) => http.post('/legacy/invitations/preview', { ids }).then(data),
+  legacyInviteEligible: (params) => http.get('/legacy/invitations/eligible', { params }).then(data),
   legacyInvitationsSend: (ids) => http.post('/legacy/invitations/send', { ids, confirm: true }).then(data),
   legacyInvitations: (params) => http.get('/legacy/invitations', { params }).then(data),
   legacyInviteRevoke: (id) => http.post(`/legacy/invitations/${id}/revoke`, {}).then(data),

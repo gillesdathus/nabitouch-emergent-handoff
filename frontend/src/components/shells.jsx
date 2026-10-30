@@ -68,6 +68,7 @@ const OWNER_MORE_GROUPS = [
     items: [
       { to: "/owner/zones", label: "Zones & settings" },
       { to: "/owner/permissions", label: "Reception access" },
+      { to: "/owner/patients/invitations", label: "Patients · Invitations" },
       { to: "/owner/legacy", label: "Legacy clients" },
     ],
   },

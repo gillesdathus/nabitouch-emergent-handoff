@@ -221,6 +221,7 @@ export default function App() {
                   <Route path="/owner/permissions" element={<Permissions />} />
                   <Route path="/owner/payments" element={<Payments />} />
                   <Route path="/owner/credentials" element={<Credentials />} />
+                  <Route path="/owner/patients/invitations" element={<LegacyClients />} />
                   <Route path="/owner/legacy" element={<LegacyClients />} />
                   <Route path="/owner/availability" element={<ProAvailability mode="owner" />} />
                   <Route path="/owner/routes" element={<ProRoute mode="owner" />} />

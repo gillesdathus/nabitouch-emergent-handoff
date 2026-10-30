@@ -345,7 +345,7 @@ export default function Manage() {
           <HubLink to="/owner/insights" icon={BarChart3} tint="tint-lagoon" title="Insights" detail="Service mix, booked hours, and the audit trail." testid="manage-link-insights" />
           <HubLink to="/owner/permissions" icon={Shield} tint="tint-mint" title="Staff access" detail="Reception permissions and authenticator rules." testid="manage-link-staff" />
           <HubLink to="/owner/zones" icon={Settings} tint="tint-meadow" title="Settings" detail="Clinic booking, payment policy, and GST." testid="manage-link-settings" />
-          <HubLink to="/owner/legacy" icon={Archive} tint="tint-ice" title="Legacy clients" detail="Imported records stay separate until they are linked." testid="manage-link-legacy" />
+          <HubLink to="/owner/patients/invitations" icon={Archive} tint="tint-ice" title="Patients · Invitations" detail="Manually invite imported patients. Nothing sends until you confirm." testid="manage-link-legacy" />
           <HubLink to="/owner/recovery" icon={LifeBuoy} tint="tint-mint" title="Recovery" detail="Restore a visit that was closed by mistake." testid="manage-link-recovery" />
           <HubLink to="/owner/training" icon={GraduationCap} tint="tint-lagoon" title="Training" detail="Isolated scenarios. They do not write to live clients." testid="manage-link-training" />
         </HubSection>
