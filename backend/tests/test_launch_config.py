@@ -38,6 +38,10 @@ def _production_base(monkeypatch):
     monkeypatch.setenv("DOCUMENT_UPLOADS_ENABLED", "false")
     monkeypatch.setenv("STRIPE_CARD_CHECKOUT_ENABLED", "false")
     monkeypatch.setenv("LEGACY_PATIENT_IMPORT_ENABLED", "false")
+    # Isolate from developer .env: simulated/disabled modes reject sk_test_* keys.
+    monkeypatch.setenv("PAYMENT_MODE", "disabled")
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
     monkeypatch.setenv("HOSTING_STRATEGY", "shared-vps")
     monkeypatch.setenv("CLAMAV_HOST", "")
     monkeypatch.setenv("MAPBOX_TOKEN", "sk.test-not-a-live-token")
