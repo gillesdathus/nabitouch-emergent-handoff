@@ -1448,9 +1448,11 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
     else:
         address, zone, km = await locate_visit(payload.get("address") or {}, zones, settings)
     zone_label = {"name": zone_name(zone), "id": (zone or {}).get("id")}
-    people = await coll("practitioners").find({}, {"_id": 0}).to_list(50)
-    if payload.get("practitionerId"):
-        people = [person for person in people if person["id"] == payload["practitionerId"]]
+    from booking_assign import filter_recommendation_people
+    people, resolved_practitioner_id = filter_recommendation_people(
+        await coll("practitioners").find({}, {"_id": 0}).to_list(50),
+        payload.get("practitionerId"),
+    )
     rules = scheduling_rules(settings)
     now = datetime.now(timezone.utc)
     point = point_of(address)
@@ -1495,9 +1497,8 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
             if probe["ok"]:
                 checked.append({**probe, "time": hhmm(start), "practitionerId": person["id"]})
     ordered = rank_slots(checked)
-    if not payload.get("practitionerId"):
-        for row in ordered:
-            row["practitionerId"] = ""
+    for row in ordered:
+        row["practitionerId"] = resolved_practitioner_id
     slots = [public_slot(row) for row in ordered]
     seen = set()
     unique = []
@@ -1506,9 +1507,15 @@ async def recommend_slots(db, coll, locate_visit, payload, production):
             continue
         seen.add(row["time"])
         unique.append(row)
+    unavailable = ""
+    if not unique:
+        from staff_identity import CANONICAL_PRACTITIONER_NAME
+        unavailable = f"No open times with {CANONICAL_PRACTITIONER_NAME} on this day. Nabitouch books by appointment."
     return {
         "recommendations": unique[:3],
         "slots": unique,
+        "practitionerId": resolved_practitioner_id,
+        "unavailableNote": unavailable,
         "travelFee": money(zone_travel(zone, km, "home", settings)) if zone and location != "clinic" else 0,
         "zone": zone_name(zone) if location != "clinic" else "",
     }

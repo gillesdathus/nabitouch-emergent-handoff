@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui-kit";
 import { restrictedFlag } from "@/lib/feature-flags";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
-import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService } from "@/lib/domain";
+import { LOCATION_TYPES, GOALS, FOCUS, addDays, todayISO, fmtDate, fmtTime, money, publiclyBookable, bookableCatalogueService, clinicBookable, paymentChoice, isTrialService, soleTherapistMode, designatedTherapist, CANONICAL_PRACTITIONER_ID, CANONICAL_PRACTITIONER_NAME } from "@/lib/domain";
 import { formatCents } from "@/lib/billing";
 import { addressSelectionPatch, serviceSelectionPatch } from "@/lib/booking-selection";
 
@@ -181,7 +181,11 @@ export function StepWhen() {
   const firstDay = days[0];
   const trialService = state.services.find((row) => row.slug === draft.serviceSlug);
   const trialFlow = Boolean(draft.campaignId && isTrialService(trialService));
-  const pros = state.practitioners.filter((person) => {
+  const soleMode = soleTherapistMode(state.practitioners);
+  const therapist = designatedTherapist(state.practitioners);
+  const therapistId = therapist?.id || CANONICAL_PRACTITIONER_ID;
+  const therapistName = therapist?.name || CANONICAL_PRACTITIONER_NAME;
+  const pros = soleMode ? [] : state.practitioners.filter((person) => {
     if (draft.practitionerId && person.id === draft.practitionerId) return true;
     return publiclyBookable(person) && (!person.specialties?.length || person.specialties.includes(draft.serviceSlug) || trialFlow);
   });
@@ -195,6 +199,11 @@ export function StepWhen() {
   useEffect(() => {
     if (!draft.date && firstDay) patchDraft({ date: firstDay });
   }, [draft.date, firstDay, patchDraft]);
+  useEffect(() => {
+    if (!soleMode) return undefined;
+    if (draft.practitionerId !== therapistId) patchDraft({ practitionerId: therapistId });
+    return undefined;
+  }, [soleMode, therapistId, draft.practitionerId, patchDraft]);
   useEffect(() => {
     let cancel = false;
     const load = async () => {
@@ -216,7 +225,7 @@ export function StepWhen() {
           date,
           duration: draft.duration,
           serviceSlug: draft.serviceSlug,
-          practitionerId: draft.practitionerId || "",
+          practitionerId: soleMode ? therapistId : (draft.practitionerId || ""),
           locationType: draft.locationType,
           address: draft.address || {},
           ...(draft.campaignId ? { campaignId: draft.campaignId } : {}),
@@ -224,7 +233,9 @@ export function StepWhen() {
         if (cancel) return;
         setRecommended(body.recommendations || []);
         setSlots(body.slots || []);
-        setNote((body.slots || []).length ? "" : "No open times on this day. Nabitouch books by appointment.");
+        const emptyNote = body.unavailableNote
+          || ((body.slots || []).length ? "" : `No open times with ${therapistName} on this day. Nabitouch books by appointment.`);
+        setNote(emptyNote);
       } catch (error) {
         if (!cancel) {
           setSlots([]);
@@ -235,23 +246,35 @@ export function StepWhen() {
     };
     load();
     return () => { cancel = true; };
-  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address, draft.campaignId]);
+  }, [api, date, draft.duration, draft.serviceSlug, draft.practitionerId, draft.locationType, draft.address, draft.campaignId, soleMode, therapistId, therapistName]);
   const visible = showAll ? slots : recommended;
   return (
     <div data-testid="step-when">
-      <H t="When works for you?" s="Times come from open practitioner schedules and the drive between visits. A recommendation is not a confirmed assignment." />
+      <H t="When works for you?" s={soleMode ? `Times from ${therapistName}'s open schedule and travel between visits.` : "Times come from open practitioner schedules and the drive between visits. A recommendation is not a confirmed assignment."} />
       <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
         {days.map((d) => (
           <button key={d} type="button" onClick={() => { patchDraft({ date: d, time: null }); setShowAll(false); }} data-testid={`step-date-${d}`} className={`flex h-20 w-16 shrink-0 flex-col items-center justify-center rounded-2xl border-2 transition-colors ${date === d ? "border-transparent text-white nb-gradient" : "border-sky-100 bg-white"}`}>
             <span className={`text-[11px] uppercase ${date === d ? "text-white/80" : "text-nb-mute"}`}>{fmtDate(d, { weekday: "short" })}</span><span className="text-xl font-semibold">{fmtDate(d, { day: "numeric" })}</span><span className={`text-[10px] ${date === d ? "text-white/80" : "text-nb-mute"}`}>{fmtDate(d, { month: "short" })}</span>
           </button>))}
       </div>
-      <p className="nb-label mt-6">Practitioner <span className="font-normal text-nb-mute">(optional)</span></p>
-      <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
-        <button type="button" onClick={() => patchDraft({ practitionerId: "", time: null })} data-testid="step-pract-any" className={!draft.practitionerId ? "nb-chip-on" : "nb-chip-off"}>Any Available Practitioner</button>
-        {pros.map((p) => <button key={p.id} type="button" onClick={() => patchDraft({ practitionerId: p.id, time: null })} data-testid={`step-pract-${p.id}`} className={draft.practitionerId === p.id ? "nb-chip-on" : "nb-chip-off"}><Avatar person={p} size={22} />{p.name}</button>)}
-      </div>
-      {held && !pros.some((person) => person.id === held.id) && <p className="mt-2 text-sm text-red-700" data-testid="step-pract-mismatch">{held.name} does not offer this treatment. Choose another practitioner or Any Available Practitioner.</p>}
+      {soleMode ? (
+        <div className="mt-6 flex items-center gap-3 rounded-2xl border border-sky-100 bg-white px-3 py-3" data-testid="step-pract-sole">
+          <Avatar person={therapist || { name: therapistName, initials: "NK" }} size={36} />
+          <div>
+            <p className="font-semibold text-nb-navy">{therapistName}</p>
+            <p className="text-xs text-nb-mute">Your massage therapist · assigned automatically</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="nb-label mt-6">Practitioner <span className="font-normal text-nb-mute">(optional)</span></p>
+          <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+            <button type="button" onClick={() => patchDraft({ practitionerId: "", time: null })} data-testid="step-pract-any" className={!draft.practitionerId ? "nb-chip-on" : "nb-chip-off"}>Any Available Practitioner</button>
+            {pros.map((p) => <button key={p.id} type="button" onClick={() => patchDraft({ practitionerId: p.id, time: null })} data-testid={`step-pract-${p.id}`} className={draft.practitionerId === p.id ? "nb-chip-on" : "nb-chip-off"}><Avatar person={p} size={22} />{p.name}</button>)}
+          </div>
+          {held && !pros.some((person) => person.id === held.id) && <p className="mt-2 text-sm text-red-700" data-testid="step-pract-mismatch">{held.name} does not offer this treatment. Choose another practitioner or Any Available Practitioner.</p>}
+        </>
+      )}
       <p className="nb-label mt-6">{showAll ? "Open times" : "Recommended times"}{date ? ` · ${fmtDate(date)}` : ""}</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {visible.map((slot) => (

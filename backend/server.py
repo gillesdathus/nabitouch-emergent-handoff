@@ -1552,27 +1552,25 @@ async def clinical_user(request, appt_id):
 
 async def prepare_assignment(appt, practitioner_id):
     """Reserve a requested visit only when the practitioner, credentials, and route still fit."""
-    from availability import practitioner_bookable, qualified
-    from onboarding import assignment_credential_problem
-    person = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
-    if not person or person.get("available") is False:
-        raise HTTPException(409, "That practitioner is not available")
+    from booking_assign import resolve_booking_practitioner
     service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID)
-    if not qualified(person, service or {}):
-        raise HTTPException(409, "That practitioner is not offered for this service")
-    credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
-    problem = assignment_credential_problem(person, credentials)
-    if problem:
-        raise HTTPException(409, problem)
-    schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
-    if not practitioner_bookable(person, schedule):
-        raise HTTPException(409, "That practitioner is not available")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
-    await assert_public_slot(
-        db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id,
-        day=appt["date"], time=appt["time"], duration=int(appt["duration"]), address=appt.get("address") or {},
-        location_type=appt.get("locationType") or "home", service=service, exclude_id=appt.get("id"),
+    resolved = await resolve_booking_practitioner(
+        db, coll,
+        requested_id=practitioner_id,
+        service=service,
+        settings=settings,
+        production=is_production(),
+        day=appt["date"],
+        time=appt["time"],
+        duration=int(appt["duration"]),
+        address=appt.get("address") or {},
+        location_type=appt.get("locationType") or "home",
+        exclude_id=appt.get("id"),
+        enforce_slot=True,
     )
+    practitioner_id = resolved["practitionerId"]
+    person = resolved["person"]
     claimed = False
     if appt.get("status") == "requested" and not appt.get("practitionerId"):
         claimed_row = await coll("appointments").update_one(
@@ -1872,19 +1870,22 @@ async def resolve_booking(payload, user):
         address, zone, km = await locate_visit(address, zones, settings)
     if (settings.get("clinic") or {}).get("mobileEnabled") is False and location != "clinic":
         raise HTTPException(400, "Mobile booking is not available")
-    practitioner_id = payload.get("practitionerId")
-    if practitioner_id:
-        from profiles import person_booking_block
-        practitioner = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
-        credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
-        blocked = person_booking_block(practitioner, service, credentials)
-        if blocked:
-            raise HTTPException(409, blocked)
-    await assert_public_slot(
-        db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id or "",
-        day=fields["date"], time=fields["time"], duration=int(duration), address=address,
-        location_type=location, service=service, trial=trial_visit,
+    from booking_assign import resolve_booking_practitioner
+    resolved = await resolve_booking_practitioner(
+        db, coll,
+        requested_id=payload.get("practitionerId"),
+        service=service,
+        settings=settings,
+        production=is_production(),
+        day=fields["date"],
+        time=fields["time"],
+        duration=int(duration),
+        address=address,
+        location_type=location,
+        trial=trial_visit,
+        enforce_slot=True,
     )
+    practitioner_id = resolved["practitionerId"]
     clients = coll("clients")
     client = await clients.find_one({"id": incoming.get("id")}, NO_ID) if incoming.get("id") else None
     if incoming.get("id") and not client and user and user["role"] in ("owner", "desk"):
@@ -1976,6 +1977,15 @@ async def resolve_booking(payload, user):
         "trialVisit": trial_visit,
         "trialCampaign": trial_campaign,
     }
+
+
+@api.get("/bookings/assignment-audit")
+async def booking_assignment_audit(request: Request):
+    """Read-only appointment assignment tally. Does not reassign historical visits."""
+    await require(request, "owner")
+    from booking_assign import audit_appointment_assignments
+    rows = await coll("appointments").find({}, {"_id": 0, "id": 1, "ref": 1, "status": 1, "practitionerId": 1, "date": 1, "time": 1}).to_list(5000)
+    return audit_appointment_assignments(rows)
 
 
 @api.post("/bookings/quote")

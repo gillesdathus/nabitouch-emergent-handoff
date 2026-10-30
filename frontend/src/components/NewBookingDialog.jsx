@@ -1,21 +1,23 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useDemo } from "@/store/DemoStore";
-import { quote, todayISO, money, slotsFor, fmtTime, staffActor } from "@/lib/domain";
+import { quote, todayISO, money, slotsFor, fmtTime, staffActor, designatedTherapist, CANONICAL_PRACTITIONER_ID, CANONICAL_PRACTITIONER_NAME } from "@/lib/domain";
 import { BOOKING_SOURCES } from "@/lib/workspaces";
 import { apiError } from "@/lib/api";
 
 export function NewBookingDialog({ open, onClose, clientId, defaultSource = "phone" }) {
   const { state, idx, api, run, user } = useDemo();
   const firstService = state.services.find((item) => item.slug === "swedish") || state.services[0];
-  const firstPractitioner = state.practitioners.find((item) => item.id === "p-maya" && item.bookable !== false) || state.practitioners.find((item) => item.available && item.bookable !== false && item.onboardingStatus !== "pending");
+  const therapist = designatedTherapist(state.practitioners);
+  const therapistId = therapist?.id || CANONICAL_PRACTITIONER_ID;
+  const therapistName = therapist?.name || CANONICAL_PRACTITIONER_NAME;
   const [f, setF] = useState({
     clientId: clientId || "",
     serviceSlug: firstService?.slug || "",
     duration: Number(Object.keys(firstService?.prices || { 60: 0 })[0]),
     date: todayISO(),
     time: "",
-    practitionerId: firstPractitioner?.id || "",
+    practitionerId: therapistId,
     locationType: "clinic",
     source: defaultSource,
     query: "",
@@ -31,7 +33,7 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
   const addressReady = f.locationType === "clinic" || addr?.clientConfirmed === true;
   const zone = (state.zones || []).find((z) => z.id === addr?.zoneId);
   const q = quote({ service: s, duration: f.duration, zone, client: c, promotions: [], settings: idx.settings, locationType: f.locationType });
-  const slots = slotsFor(f.date, f.practitionerId, state.appointments, f.duration).filter((x) => x.available);
+  const slots = slotsFor(f.date, therapistId, state.appointments, f.duration).filter((x) => x.available);
 
   useEffect(() => {
     if (!open || f.query.trim().length < 2) { setHits([]); return undefined; }
@@ -66,7 +68,7 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
     };
     try {
       await run(() => api.book({
-        client: { id: f.clientId }, practitionerId: f.practitionerId, source: f.source, actor: staffActor(user),
+        client: { id: f.clientId }, practitionerId: therapistId, source: f.source, actor: staffActor(user),
         appointment, idempotencyKey: `book-${f.clientId}-${f.date}-${f.time}-${f.serviceSlug}`,
       }), "Booking created");
       onClose();
@@ -106,7 +108,11 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
           </div>
           <label><span className="nb-label">Service</span><select className="nb-input" value={f.serviceSlug} onChange={(e) => setF((x) => ({ ...x, serviceSlug: e.target.value, duration: Number(Object.keys(idx.services[e.target.value].prices)[0]), time: "" }))} data-testid="nb-service-select">{state.services.map((x) => <option key={x.slug} value={x.slug}>{x.name}</option>)}</select></label>
           <label><span className="nb-label">Duration</span><select className="nb-input" value={f.duration} onChange={set("duration")} data-testid="nb-duration-select">{Object.keys(s?.prices || {}).map((d) => <option key={d} value={d}>{d} min</option>)}</select></label>
-          <label><span className="nb-label">Practitioner</span><select className="nb-input" value={f.practitionerId} onChange={set("practitionerId")} data-testid="nb-pract-select">{state.practitioners.filter((x) => x.available && x.onboardingStatus !== "draft" && x.onboardingStatus !== "pending" && x.bookable !== false).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+          <div data-testid="nb-pract-sole">
+            <span className="nb-label">Therapist</span>
+            <p className="nb-input flex items-center bg-sky-50/80 text-sm font-semibold text-nb-navy">{therapistName}<span className="ml-2 font-normal text-nb-mute">· assigned automatically</span></p>
+            <input type="hidden" value={therapistId} readOnly />
+          </div>
           <label><span className="nb-label">Location</span><select className="nb-input" value={f.locationType} onChange={set("locationType")} data-testid="nb-location-select"><option value="clinic">Clinic</option><option value="home">Mobile</option></select></label>
           <label><span className="nb-label">Date</span><input type="date" className="nb-input" value={f.date} onChange={set("date")} data-testid="nb-date-input" /></label>
           <label className="sm:col-span-2"><span className="nb-label">Time</span><select className="nb-input" value={f.time} onChange={set("time")} data-testid="nb-time-select"><option value="">Select an open time…</option>{slots.map((x) => <option key={x.time} value={x.time}>{fmtTime(x.time)}</option>)}</select></label>
