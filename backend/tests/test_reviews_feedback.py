@@ -8,7 +8,7 @@ import requests
 from pymongo import MongoClient
 
 from booking_fixtures import EDMONTON_HOME
-from t1_common import API, BENV, MAYA, OWNER, SAMPLE_PW, SARAH, login
+from t1_common import API, BENV, MAYA, NABITU, OWNER, SAMPLE_PW, SARAH, login
 
 DB = MongoClient(BENV["MONGO_URL"])[BENV["DB_NAME"]]
 TZ = ZoneInfo("America/Edmonton")
@@ -31,6 +31,11 @@ def sarah():
 @pytest.fixture(scope="module")
 def maya():
     return login(MAYA)
+
+
+@pytest.fixture(scope="module")
+def nabitu():
+    return login(NABITU)
 
 
 @pytest.fixture(scope="module")
@@ -180,7 +185,7 @@ def book(owner):
     for d in range(30, 250, 3):
         day = (datetime.now(TZ).date() + timedelta(days=d)).isoformat()
         for t in ("08:00", "11:00", "17:00"):
-            body = {"source": "reception", "practitionerId": "p-maya", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
+            body = {"source": "reception", "practitionerId": "p-nabitu-kahindo", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
                     "appointment": {"serviceSlug": "swedish", "duration": 60, "date": day, "time": t, "locationType": "home", "paymentMethod": "self",
                                     "addressId": "ad-sarah", "address": ADDR}}
             b = owner.post(f"{API}/bookings", json=body, timeout=40)
@@ -191,7 +196,7 @@ def book(owner):
 
 class TestInvite:
     def test_completion_prepares_one_held_invite(self, owner):
-        if DB.nt_appointments.find_one({"practitionerId": "p-maya", "status": "in_session"}):
+        if DB.nt_appointments.find_one({"practitionerId": "p-nabitu-kahindo", "status": "in_session"}):
             pytest.skip("p-maya already in session")
         appt = book(owner)
         aid = appt["id"]
@@ -226,35 +231,45 @@ class TestClientRatings:
         assert sarah.get(f"{API}/owner/client-ratings", timeout=20).status_code == 403
         assert requests.get(f"{API}/owner/client-ratings", timeout=20).status_code == 403
 
-    def test_list_and_rate(self, maya):
-        r = maya.get(f"{API}/practitioner/client-ratings", timeout=20)
+    def test_list_and_rate(self, nabitu):
+        r = nabitu.get(f"{API}/practitioner/client-ratings", timeout=20)
         assert r.status_code == 200
         d = r.json()
-        assert d["eligible"], "maya has no eligible visits"
+        if not d["eligible"]:
+            # Seed timeline still holds historical Maya visits; ensure one Nabitu completed visit for rating.
+            aid = unreviewed_sarah(practitioner="p-nabitu-kahindo")
+            r = nabitu.get(f"{API}/practitioner/client-ratings", timeout=20)
+            assert r.status_code == 200
+            d = r.json()
+        assert d["eligible"], "nabitu has no eligible visits"
         aid = S.get("inv_appt") if S.get("inv_appt") in {a["id"] for a in d["eligible"]} else d["eligible"][0]["id"]
-        assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 0}, timeout=20).status_code == 400
-        r = maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 4, "comment": "TEST_ punctual"}, timeout=20)
+        assert nabitu.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 0}, timeout=20).status_code == 400
+        r = nabitu.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 4, "comment": "TEST_ punctual"}, timeout=20)
         assert r.status_code == 200, r.text[:200]
         S["crt"] = r.json()["id"]
-        assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 5}, timeout=20).status_code == 409
-        again = maya.get(f"{API}/practitioner/client-ratings", timeout=20).json()
+        assert nabitu.post(f"{API}/practitioner/client-ratings", json={"appointmentId": aid, "rating": 5}, timeout=20).status_code == 409
+        again = nabitu.get(f"{API}/practitioner/client-ratings", timeout=20).json()
         assert any(x["id"] == S["crt"] for x in again["ratings"]) and aid not in {a["id"] for a in again["eligible"]}
 
-    def test_not_assigned_404_and_not_completed_409(self, maya):
-        other = DB.nt_appointments.find_one({"practitionerId": {"$nin": ["p-maya", None]}, "status": {"$in": REVIEWABLE}}, {"id": 1})
+    def test_not_assigned_404_and_not_completed_409(self, maya, nabitu):
+        # Mismatched practitioner (Maya) must not rate another therapist's visit.
+        other = DB.nt_appointments.find_one(
+            {"practitionerId": {"$nin": ["p-maya", None]}, "status": {"$in": REVIEWABLE}}, {"id": 1}
+        )
         if other:
             assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": other["id"], "rating": 3}, timeout=20).status_code == 404
-        pend = DB.nt_appointments.find_one({"practitionerId": "p-maya", "status": {"$in": ["confirmed", "assigned"]}}, {"id": 1})
+        # Treating practitioner rates own pending visit → not completed yet.
+        pend = DB.nt_appointments.find_one({"practitionerId": "p-nabitu-kahindo", "status": {"$in": ["confirmed", "assigned"]}}, {"id": 1})
         if pend:
-            assert maya.post(f"{API}/practitioner/client-ratings", json={"appointmentId": pend["id"], "rating": 3}, timeout=20).status_code == 409
+            assert nabitu.post(f"{API}/practitioner/client-ratings", json={"appointmentId": pend["id"], "rating": 3}, timeout=20).status_code == 409
 
-    def test_edit_once(self, maya):
+    def test_edit_once(self, nabitu):
         rid = S["crt"]
-        r = maya.put(f"{API}/practitioner/client-ratings/{rid}", json={"rating": 2, "comment": "TEST_ edited"}, timeout=20)
+        r = nabitu.put(f"{API}/practitioner/client-ratings/{rid}", json={"rating": 2, "comment": "TEST_ edited"}, timeout=20)
         assert r.status_code == 200 and r.json()["editCount"] == 1 and r.json()["rating"] == 2
         assert DB.nt_client_ratings.find_one({"id": rid})["history"][0]["rating"] == 4
-        assert maya.put(f"{API}/practitioner/client-ratings/{rid}", json={"rating": 3}, timeout=20).status_code == 409
-        assert maya.put(f"{API}/practitioner/client-ratings/crt-nope", json={"rating": 3}, timeout=20).status_code == 404
+        assert nabitu.put(f"{API}/practitioner/client-ratings/{rid}", json={"rating": 3}, timeout=20).status_code == 409
+        assert nabitu.put(f"{API}/practitioner/client-ratings/crt-nope", json={"rating": 3}, timeout=20).status_code == 404
 
     def test_owner_sees_rating_client_does_not(self, owner, sarah):
         d = owner.get(f"{API}/owner/client-ratings", timeout=20).json()

@@ -72,7 +72,7 @@ class TestIteration10:
         [t.start() for t in th]
         [t.join() for t in th]
         assert sorted(out.values()) == [200, 409], out
-        assert DB.nt_appointments.count_documents({"practitionerId": "p-maya", "status": "in_session"}) == 1
+        assert DB.nt_appointments.count_documents({"practitionerId": "p-nabitu-kahindo", "status": "in_session"}) == 1
         end_if_active()
 
     # LOW: concurrent baselines get unique, contiguous versions
@@ -104,7 +104,7 @@ class TestIteration10:
         cancelled_row = DB.nt_appointments.find_one({"status": "cancelled"}, {"id": 1})
         if not cancelled_row:
             cancelled = "a-TEST-can-" + uuid.uuid4().hex[:8]
-            DB.nt_appointments.insert_one({"id": cancelled, "status": "cancelled", "ref": "TEST-CAN", "practitionerId": "p-maya", "date": "2000-01-01", "time": "09:00", "duration": 60, "locationType": "home"})
+            DB.nt_appointments.insert_one({"id": cancelled, "status": "cancelled", "ref": "TEST-CAN", "practitionerId": "p-nabitu-kahindo", "date": "2000-01-01", "time": "09:00", "duration": 60, "locationType": "home"})
         else:
             cancelled = cancelled_row["id"]
         rows = {
@@ -114,7 +114,7 @@ class TestIteration10:
         }
         for k, v in rows.items():
             DB.nt_ops_alerts.insert_one({"id": f"opa-TEST-{k}-{uuid.uuid4().hex[:6]}", "dedupeKey": "TEST:" + uuid.uuid4().hex, "status": "open",
-                                         "practitionerId": "p-maya", "ref": "TEST", **v})
+                                         "practitionerId": "p-nabitu-kahindo", "ref": "TEST", **v})
             S[k] = DB.nt_ops_alerts.find_one({"dedupeKey": {"$regex": "^TEST:"}, "kind": v["kind"], "at": v["at"]}, sort=[("_id", -1)])["id"]
         r = owner.get(f"{API}/ops/turnaround", timeout=30)
         assert r.status_code == 200

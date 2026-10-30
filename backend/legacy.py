@@ -19,7 +19,6 @@ from auth import check_pw, hash_pw, present, token, write_auth_cookies, REFRESH_
 from documents import ScannerUnavailable, assess
 from emailer import send_email
 from fieldcrypto import open_bytes, open_tree, seal_bytes, seal_tree
-from html import escape
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +145,7 @@ def _public_list_row(row, profile):
         "contactComplete": bool(row.get("hasEmail") or row.get("hasPhone")),
         "duplicateOf": row.get("duplicateOf"),
         "clientId": row.get("clientId"),
+        "invitationReadiness": row.get("invitationReadiness"),
         "importedAt": row.get("createdAt"),
         "invoiceCount": row.get("invoiceCount") or 0,
         "fileCount": row.get("fileCount") or 0,
@@ -174,11 +174,10 @@ async def clear_legacy(db):
 
 
 def invitation_message(link):
-    """Email body is a link only. No clinical, insurance, or contact details."""
-    safe = escape(link)
-    subject = "Set up your Nabitouch account"
-    html = f"<p>Use this private link to set up your Nabitouch account. It expires and can be used once.</p><p><a href=\"{safe}\">{safe}</a></p>"
-    return subject, html
+    """Branded claim-link email. No clinical, insurance, or contact details."""
+    brand = (os.environ.get("EMAIL_FROM_NAME") or "Nabitouch").strip() or "Nabitouch"
+    from email_templates import legacy_patient_invitation_email
+    return legacy_patient_invitation_email(brand, link)
 
 
 def _token_hash(value):
@@ -336,6 +335,39 @@ def build_legacy_router(db, coll, add_audit, user_from):
         report["dryRun"] = True
         return report
 
+    @r.post("/nabitouch-csv/preview")
+    async def nabitouch_csv_preview(
+        request: Request,
+        patient_export: UploadFile = File(...),
+        patients_without_appointments: UploadFile = File(...),
+        practitioner_sales_report: UploadFile = File(...),
+    ):
+        """Checkpoint D dry-run for NabiTouch Noterro CSVs. Never writes operational data."""
+        user = await owner(request)
+        from nabitouch_csv_import import build_migration_preview, public_preview
+        pe = await patient_export.read()
+        pw = await patients_without_appointments.read()
+        sales = await practitioner_sales_report.read()
+        if max(len(pe), len(pw), len(sales)) > 8 * 1024 * 1024:
+            raise HTTPException(413, "File is too large")
+        existing = await coll("clients").find({}, {"_id": 0, "id": 1, "email": 1, "phone": 1}).to_list(5000)
+        report = build_migration_preview(
+            patient_export_csv=pe,
+            secondary_csv=pw,
+            sales_csv=sales,
+            existing_clients=existing,
+        )
+        finances = report["summary"].get("finances") or {}
+        # Do not log personal fields — counts only.
+        logger.info(
+            "nabitouch csv preview patients=%s invoices=%s errors=%s",
+            report["summary"].get("distinctDisplayNames"),
+            finances.get("invoiceCount"),
+            len(report.get("errors") or []),
+        )
+        await audit(user.get("email") or "owner", "nabitouch_csv_preview", None)
+        return public_preview(report)
+
     @r.post("/import")
     async def run_import(request: Request):
         from config import legacy_patient_import_enabled
@@ -384,6 +416,13 @@ def build_legacy_router(db, coll, add_audit, user_from):
     async def _issue(user, row, corrected_email=None):
         if row["status"] not in ("imported", "ready_to_invite", "invited", "invitation_expired"):
             raise HTTPException(409, "This record cannot be invited in its current state")
+        if row.get("duplicateOf"):
+            raise HTTPException(409, "Resolve the duplicate identity before sending an invitation")
+        readiness = row.get("invitationReadiness") or ""
+        if readiness in ("requires_identity_reconciliation", "requires_contact_verification"):
+            raise HTTPException(409, "Complete identity or contact verification before inviting")
+        if row.get("clientId"):
+            raise HTTPException(409, "This legacy record is already linked to an account")
         profile = open_tree(row.get("profile") or {})
         if corrected_email:
             profile["email"] = _clip(corrected_email, 240).lower()
@@ -393,6 +432,15 @@ def build_legacy_router(db, coll, add_audit, user_from):
             }})
         if not profile.get("email") and not profile.get("phone"):
             raise HTTPException(400, "Add a phone or email before sending an invitation")
+        # Block invite when a live client already uses this email (duplicate account prevention).
+        email_norm = (profile.get("email") or "").strip().lower()
+        if email_norm:
+            existing_client = await coll("clients").find_one({"email": email_norm}, {"_id": 0, "id": 1})
+            if existing_client:
+                raise HTTPException(409, "An active client account already uses this email")
+            existing_user = await db.nt_users.find_one({"email": email_norm}, {"_id": 0, "id": 1, "role": 1})
+            if existing_user:
+                raise HTTPException(409, "An account already uses this email")
         recent = await db.nt_legacy_invitations.count_documents({
             "patientId": row["id"],
             "createdAt": {"$gt": (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()},
@@ -405,9 +453,21 @@ def build_legacy_router(db, coll, add_audit, user_from):
         link = _invite_link(raw)
         subject, html = invitation_message(link)
         delivery = "manual"
+        channel = "manual"
         if profile.get("email"):
             message_id = await send_email(to=profile["email"], subject=subject, html=html)
             delivery = "sent" if message_id else "not-sent"
+            channel = "email"
+        elif profile.get("phone"):
+            # Optional future SMS path — never auto-send. Phone-only stays manual unless both flags are on.
+            sms_on = (os.environ.get("SMS_ENABLED") or "").lower() in ("1", "true", "yes")
+            legacy_sms = (os.environ.get("LEGACY_SMS_INVITES_ENABLED") or "").lower() in ("1", "true", "yes")
+            if sms_on and legacy_sms:
+                delivery = "sms_not_implemented"
+                channel = "sms_pending"
+            else:
+                delivery = "manual"
+                channel = "sms_manual"
         await db.nt_legacy_invitations.update_many(
             {"patientId": row["id"], "usedAt": None, "revokedAt": None},
             {"$set": {"revokedAt": now_iso()}},
@@ -415,11 +475,11 @@ def build_legacy_router(db, coll, add_audit, user_from):
         await db.nt_legacy_invitations.insert_one({
             "id": invite_id, "patientId": row["id"], "tokenHash": _token_hash(raw),
             "createdAt": now_iso(), "expiresAt": expires, "usedAt": None, "revokedAt": None,
-            "delivery": delivery, "createdBy": user["email"],
+            "delivery": delivery, "channel": channel, "createdBy": user["email"],
         })
         await db.nt_legacy_patients.update_one({"id": row["id"]}, {"$set": {"status": "invited", "updatedAt": now_iso()}})
         await audit(user["email"], "legacy_invite", row["id"])
-        return {"id": invite_id, "delivery": delivery, "expiresAt": expires, "link": link, "patientId": row["id"]}
+        return {"id": invite_id, "delivery": delivery, "channel": channel, "expiresAt": expires, "link": link, "patientId": row["id"]}
 
     @r.post("/patients/{record_id}/invite")
     async def invite_one(record_id: str, request: Request):
@@ -430,6 +490,17 @@ def build_legacy_router(db, coll, add_audit, user_from):
         body = await request.json()
         return await _issue(user, row, body.get("email"))
 
+    def _invite_eligible(row):
+        if not row:
+            return False
+        if row.get("duplicateOf") or row.get("clientId"):
+            return False
+        if row.get("invitationReadiness") in ("requires_identity_reconciliation", "requires_contact_verification"):
+            return False
+        if row["status"] not in ("imported", "ready_to_invite", "invitation_expired"):
+            return False
+        return bool(row.get("hasEmail") or row.get("hasPhone"))
+
     @r.post("/invitations/preview")
     async def preview_invites(request: Request):
         await owner(request)
@@ -437,12 +508,35 @@ def build_legacy_router(db, coll, add_audit, user_from):
         ids = body.get("ids") or []
         ready, blocked = [], []
         for record_id in ids:
-            row = await db.nt_legacy_patients.find_one({"id": record_id}, {"_id": 0, "id": 1, "status": 1, "hasEmail": 1, "hasPhone": 1})
-            if row and row["status"] in ("imported", "ready_to_invite", "invitation_expired") and (row.get("hasEmail") or row.get("hasPhone")):
+            row = await db.nt_legacy_patients.find_one(
+                {"id": record_id},
+                {"_id": 0, "id": 1, "status": 1, "hasEmail": 1, "hasPhone": 1,
+                 "duplicateOf": 1, "clientId": 1, "invitationReadiness": 1},
+            )
+            if _invite_eligible(row):
                 ready.append(record_id)
             else:
                 blocked.append(record_id)
         return {"ready": ready, "blocked": blocked, "willSend": False}
+
+    @r.get("/invitations")
+    async def list_invitations(request: Request):
+        """Invitation status dashboard data. Never returns raw tokens."""
+        await owner(request)
+        patient_id = (request.query_params.get("patientId") or "").strip() or None
+        query = {"patientId": patient_id} if patient_id else {}
+        rows = await db.nt_legacy_invitations.find(
+            query,
+            {"_id": 0, "tokenHash": 0},
+        ).sort("createdAt", -1).to_list(200)
+        open_count = sum(1 for row in rows if not row.get("usedAt") and not row.get("revokedAt"))
+        return {
+            "items": rows,
+            "total": len(rows),
+            "openCount": open_count,
+            "autoSendOnImport": False,
+            "smsInvitesEnabled": False,
+        }
 
     @r.post("/invitations/send")
     async def send_invites(request: Request):
@@ -825,6 +919,9 @@ async def _prepare(db, records, invoices, dry, actor="owner"):
         status = _status_for(profile, duplicate_of)
         if status == "needs_contact_review":
             needs_contact += 1
+        readiness = _clip(raw.get("invitation_readiness"), 80) or None
+        flags = raw.get("reconciliation_flags") if isinstance(raw.get("reconciliation_flags"), dict) else None
+        # Import never activates accounts or sends invitations.
         prepared.append({
             "id": "leg-" + uuid.uuid4().hex[:12],
             "sourceDatabase": SOURCE_DATABASE,
@@ -839,6 +936,8 @@ async def _prepare(db, records, invoices, dry, actor="owner"):
             "identityKey": identity,
             "duplicateOf": duplicate_of,
             "clientId": None,
+            "invitationReadiness": readiness,
+            "reconciliationFlags": flags,
             "notes": "",
             "invoiceCount": 0,
             "fileCount": 0,

@@ -28,7 +28,7 @@ def _login(email, password):
 def _book(headers, clock):
     day = (uuid.uuid4().int % 27) + 1
     response = requests.post(f"{API}/bookings", headers=headers, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-11-{day:02d}", "time": clock,
             "locationType": "clinic", "paymentMethod": "self",
@@ -93,7 +93,7 @@ def test_signed_notes_gain_amendments_and_booking_does_not_create_consent():
     assert promo[0]["body"] == "A spring visit is available."
     soon = (date.today() + timedelta(days=10)).isoformat()
     later = (date.today() + timedelta(days=400)).isoformat()
-    near = requests.post(f"{API}/credentials", headers=owner, json={"practitionerId": "p-maya", "kind": "liability", "identifier": "POL-100", "expiresOn": soon}, timeout=20)
+    near = requests.post(f"{API}/credentials", headers=owner, json={"practitionerId": "p-nabitu-kahindo", "kind": "liability", "identifier": "POL-100", "expiresOn": soon}, timeout=20)
     requests.post(f"{API}/credentials", headers=owner, json={"practitionerId": "p-liam", "kind": "registration", "identifier": "REG-200", "expiresOn": later}, timeout=20)
     assert near.json()["status"] == "uploaded"
     due = requests.get(f"{API}/credentials/reminders", headers=owner, timeout=20).json()

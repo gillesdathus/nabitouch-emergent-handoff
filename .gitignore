@@ -110,3 +110,9 @@ firebase-admin*.json
 *service-account*.json
 frontend/android/app/google-services.json
 frontend/ios/App/App/GoogleService-Info.plist
+
+# Historical CSV imports — personal data, never commit
+private_imports/
+**/private_imports/**
+exports/*.csv
+attachments/

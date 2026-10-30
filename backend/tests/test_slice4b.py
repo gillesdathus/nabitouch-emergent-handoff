@@ -22,7 +22,7 @@ def _login(email, password):
 
 def _issued(owner, sarah, when):
     booked = requests.post(f"{API}/bookings", headers=sarah, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-04-{(uuid.uuid4().int % 27) + 1:02d}", "time": when,
             "locationType": "clinic", "paymentMethod": "insurance",

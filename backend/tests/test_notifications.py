@@ -263,7 +263,7 @@ def _book(headers, when="10:00"):
     global _booking_day
     _booking_day += 1
     day = (date.today() + timedelta(days=400 + _booking_day)).isoformat()
-    body = {"client": {}, "practitionerId": "p-maya", "idempotencyKey": "mail-" + uuid.uuid4().hex[:12],
+    body = {"client": {}, "practitionerId": "p-nabitu-kahindo", "idempotencyKey": "mail-" + uuid.uuid4().hex[:12],
             "appointment": {"date": day, "time": when, "duration": 60, "serviceSlug": "swedish",
                             "address": {"line": "10150 104 St NW, Edmonton, AB", "mapboxId": "local-downtown", "postal": "T5J 2R4", "clientConfirmed": True},
                             "pricing": {"subtotal": 100, "gst": 5, "total": 105}, "paymentMethod": "card", "preferences": {}},

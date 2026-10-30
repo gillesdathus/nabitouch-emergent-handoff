@@ -34,7 +34,7 @@ def test_only_a_signed_checkout_event_reduces_the_balance():
     owner = _login(_required("OWNER_EMAIL"), _required("OWNER_PASSWORD"))
     sarah = _login("sarah.demo@example.com", _required("DEMO_PASSWORD"))
     booked = requests.post(f"{API}/bookings", headers=sarah, json={
-        "source": "online", "practitionerId": "p-maya",
+        "source": "online", "practitionerId": "p-nabitu-kahindo",
         "appointment": {
             "serviceSlug": "swedish", "duration": 60, "date": f"2028-08-{(uuid.uuid4().int % 27) + 1:02d}", "time": "11:00",
             "locationType": "clinic", "paymentMethod": "self",

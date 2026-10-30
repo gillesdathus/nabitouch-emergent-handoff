@@ -1,5 +1,22 @@
 // Domain model + pure business logic (no UI). Replaceable by production services later.
 
+/** Sole designated massage therapist for NabiTouch launch operations. */
+export const CANONICAL_PRACTITIONER_ID = "p-nabitu-kahindo";
+export const CANONICAL_PRACTITIONER_NAME = "Nabitu Kahindo";
+
+export function soleTherapistMode(practitioners) {
+  const list = practitioners || [];
+  const bookable = list.filter(publiclyBookable);
+  if (bookable.length === 1) return true;
+  if (bookable.length === 0 && list.some((p) => p?.id === CANONICAL_PRACTITIONER_ID)) return true;
+  return list.length <= 1;
+}
+
+export function designatedTherapist(practitioners) {
+  const list = practitioners || [];
+  return list.find((p) => p?.id === CANONICAL_PRACTITIONER_ID) || list.find(publiclyBookable) || list[0] || null;
+}
+
 export function profileVisibility(person) {
   if (!person) return "draft";
   if (["draft", "published", "hidden"].includes(person.profileVisibility)) return person.profileVisibility;

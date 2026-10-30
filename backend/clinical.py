@@ -7,6 +7,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from fieldcrypto import open_tree, seal_tree
+from rbac import has_strict_role
+from staff_identity import (
+    can_administer_credentials,
+    can_review_clinical_compliance,
+    is_treating_clinician,
+)
 
 TZ = ZoneInfo("America/Edmonton")
 INTAKE_FIELDS = ("allergies", "medications", "concerns", "preferences", "contraindications")
@@ -60,10 +66,8 @@ def build_clinical_router(db, coll, add_audit, user_from):
 
     async def clinical(request, appt_id):
         user = await actor(request)
-        if user["role"] not in ("owner", "practitioner"):
-            raise HTTPException(403, "Clinical notes are restricted")
         appt = await coll("appointments").find_one({"id": appt_id}, {"_id": 0})
-        if not appt or (user["role"] == "practitioner" and appt.get("practitionerId") != user.get("subject")):
+        if not appt or not is_treating_clinician(user, appt):
             raise HTTPException(403, "Clinical notes restricted to the treating practitioner")
         return user, appt
 
@@ -114,16 +118,15 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/clinical/snippets")
     async def list_snippets(request: Request):
         user = await actor(request)
-        if user["role"] not in ("owner", "practitioner"):
+        if not has_strict_role(user, "practitioner") or not user.get("subject"):
             raise HTTPException(403, "Not permitted")
-        query = {} if user["role"] == "owner" else {"practitionerId": user.get("subject")}
-        rows = await db.nt_snippets.find(query, {"_id": 0}).to_list(100)
+        rows = await db.nt_snippets.find({"practitionerId": user.get("subject")}, {"_id": 0}).to_list(100)
         return rows
 
     @r.post("/clinical/snippets")
     async def create_snippet(request: Request):
         user = await actor(request)
-        if user["role"] != "practitioner":
+        if not has_strict_role(user, "practitioner") or not user.get("subject"):
             raise HTTPException(403, "Snippets belong to the practitioner who writes them")
         body = await request.json()
         label, text = _clip(body.get("label"), 80), _clip(body.get("text"), 240)
@@ -148,12 +151,13 @@ def build_clinical_router(db, coll, add_audit, user_from):
         return {k: v for k, v in row.items() if k != "_id"}
 
     async def intake_visible(user, client_id):
-        if user["role"] == "client" and user.get("subject") == client_id:
+        if user.get("role") == "client" and user.get("subject") == client_id:
             return True
-        if user["role"] == "owner":
-            return True
-        if user["role"] == "practitioner":
-            visit = await coll("appointments").find_one({"clientId": client_id, "practitionerId": user.get("subject")}, {"_id": 1})
+        # Full intake is a care record. Business owners and reception use precautions only.
+        if has_strict_role(user, "practitioner") and user.get("subject"):
+            visit = await coll("appointments").find_one(
+                {"clientId": client_id, "practitionerId": user.get("subject")}, {"_id": 1},
+            )
             return bool(visit)
         return False
 
@@ -182,11 +186,9 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/consents")
     async def list_consents(request: Request):
         user = await actor(request)
-        if user["role"] == "client":
+        if user.get("role") == "client":
             query = {"clientId": user.get("subject")}
-        elif user["role"] == "owner":
-            query = {}
-        elif user["role"] == "practitioner":
+        elif has_strict_role(user, "practitioner") and user.get("subject"):
             query = {"practitionerVisible": True, "clientId": {"$in": await _client_ids(user)}}
         else:
             raise HTTPException(403, "Not permitted")
@@ -235,9 +237,9 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/credentials")
     async def list_credentials(request: Request):
         user = await actor(request)
-        if user["role"] == "owner":
+        if has_strict_role(user, "owner"):
             return await db.nt_credentials.find({}, {"_id": 0}).to_list(200)
-        if user["role"] == "practitioner" and user.get("subject"):
+        if has_strict_role(user, "practitioner") and user.get("subject"):
             return await db.nt_credentials.find({"practitionerId": user["subject"]}, {"_id": 0}).to_list(50)
         raise HTTPException(403, "Credential review is limited to the owner and the treating practitioner")
 
@@ -246,14 +248,16 @@ def build_clinical_router(db, coll, add_audit, user_from):
         user = await actor(request)
         body = await request.json()
         practitioner_id = body.get("practitionerId")
-        if user["role"] == "owner":
+        if has_strict_role(user, "owner"):
             if not practitioner_id:
                 raise HTTPException(400, "Choose the practitioner and credential")
-        elif user["role"] == "practitioner":
+        elif has_strict_role(user, "practitioner"):
             practitioner_id = user.get("subject")
             if not practitioner_id or (body.get("practitionerId") and body.get("practitionerId") != practitioner_id):
                 raise HTTPException(403, "You can only add credentials for your own profile")
         else:
+            raise HTTPException(403, "Only the owner or the practitioner may record credentials")
+        if not can_administer_credentials(user):
             raise HTTPException(403, "Only the owner or the practitioner may record credentials")
         if body.get("kind") not in CREDENTIAL_KINDS or not practitioner_id:
             raise HTTPException(400, "Choose the practitioner and credential")
@@ -290,7 +294,7 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.post("/credentials/{credential_id}/verify")
     async def verify_credential(credential_id: str, request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_strict_role(user, "owner"):
             raise HTTPException(403, "Only the owner verifies a credential")
         await step_up(user)
         from onboarding import acceptable_identifier
@@ -310,7 +314,7 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/credentials/reminders")
     async def credential_reminders(request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_strict_role(user, "owner"):
             raise HTTPException(403, "Only the owner reviews renewal reminders")
         settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
         windows = settings.get("credentialReminderDays") or [60, 30, 14, 7]
@@ -351,7 +355,7 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.post("/notices/marketing")
     async def marketing_notice(request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_strict_role(user, "owner"):
             raise HTTPException(403, "Only the owner sends promotional messages")
         body = await request.json()
         client = await coll("clients").find_one({"id": body.get("clientId")}, {"_id": 0, "marketingConsent": 1})
@@ -387,7 +391,7 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/clinical/export/{client_id}")
     async def export_clinical(client_id: str, request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not can_review_clinical_compliance(user):
             raise HTTPException(403, "Clinical export is limited to the owner")
         await step_up(user)
         notes = await coll("soap").find({"clientId": client_id}, {"_id": 0, "appointmentId": 1, "status": 1, "signedAt": 1}).to_list(100)
@@ -403,7 +407,7 @@ def build_clinical_router(db, coll, add_audit, user_from):
     @r.get("/clinical/access")
     async def access_log(request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not can_review_clinical_compliance(user):
             raise HTTPException(403, "Only the owner reviews clinical access")
         rows = await db.nt_clinical_access.find({}, {"_id": 0}).sort("at", -1).to_list(50)
         return rows

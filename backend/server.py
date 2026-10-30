@@ -689,6 +689,18 @@ async def get_state(request: Request):
     if role == "owner":
         out["inquiries"] = await db.nt_inquiries.find({}, NO_ID).sort("at", -1).to_list(20)
         out["mailOps"] = await notification_summary(db)
+        # Business ownership is not a care relationship. Dual-role therapists keep only their notes.
+        from rbac import has_strict_role
+        if has_strict_role(u, "practitioner") and sub:
+            out["soap"] = [note for note in out["soap"] if note.get("practitionerId") == sub]
+            out["plans"] = [plan for plan in out["plans"] if plan.get("practitionerId") == sub]
+        else:
+            out["soap"] = []
+    elif role == "manager":
+        # Manager ops use the owner workspace for business data; SOAP stays care-restricted.
+        out["inquiries"] = await db.nt_inquiries.find({}, NO_ID).sort("at", -1).to_list(20)
+        out["mailOps"] = await notification_summary(db)
+        out["soap"] = []
     elif role == "desk":
         out["soap"] = []
         out["plans"] = []
@@ -1392,25 +1404,28 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
     elif kind == "reassigned":
         if set(extra) != {"practitionerId"}:
             raise HTTPException(400, "Reassign requires a practitioner")
-        person = await coll("practitioners").find_one({"id": extra["practitionerId"]}, NO_ID)
+        from booking_assign import normalize_requested_practitioner_id
+        # Sole-therapist mode: staff cannot reassign to unauthorized practitioner ids.
+        practitioner_id, _assign_mode = normalize_requested_practitioner_id(extra.get("practitionerId"))
+        person = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
         if not person or person.get("available") is False:
             raise HTTPException(409, "That practitioner is not available")
         from onboarding import assignment_credential_problem
-        credentials = await db.nt_credentials.find({"practitionerId": extra["practitionerId"]}, {"_id": 0}).to_list(20)
+        credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
         problem = assignment_credential_problem(person, credentials)
         if problem:
             raise HTTPException(409, problem)
         service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID)
         settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
         await assert_public_slot(
-            db, coll, settings=settings, production=is_production(), practitioner_id=extra["practitionerId"],
+            db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id,
             day=appt["date"], time=appt["time"], duration=int(appt["duration"]), address=appt.get("address") or {},
             location_type=appt.get("locationType") or "home", service=service, exclude_id=appt_id,
         )
-        await ensure_slot(extra["practitionerId"], appt["date"], appt["time"], appt["duration"], appt_id)
-        upd["practitionerId"] = extra["practitionerId"]
+        await ensure_slot(practitioner_id, appt["date"], appt["time"], appt["duration"], appt_id)
+        upd["practitionerId"] = practitioner_id
         # Keep denormalized message ownership in sync so unread badges do not orphan to the prior practitioner.
-        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": extra["practitionerId"]}})
+        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": practitioner_id}})
         if appt.get("trip"):
             upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": now_iso()}
         await end_tracking(appt_id)
@@ -1530,36 +1545,35 @@ async def sign_soap(appt_id: str, request: Request, body: dict = Body(...)):
 
 
 async def clinical_user(request, appt_id):
-    u = await require(request, "owner", "practitioner")
+    from staff_identity import is_treating_clinician
+    u = await require(request, "practitioner")
     appt = await coll("appointments").find_one({"id": appt_id}, NO_ID)
-    if not appt or (u["role"] == "practitioner" and appt.get("practitionerId") != u["subject"]):
+    if not appt or not is_treating_clinician(u, appt):
         raise HTTPException(403, "Clinical notes restricted to the treating practitioner")
     return u
 
 
 async def prepare_assignment(appt, practitioner_id):
     """Reserve a requested visit only when the practitioner, credentials, and route still fit."""
-    from availability import practitioner_bookable, qualified
-    from onboarding import assignment_credential_problem
-    person = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
-    if not person or person.get("available") is False:
-        raise HTTPException(409, "That practitioner is not available")
+    from booking_assign import resolve_booking_practitioner
     service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID)
-    if not qualified(person, service or {}):
-        raise HTTPException(409, "That practitioner is not offered for this service")
-    credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
-    problem = assignment_credential_problem(person, credentials)
-    if problem:
-        raise HTTPException(409, problem)
-    schedule = await db.nt_schedules.find_one({"practitionerId": practitioner_id}, {"_id": 0})
-    if not practitioner_bookable(person, schedule):
-        raise HTTPException(409, "That practitioner is not available")
     settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
-    await assert_public_slot(
-        db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id,
-        day=appt["date"], time=appt["time"], duration=int(appt["duration"]), address=appt.get("address") or {},
-        location_type=appt.get("locationType") or "home", service=service, exclude_id=appt.get("id"),
+    resolved = await resolve_booking_practitioner(
+        db, coll,
+        requested_id=practitioner_id,
+        service=service,
+        settings=settings,
+        production=is_production(),
+        day=appt["date"],
+        time=appt["time"],
+        duration=int(appt["duration"]),
+        address=appt.get("address") or {},
+        location_type=appt.get("locationType") or "home",
+        exclude_id=appt.get("id"),
+        enforce_slot=True,
     )
+    practitioner_id = resolved["practitionerId"]
+    person = resolved["person"]
     claimed = False
     if appt.get("status") == "requested" and not appt.get("practitionerId"):
         claimed_row = await coll("appointments").update_one(
@@ -1811,7 +1825,8 @@ async def bind_trial_campaign(payload):
     appointment["addonIds"] = []
     bound = {**payload, "appointment": appointment, "useCredit": False, "redeemPoints": None, "winbackCode": None, "followupCode": None}
     if campaign.get("practitionerId"):
-        bound["practitionerId"] = campaign["practitionerId"]
+        from booking_assign import normalize_requested_practitioner_id
+        bound["practitionerId"], _ = normalize_requested_practitioner_id(campaign.get("practitionerId"))
     return bound, campaign
 
 
@@ -1859,19 +1874,22 @@ async def resolve_booking(payload, user):
         address, zone, km = await locate_visit(address, zones, settings)
     if (settings.get("clinic") or {}).get("mobileEnabled") is False and location != "clinic":
         raise HTTPException(400, "Mobile booking is not available")
-    practitioner_id = payload.get("practitionerId")
-    if practitioner_id:
-        from profiles import person_booking_block
-        practitioner = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
-        credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
-        blocked = person_booking_block(practitioner, service, credentials)
-        if blocked:
-            raise HTTPException(409, blocked)
-    await assert_public_slot(
-        db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id or "",
-        day=fields["date"], time=fields["time"], duration=int(duration), address=address,
-        location_type=location, service=service, trial=trial_visit,
+    from booking_assign import resolve_booking_practitioner
+    resolved = await resolve_booking_practitioner(
+        db, coll,
+        requested_id=payload.get("practitionerId"),
+        service=service,
+        settings=settings,
+        production=is_production(),
+        day=fields["date"],
+        time=fields["time"],
+        duration=int(duration),
+        address=address,
+        location_type=location,
+        trial=trial_visit,
+        enforce_slot=True,
     )
+    practitioner_id = resolved["practitionerId"]
     clients = coll("clients")
     client = await clients.find_one({"id": incoming.get("id")}, NO_ID) if incoming.get("id") else None
     if incoming.get("id") and not client and user and user["role"] in ("owner", "desk"):
@@ -1963,6 +1981,15 @@ async def resolve_booking(payload, user):
         "trialVisit": trial_visit,
         "trialCampaign": trial_campaign,
     }
+
+
+@api.get("/bookings/assignment-audit")
+async def booking_assignment_audit(request: Request):
+    """Read-only appointment assignment tally. Does not reassign historical visits."""
+    await require(request, "owner")
+    from booking_assign import audit_appointment_assignments
+    rows = await coll("appointments").find({}, {"_id": 0, "id": 1, "ref": 1, "status": 1, "practitionerId": 1, "date": 1, "time": 1}).to_list(5000)
+    return audit_appointment_assignments(rows)
 
 
 @api.post("/bookings/quote")

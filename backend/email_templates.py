@@ -48,6 +48,21 @@ def invitation_email(brand, name, role, link):
     return (f"You're invited to {brand}", layout(brand, name, f"You've been invited to join Nabitouch as {role}. The link expires soon.", [], ("Accept invitation", link)))
 
 
+def legacy_patient_invitation_email(brand, link):
+    """Account-claim invite for historical patients. No clinical, insurance, or contact PHI."""
+    return (
+        f"Set up your {brand} account",
+        layout(
+            brand,
+            "there",
+            "Use this private link to set up your Nabitouch account. It expires and can be used once.",
+            [],
+            ("Set up account", link),
+            "This invitation does not create an active patient account until you verify your identity.",
+        ),
+    )
+
+
 def recovery_email(brand, name, link):
     return (f"Reset your {brand} password", layout(brand, name, "We received a request to reset your password. If it wasn't you, ignore this email.", [], ("Choose a new password", link)))
 

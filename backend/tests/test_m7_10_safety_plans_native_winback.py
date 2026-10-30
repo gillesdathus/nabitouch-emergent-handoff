@@ -57,7 +57,7 @@ def quote_free(sess, extra):
     for i in range(20):
         d = (date.today() + timedelta(days=12 + i)).isoformat()
         for t in ("10:00", "13:00", "15:00"):
-            body = {"source": "online", "practitionerId": "p-maya", "appointment": {
+            body = {"source": "online", "practitionerId": "p-nabitu-kahindo", "appointment": {
                 "serviceSlug": "swedish", "duration": 60, "date": d, "time": t, "locationType": "home", "paymentMethod": "self", "addressId": "ad-sarah", "address": ADDR}}
             body.update(extra)
             q = sess.post(f"{API}/bookings/quote", json=body, timeout=20)
@@ -71,7 +71,7 @@ def book(sess, service="swedish", duration=60, extra=None, expect=200):
     for _ in range(8):
         d = (date.today() + timedelta(days=random.randint(3, 30))).isoformat()
         t = random.choice(["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"])
-        body = {"source": "online", "practitionerId": "p-maya", "appointment": {
+        body = {"source": "online", "practitionerId": "p-nabitu-kahindo", "appointment": {
             "serviceSlug": service, "duration": duration, "date": d, "time": t, "locationType": "home", "paymentMethod": "self", "addressId": "ad-sarah",
             "address": ADDR}}
         body.update(extra or {})

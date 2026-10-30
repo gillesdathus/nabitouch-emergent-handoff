@@ -37,7 +37,7 @@ class TestStatementLock:
         s = login(OWNER)
         start, end = "2027-01-01", "2027-06-30"
         # Find a period with invoiced maya visits; fall back to a broad future window.
-        body = {"practitionerId": "p-maya", "start": start, "end": end}
+        body = {"practitionerId": "p-nabitu-kahindo", "start": start, "end": end}
         before = [x for x in s.get(f"{API}/finance/statements", timeout=20).json() if x.get("practitionerId") == "p-maya" and x["start"] == start]
         for x in before:
             s.delete(f"{API}/finance/statements/{x['id']}", timeout=20)

@@ -606,9 +606,10 @@ export default function Booking() {
     else if (step === BOOKING_STEP.PREFERENCES && trialFlow) go(BOOKING_STEP.WHEN, { replace: true });
     else go(step - 1, { replace: true });
   };
-  const practitionerSummary = draft.practitionerId
-    ? (idx.practitioners[draft.practitionerId]?.name || "Selected practitioner is unavailable — choose another or Any Available Practitioner")
-    : "Request only — a practitioner is not assigned yet";
+  const soleTherapist = (state.practitioners || []).find((p) => p.id === "p-nabitu-kahindo")
+    || (state.practitioners || []).find((p) => p.id === draft.practitionerId);
+  const practitionerSummary = soleTherapist?.name
+    || (draft.practitionerId ? (idx.practitioners[draft.practitionerId]?.name || "Therapist assignment pending confirmation") : "Nabitu Kahindo · assigned at confirmation");
   const stepIndex = bookingVisualStepIndex(step, trialFlow);
   const stepLabel = flowSteps[stepIndex] || flowSteps[flowSteps.length - 1];
   const continueHint = step === BOOKING_STEP.WHERE && !whereOk

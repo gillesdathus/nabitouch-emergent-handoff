@@ -38,6 +38,10 @@ def _production_base(monkeypatch):
     monkeypatch.setenv("DOCUMENT_UPLOADS_ENABLED", "false")
     monkeypatch.setenv("STRIPE_CARD_CHECKOUT_ENABLED", "false")
     monkeypatch.setenv("LEGACY_PATIENT_IMPORT_ENABLED", "false")
+    # Isolate from developer .env: simulated/disabled modes reject sk_test_* keys.
+    monkeypatch.setenv("PAYMENT_MODE", "disabled")
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
     monkeypatch.setenv("HOSTING_STRATEGY", "shared-vps")
     monkeypatch.setenv("CLAMAV_HOST", "")
     monkeypatch.setenv("MAPBOX_TOKEN", "sk.test-not-a-live-token")
@@ -277,12 +281,22 @@ def test_production_process_refuses_uploads_cards_and_import():
         "DOCUMENT_UPLOADS_ENABLED": "false", "STRIPE_CARD_CHECKOUT_ENABLED": "false",
         "LEGACY_PATIENT_IMPORT_ENABLED": "false", "HOSTING_STRATEGY": "shared-vps",
         "CLAMAV_HOST": "", "MAPBOX_TOKEN": "sk.test-not-a-live-token",
+        # Do not inherit developer Stripe sandbox keys into this production-flag subprocess.
+        "PAYMENT_MODE": "disabled",
     })
+    env.pop("STRIPE_SECRET_KEY", None)
+    env.pop("STRIPE_WEBHOOK_SECRET", None)
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8014"],
-        cwd=str(ROOT), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=str(ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
-        assert _wait(API + "/", proc), "launch API did not start"
+        started = _wait(API + "/", proc)
+        if not started:
+            try:
+                out = proc.stdout.read().decode("utf-8", "replace") if proc.stdout else ""
+            except Exception:
+                out = ""
+            raise AssertionError("launch API did not start\n" + out[-2000:])
         health = requests.get(API + "/health", timeout=10).json()
         assert health["documentUploads"] is False
         assert health["cardCheckout"] is False
@@ -308,6 +322,11 @@ def test_production_process_refuses_uploads_cards_and_import():
         signed = requests.post(API + "/auth/login", json={"email": env["OWNER_EMAIL"], "password": env["OWNER_PASSWORD"]}, timeout=10)
         assert signed.status_code == 200
     finally:
+        if proc.stdout:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
         proc.terminate()
         try:
             proc.wait(timeout=10)

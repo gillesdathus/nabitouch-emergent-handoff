@@ -64,9 +64,8 @@ def workspaces_for(user):
         spaces.append("desk")
     if "client" in roles:
         spaces.append("client")
-    # Legacy: owner linked to a practitioner profile may open practitioner workspace.
-    if "owner" in roles and user.get("subject") and "practitioner" not in spaces:
-        spaces.append("practitioner")
+    # Owner / manager privileges alone never open the practitioner workspace.
+    # Dual-role therapists must hold the practitioner role and a linked subject.
     # Preferred default first when authorized.
     preferred = user.get("preferredWorkspace")
     if preferred in spaces:

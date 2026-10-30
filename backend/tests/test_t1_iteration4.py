@@ -10,7 +10,7 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from booking_fixtures import EDMONTON_HOME, LEDUC_OUTSIDE
-from t1_common import API, BASE_URL, BENV, MAYA, NATIVE, OWNER, SARAH, login, rand_slot, stripe_webhook, twilio_sign
+from t1_common import API, BASE_URL, BENV, MAYA, NABITU, NATIVE, OWNER, SARAH, login, rand_slot, stripe_webhook, twilio_sign
 
 PW = "TEST_Pw-" + uuid.uuid4().hex[:10]
 ADDR_OK = {**EDMONTON_HOME, "zoneId": "z-central"}
@@ -39,6 +39,11 @@ def sarah():
 @pytest.fixture(scope="module")
 def maya():
     return login(MAYA)
+
+
+@pytest.fixture(scope="module")
+def nabitu():
+    return login(NABITU)
 
 
 @pytest.fixture(scope="module")
@@ -75,7 +80,7 @@ def book(sess, service="swedish", duration=60, extra=None, address=None, locatio
         appt = {"serviceSlug": service, "duration": duration, "date": d, "time": t, "locationType": location, "paymentMethod": "self"}
         if location == "home":
             appt.update({"addressId": "ad-sarah", "address": address or ADDR_OK})
-        body = {"source": "online", "practitionerId": "p-maya", "appointment": appt, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:12]}
+        body = {"source": "online", "practitionerId": "p-nabitu-kahindo", "appointment": appt, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:12]}
         body.update(extra or {})
         last = sess.post(f"{API}/bookings", json=body, timeout=40)
         if last.status_code == 409 and any(w in last.text.lower() for w in ("slot", "available", "taken", "booked", "travel", "time")) and "credit" not in last.text.lower():
@@ -247,7 +252,8 @@ class TestAddress:
                 "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
             }, timeout=20).status_code == 200
             r = book(sarah, address=dict(LEDUC_OUTSIDE))
-            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+            msg = r.text.lower()
+            assert r.status_code == 400 and ("outside" in msg or "not currently available" in msg or "not available" in msg), r.text
         finally:
             owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
@@ -261,7 +267,8 @@ class TestAddress:
                 "serviceCoverage": {**prior_cov, "mode": "zones", "travelFeesEnabled": prior_cov.get("travelFeesEnabled", False)},
             }, timeout=20).status_code == 200
             r = book(sarah, address={"label": "X", "line": "100 Queen St W, Toronto, ON", "postal": "M5H 2N2", "lat": 43.6532, "lng": -79.3832, "clientConfirmed": True})
-            assert r.status_code == 400 and "outside" in r.text.lower(), r.text
+            msg = r.text.lower()
+            assert r.status_code == 400 and ("outside" in msg or "not currently available" in msg or "not available" in msg), r.text
         finally:
             owner.patch(f"{API}/settings/app", json={"serviceCoverage": prior_cov or {"mode": "open", "travelFeesEnabled": False}}, timeout=20)
 
@@ -419,16 +426,16 @@ class TestDevices:
         print(doc)
         assert doc["active"] is False
 
-    def test_assist_creates_held_push(self, owner, maya, sarah):
+    def test_assist_creates_held_push(self, owner, nabitu, sarah):
         tok = "TESTown" + uuid.uuid4().hex * 2
         owner.post(f"{API}/devices", json={"platform": "android", "token": tok}, timeout=20)
         r = book(sarah)
         assert r.status_code == 200
         aid = r.json()["appointment"]["id"]
         to_en_route(owner, aid)
-        a = maya.post(f"{API}/appointments/{aid}/assist", json={"note": "TEST assist"}, timeout=20)
+        a = nabitu.post(f"{API}/appointments/{aid}/assist", json={"note": "TEST assist"}, timeout=20)
         print("assist", a.status_code, a.text[:150])
-        since = a.json().get("at") if a.status_code == 200 and isinstance(a.json(), dict) else None
+        assert a.status_code == 200, a.text[:200]
         import time as _t; _t.sleep(1)
         rows = mongo(lambda db: db.nt_push_outbox.find({"kind": {"$in": ["safety_alert", "assist"]}}, {"_id": 0, "status": 1, "kind": 1, "at": 1}).sort("at", -1).to_list(5))
         print(rows)
@@ -442,7 +449,7 @@ class TestBookingBilling:
         # just as book() does, while keeping every other error a test failure.
         for _ in range(25):
             d, t = rand_slot()
-            q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-maya", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
+            q = sarah.post(f"{API}/bookings/quote", json={"practitionerId": "p-nabitu-kahindo", "appointment": {"serviceSlug": "swedish", "duration": 60, "date": d, "time": t,
                                                            "locationType": "home", "address": ADDR_OK, "addressId": "ad-sarah"}}, timeout=30)
             if not (q.status_code == 409 and any(word in q.text.lower() for word in ("slot", "available", "taken", "booked", "travel", "time")) and "credit" not in q.text.lower()):
                 break

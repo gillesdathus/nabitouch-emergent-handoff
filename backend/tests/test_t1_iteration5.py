@@ -33,7 +33,7 @@ def maya():
 # ---- FIX 2: per-practitioner statement lock
 class TestStatementLock:
     def test_concurrent_create_one_statement(self, owner):
-        body = {"start": "2027-01-01", "end": "2027-06-30", "practitionerId": "p-maya"}
+        body = {"start": "2027-01-01", "end": "2027-06-30", "practitionerId": "p-nabitu-kahindo"}
         out = []
 
         def go():
@@ -83,7 +83,7 @@ class TestNudge:
         aid = None
         for i in range(30):
             d = (datetime.now(ZoneInfo("America/Edmonton")).date() + timedelta(days=5 + i)).isoformat()
-            body = {"source": "online", "practitionerId": "p-maya", "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10], "appointment": {
+            body = {"source": "online", "practitionerId": "p-nabitu-kahindo", "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10], "appointment": {
                 "serviceSlug": "swedish", "duration": 60, "date": d, "time": "11:00", "locationType": "home", "paymentMethod": "self", "address": addr}}
             b = c.post(f"{API}/bookings", json=body, timeout=40)
             if b.status_code == 200:
@@ -112,7 +112,7 @@ class TestTodayVisit:
         # Evening in Edmonton: today's slots are closed, so book a free future slot and move it to today in Mongo (test setup only).
         slots = [((now.date() + timedelta(days=d)).isoformat(), t) for d in range(1, 40) for t in ("09:00", "12:00", "16:00")]
         for day, t in slots:
-            body = {"source": "reception", "practitionerId": "p-maya", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
+            body = {"source": "reception", "practitionerId": "p-nabitu-kahindo", "client": {"id": "c-sarah"}, "idempotencyKey": "TEST_" + uuid.uuid4().hex[:10],
                     "appointment": {"serviceSlug": "swedish", "duration": 60, "date": day, "time": t, "locationType": "home", "paymentMethod": "self",
                                     "addressId": "ad-sarah", "address": {"label": "Home", "line": "10150 104 St NW, Edmonton, AB", "lat": 53.5435, "lng": -113.499, "id": "ad-sarah", "clientConfirmed": True}}}
             b = owner.post(f"{API}/bookings", json=body, timeout=40)
