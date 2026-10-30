@@ -42,6 +42,15 @@ def test_unauthorized_practitioner_ids_rejected(requested):
     assert CANONICAL_PRACTITIONER_NAME.split()[0] in raised.value.detail
 
 
+def test_staff_reassign_and_campaign_ids_must_normalize_to_nabitu():
+    """Regression: reassignment / trial campaign paths must use the same gate."""
+    pid, mode = normalize_requested_practitioner_id(CANONICAL_PRACTITIONER_ID)
+    assert pid == CANONICAL_PRACTITIONER_ID and mode == "explicit"
+    with pytest.raises(HTTPException) as raised:
+        normalize_requested_practitioner_id("p-maya")
+    assert raised.value.status_code == 409
+
+
 def test_recommendation_people_filter_sole_therapist():
     people = [
         launch_practitioner(),

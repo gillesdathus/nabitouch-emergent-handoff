@@ -1404,25 +1404,28 @@ async def appt_event(appt_id: str, request: Request, body: dict = Body(...)):
     elif kind == "reassigned":
         if set(extra) != {"practitionerId"}:
             raise HTTPException(400, "Reassign requires a practitioner")
-        person = await coll("practitioners").find_one({"id": extra["practitionerId"]}, NO_ID)
+        from booking_assign import normalize_requested_practitioner_id
+        # Sole-therapist mode: staff cannot reassign to unauthorized practitioner ids.
+        practitioner_id, _assign_mode = normalize_requested_practitioner_id(extra.get("practitionerId"))
+        person = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
         if not person or person.get("available") is False:
             raise HTTPException(409, "That practitioner is not available")
         from onboarding import assignment_credential_problem
-        credentials = await db.nt_credentials.find({"practitionerId": extra["practitionerId"]}, {"_id": 0}).to_list(20)
+        credentials = await db.nt_credentials.find({"practitionerId": practitioner_id}, {"_id": 0}).to_list(20)
         problem = assignment_credential_problem(person, credentials)
         if problem:
             raise HTTPException(409, problem)
         service = await coll("services").find_one({"slug": appt.get("serviceSlug")}, NO_ID)
         settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
         await assert_public_slot(
-            db, coll, settings=settings, production=is_production(), practitioner_id=extra["practitionerId"],
+            db, coll, settings=settings, production=is_production(), practitioner_id=practitioner_id,
             day=appt["date"], time=appt["time"], duration=int(appt["duration"]), address=appt.get("address") or {},
             location_type=appt.get("locationType") or "home", service=service, exclude_id=appt_id,
         )
-        await ensure_slot(extra["practitionerId"], appt["date"], appt["time"], appt["duration"], appt_id)
-        upd["practitionerId"] = extra["practitionerId"]
+        await ensure_slot(practitioner_id, appt["date"], appt["time"], appt["duration"], appt_id)
+        upd["practitionerId"] = practitioner_id
         # Keep denormalized message ownership in sync so unread badges do not orphan to the prior practitioner.
-        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": extra["practitionerId"]}})
+        await db.nt_messages.update_many({"appointmentId": appt_id}, {"$set": {"practitionerId": practitioner_id}})
         if appt.get("trip"):
             upd["trip"] = {**appt["trip"], "sharing": False, "endedAt": now_iso()}
         await end_tracking(appt_id)
@@ -1822,7 +1825,8 @@ async def bind_trial_campaign(payload):
     appointment["addonIds"] = []
     bound = {**payload, "appointment": appointment, "useCredit": False, "redeemPoints": None, "winbackCode": None, "followupCode": None}
     if campaign.get("practitionerId"):
-        bound["practitionerId"] = campaign["practitionerId"]
+        from booking_assign import normalize_requested_practitioner_id
+        bound["practitionerId"], _ = normalize_requested_practitioner_id(campaign.get("practitionerId"))
     return bound, campaign
 
 

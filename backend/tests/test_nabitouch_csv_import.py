@@ -77,6 +77,9 @@ def test_financial_reconciliation_and_no_fabricated_appointments():
     assert finances["outstandingBalanceCents"] == 15000
     assert all(line["verifiedAppointment"] is False for line in sales)
     assert all(inv["verifiedAppointment"] is False for inv in finances["invoices"])
+    # Zero balance + payment method must NOT confirm collection.
+    assert all(inv["paymentConfirmed"] is False for inv in finances["invoices"])
+    assert all(inv["paymentVerificationStatus"] == "source_reported_unverified" for inv in finances["invoices"])
 
 
 def test_duplicate_invoice_identity_preserved():
@@ -86,6 +89,25 @@ def test_duplicate_invoice_identity_preserved():
     assert inv2["lineCount"] == 2
     assert inv2["sourceId"] == "noterro:INV-2"
     assert inv2["totalCents"] == 22000
+
+
+def test_overlapping_categories_and_invitation_readiness():
+    pe = parse_patient_export(PATIENT_EXPORT)["patients"]
+    pw = parse_patients_without_appointments(SECONDARY)["patients"]
+    sales = parse_sales_report(SALES)["lines"]
+    result = reconcile_patients(pe, pw, sales, existing_clients=[{"id": "c-ada", "email": "ada.a@example.com", "phone": ""}])
+    oc = result["overlappingCategoryCounts"]
+    assert oc["totalCandidateIdentities"] == result["distinctIncoming"]
+    # Categories may overlap (email + phone on same identity); not an additive partition.
+    assert oc["withUsableEmail"] >= 1
+    assert oc["proposedNewIdentities"] + oc["existingMatchedStaging"] + oc["salesOnlyRequiresReview"] >= oc["totalCandidateIdentities"]
+    assert sum(result["invitationReadinessCounts"].values()) == oc["totalCandidateIdentities"]
+    frank = next(item for item in result["patients"] if item.get("fromSalesOnly"))
+    assert frank["flags"]["salesOnlyRequiresReview"] is True
+    assert frank["invitationReadiness"] == "requires_identity_reconciliation"
+    cara = next(item for item in result["patients"] if item["status"] == "missing_contact" and not item["fromSalesOnly"])
+    assert cara["flags"]["lacksEmailAndPhone"] is True
+    assert cara["invitationReadiness"] in ("requires_contact_verification", "requires_identity_reconciliation")
 
 
 def test_dry_run_preview_strips_internal_and_writes_nothing():
@@ -99,6 +121,9 @@ def test_dry_run_preview_strips_internal_and_writes_nothing():
     assert report["writesOperationalData"] is False
     assert report["historicalServiceClassification"]["verifiedHistoricalAppointment"] == 0
     assert report["historicalServiceClassification"]["historicalBilledService"] == 4
+    assert "overlappingCategoryCounts" in report["patientReconciliation"]
+    assert report["financialValidation"]["paymentInferenceDisabled"] is True
+    assert report["financialValidation"]["clinicalAppointmentsCreated"] == 0
     public = public_preview(report)
     assert "_internal" not in public
     dumped = json.dumps(public)
@@ -111,3 +136,30 @@ def test_malformed_money_recorded_as_error():
     bad = SALES.replace("$110.00,$0.00,1.00,,,,$0.00,$110.00,$0.00", "not-a-price,$0.00,1.00,,,,$0.00,$110.00,$0.00", 1)
     parsed = parse_sales_report(bad)
     assert parsed["errors"]
+
+
+def test_staging_plan_has_no_db_side_effects():
+    from nabitouch_staging_plan import (
+        COLLECTIONS_MODIFIED_BY_IMPORT,
+        COLLECTIONS_NOT_TOUCHED,
+        build_checkpoint_e_prep_report,
+    )
+    plan = build_checkpoint_e_prep_report(patient_record_count=10, invoice_record_count=51)
+    assert plan["status"] == "prepared_stop_before_import"
+    assert plan["importExecutionProcedure"]["databaseWritesAuthorized"] is False
+    assert "nt_legacy_patients" in plan["collectionsModified"]
+    assert "nt_clients" in plan["collectionsNotTouched"]
+    assert "nt_appointments" in COLLECTIONS_NOT_TOUCHED
+    assert set(COLLECTIONS_MODIFIED_BY_IMPORT).isdisjoint(COLLECTIONS_NOT_TOUCHED)
+    assert plan["proposedWriteSet"]["noInvitations"] is True
+    assert plan["proposedWriteSet"]["noClinicalAppointments"] is True
+
+
+def test_production_plan_keeps_live_gate_closed():
+    from nabitouch_production_plan import build_production_readiness_skeleton, FINANCIAL_GATES
+    plan = build_production_readiness_skeleton(patient_record_count=34, invoice_record_count=51)
+    assert plan["liveActionsAuthorized"] is False
+    assert plan["invitationWorkflow"]["autoSendOnImport"] is False
+    assert plan["deploymentProcedure"]["autoExecute"] is False
+    assert FINANCIAL_GATES["invoiceIdentities"] == 51
+    assert "nt_appointments" in plan["collectionsNotTouchedByImport"]

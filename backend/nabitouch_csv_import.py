@@ -338,46 +338,92 @@ def reconcile_patients(patient_export, secondary_export, sales_lines, existing_c
     for key in order:
         row = buckets[key]
         name_peers = name_index[_norm_name(row.get("displayName"))]
-        potential_dup = len(name_peers) > 1
+        ambiguous_name = len(name_peers) > 1
         matched = None
         if row.get("email") and row["email"] in by_email:
             matched = by_email[row["email"]]
         elif row.get("phone") and _phone_digits(row["phone"]) in by_phone:
             matched = by_phone[_phone_digits(row["phone"])]
 
-        if matched:
+        has_email = bool(row.get("hasEmail"))
+        has_phone = bool(row.get("hasPhone"))
+        sales_only = bool(row.get("fromSalesOnly"))
+        existing = matched is not None
+        proposed_new = matched is None and not sales_only
+        lacks_both = not has_email and not has_phone
+        needs_identity = sales_only or ambiguous_name
+
+        # Invitation readiness (data model only — no send).
+        if needs_identity or ambiguous_name:
+            invite = "requires_identity_reconciliation"
+        elif lacks_both:
+            invite = "requires_contact_verification"
+        elif has_email:
+            invite = "ready_for_email_invitation"
+        elif has_phone:
+            invite = "ready_for_sms_invitation_if_configured"
+        else:
+            invite = "requires_contact_verification"
+
+        # Primary label for legacy mapping; overlapping flags below are authoritative.
+        if existing:
             status = "existing_matched"
-        elif not row.get("email") and not row.get("phone"):
-            status = "missing_contact"
-        elif potential_dup:
-            status = "potential_duplicate"
-        elif row.get("fromSalesOnly"):
+        elif sales_only:
             status = "requires_manual_review"
+        elif lacks_both:
+            status = "missing_contact"
+        elif ambiguous_name:
+            status = "potential_duplicate"
         else:
             status = "new_patient"
 
-        if potential_dup and status == "new_patient":
-            status = "potential_duplicate"
-
         classifications.append({
             "status": status,
+            "flags": {
+                "totalCandidate": True,
+                "existingMatched": existing,
+                "proposedNew": proposed_new,
+                "hasUsableEmail": has_email,
+                "hasUsablePhone": has_phone,
+                "lacksEmailAndPhone": lacks_both,
+                "salesOnlyRequiresReview": sales_only,
+                "ambiguousDuplicateMatch": ambiguous_name,
+            },
+            "invitationReadiness": invite,
             "sourceId": row["sourceId"],
+            "sourceIds": row.get("sourceIds") or [row["sourceId"]],
             "sourceFiles": row.get("sourceFiles") or [],
             "displayNameHash": _digest(row.get("displayName"))[:12],
-            "hasEmail": row.get("hasEmail"),
-            "hasPhone": row.get("hasPhone"),
-            "fromSalesOnly": bool(row.get("fromSalesOnly")),
+            "hasEmail": has_email,
+            "hasPhone": has_phone,
+            "fromSalesOnly": sales_only,
             "existingClientId": (matched or {}).get("id"),
             "patient": row,
         })
 
-    counts = Counter(item["status"] for item in classifications)
+    flag_counts = {
+        "totalCandidateIdentities": len(classifications),
+        "existingMatchedStaging": sum(1 for item in classifications if item["flags"]["existingMatched"]),
+        "proposedNewIdentities": sum(1 for item in classifications if item["flags"]["proposedNew"]),
+        "withUsableEmail": sum(1 for item in classifications if item["flags"]["hasUsableEmail"]),
+        "withUsablePhone": sum(1 for item in classifications if item["flags"]["hasUsablePhone"]),
+        "lackingEmailAndPhone": sum(1 for item in classifications if item["flags"]["lacksEmailAndPhone"]),
+        "salesOnlyRequiresReview": sum(1 for item in classifications if item["flags"]["salesOnlyRequiresReview"]),
+        "ambiguousDuplicateMatches": sum(1 for item in classifications if item["flags"]["ambiguousDuplicateMatch"]),
+    }
+    invite_counts = Counter(item["invitationReadiness"] for item in classifications)
     return {
         "patients": classifications,
-        "counts": dict(counts),
+        "counts": dict(Counter(item["status"] for item in classifications)),
+        "overlappingCategoryCounts": flag_counts,
+        "overlappingNote": (
+            "Category counts may overlap (e.g. a new identity can also lack contact). "
+            "They are not an additive partition of totalCandidateIdentities."
+        ),
+        "invitationReadinessCounts": dict(invite_counts),
         "distinctIncoming": len(classifications),
         "salesPatientsMissingFromExports": len(missing_from_exports),
-        "note": "Name-only overlaps are potential_duplicate / requires_manual_review — never auto-merged.",
+        "note": "Name-only overlaps set ambiguousDuplicateMatch — never auto-merged. SourceIds preserved.",
     }
 
 
@@ -403,8 +449,8 @@ def reconcile_finances(sales_lines):
         balance = lines[-1]["balanceCents"]
         outstanding += balance
         payments = sorted({item["paymentMethod"] for item in lines})
-        # Collected is unknown unless payment method and zero balance imply settlement.
-        implied_paid = balance == 0 and any(p not in {"-", ""} for p in payments)
+        # Source-reported payment labels only. Balance alone never confirms collection.
+        reported_methods = [p for p in payments if p not in {"-", ""}]
         invoices.append({
             "invoiceNumber": inv,
             "sourceId": f"noterro:{inv}",
@@ -415,11 +461,14 @@ def reconcile_finances(sales_lines):
             "adjustmentCents": sum(item["adjustmentCents"] for item in lines),
             "patientNameHash": _digest(lines[0].get("patientName"))[:12],
             "practitionerName": lines[0].get("practitionerName"),
+            "paymentMethodsReported": payments,
             "paymentMethods": payments,
+            "paymentVerificationStatus": "source_reported_unverified",
             "serviceDates": sorted({item["serviceDate"] for item in lines if item["serviceDate"]}),
             "classification": "historical_invoice",
             "verifiedAppointment": False,
-            "paymentConfirmed": implied_paid,
+            "paymentConfirmed": False,
+            "hasSourcePaymentLabel": bool(reported_methods),
             "outstanding": balance > 0,
             "lines": lines,
         })
@@ -459,12 +508,20 @@ def reconcile_finances(sales_lines):
         "nonNabituInvoices": len(non_nabitu),
         "paymentMethodCounts": dict(Counter(line["paymentMethod"] for line in sales_lines)),
         "serviceCounts": dict(Counter(line["service"] for line in sales_lines)),
+        "verifiedTotals": {
+            "billedTotalCad": 6657.50,
+            "outstandingBalanceCad": 457.55,
+            "reportedTaxCad": 177.50,
+            "massageDurationHours": 55.0,
+            "massageServiceUnits": 57.0,
+        },
         "note": (
             "Line Total amounts are billed figures. Balance is taken once per invoice "
-            "(last row). Payments are not treated as verified collected revenue unless "
-            "balance is zero and a payment method other than '-' is present. "
-            "massageServiceUnits counts Service Category=Massage only; billedServiceUnits "
-            "includes travel-fee lines."
+            "(last row). Source payment labels are preserved with verification status "
+            "source_reported_unverified — never inferred as confirmed collection from "
+            "balance alone. massageServiceUnits counts Service Category=Massage only; "
+            "billedServiceUnits includes travel-fee lines. No clinical appointments "
+            "are created from invoice lines."
         ),
     }
 
@@ -517,29 +574,51 @@ def to_legacy_records(patient_rows):
             "referred_by": p.get("referredBy") or "",
             "source": "nabitouch_history_csv",
             "noterro_id": p.get("sourceId") or "",
+            "invitation_readiness": item.get("invitationReadiness"),
+            "reconciliation_flags": item.get("flags"),
+            # Staging import status only — never activated from CSV.
+            "import_status_hint": "needs_contact_review" if item.get("flags", {}).get("lacksEmailAndPhone") or item.get("fromSalesOnly") else "imported",
         })
     return records
 
 
-def to_legacy_invoices(finance):
+def _patient_source_id_by_name(patient_rows):
+    """Map normalized display name → sourceId when unambiguous. Never merge collisions."""
+    by_name = defaultdict(list)
+    for item in patient_rows:
+        name = _norm_name(item["patient"].get("displayName"))
+        if name:
+            by_name[name].append(item["patient"]["sourceId"])
+    return {name: ids[0] for name, ids in by_name.items() if len(ids) == 1}
+
+
+def to_legacy_invoices(finance, patient_rows=None):
     """Map invoices for legacy staging. Does not create appointments or ledger postings."""
+    name_to_source = _patient_source_id_by_name(patient_rows or [])
     invoices = []
     for inv in finance["invoices"]:
+        # Prefer line patient name → unique reconciled identity; ambiguous names left unset.
+        line_name = _norm_name(inv["lines"][0].get("patientName")) if inv.get("lines") else ""
+        source_patient = name_to_source.get(line_name)
         invoices.append({
             "sourceId": inv["sourceId"],
-            "sourcePatientId": None,
+            "sourcePatientId": source_patient,
             "number": inv["invoiceNumber"],
             "issuedOn": (inv["serviceDates"][0] if inv["serviceDates"] else ""),
             "totalCents": inv["totalCents"],
             "currency": "CAD",
-            "state": "issued" if inv["outstanding"] else "paid",
+            # Balance is source-reported; do not map zero balance → confirmed paid.
+            "state": "historical",
             "service": "; ".join(sorted({line["service"] for line in inv["lines"]}))[:120],
             "practitionerId": CANONICAL_PRACTITIONER_ID if _norm_name(inv.get("practitionerName")) == _norm_name(CANONICAL_PRACTITIONER_NAME) else None,
             "countsAsRevenue": False,
             "ledgerPosted": False,
             "balanceCents": inv["balanceCents"],
+            "paymentMethodsReported": inv.get("paymentMethodsReported") or inv.get("paymentMethods") or [],
+            "paymentVerificationStatus": inv.get("paymentVerificationStatus") or "source_reported_unverified",
             "classification": "historical_billed_service",
             "verifiedAppointment": False,
+            "paymentConfirmed": False,
         })
     return invoices
 
@@ -595,7 +674,10 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
     public_patients = [
         {
             "status": item["status"],
+            "flags": item["flags"],
+            "invitationReadiness": item["invitationReadiness"],
             "sourceId": item["sourceId"],
+            "sourceIds": item.get("sourceIds") or [item["sourceId"]],
             "sourceFiles": item["sourceFiles"],
             "displayNameHash": item["displayNameHash"],
             "hasEmail": item["hasEmail"],
@@ -613,8 +695,10 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
             "totalCents": inv["totalCents"],
             "balanceCents": inv["balanceCents"],
             "taxCents": inv["taxCents"],
-            "paymentMethods": inv["paymentMethods"],
-            "paymentConfirmed": inv["paymentConfirmed"],
+            "paymentMethodsReported": inv.get("paymentMethodsReported") or inv["paymentMethods"],
+            "paymentVerificationStatus": inv.get("paymentVerificationStatus"),
+            "paymentConfirmed": False,
+            "hasSourcePaymentLabel": inv.get("hasSourcePaymentLabel"),
             "outstanding": inv["outstanding"],
             "verifiedAppointment": False,
             "classification": "historical_billed_service",
@@ -623,7 +707,33 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
         }
         for inv in finances["invoices"]
     ]
+    fin = finances
+    financial_validation = {
+        "invoiceIdentities": fin["invoiceCount"],
+        "billingLines": fin["lineCount"],
+        "massageServiceUnits": fin["massageServiceUnits"],
+        "travelFeeUnits": fin["travelFeeUnits"],
+        "massageDurationHours": fin["massageDurationHours"],
+        "billedTotalCad": fin["billedTotalCad"],
+        "outstandingBalanceCad": fin["outstandingBalanceCad"],
+        "reportedTaxCad": fin["taxCents"] / 100,
+        "massageVsTravelSeparated": True,
+        "paymentInferenceDisabled": True,
+        "clinicalAppointmentsCreated": 0,
+        "matchesVerifiedTargets": {
+            "invoiceIdentities": fin["invoiceCount"] == 51,
+            "billingLines": fin["lineCount"] == 64,
+            "billedTotalCad": fin["billedTotalCad"] == 6657.50,
+            "outstandingBalanceCad": fin["outstandingBalanceCad"] == 457.55,
+            "reportedTaxCad": (fin["taxCents"] / 100) == 177.50,
+            "massageDurationHours": fin["massageDurationHours"] == 55.0,
+            "massageServiceUnits": fin["massageServiceUnits"] == 57.0,
+        },
+        "verifiedTargets": fin["verifiedTotals"],
+    }
 
+    legacy_records = to_legacy_records(patients["patients"])
+    legacy_invoices = to_legacy_invoices(finances, patients["patients"])
     return {
         "dryRun": True,
         "writesOperationalData": False,
@@ -631,6 +741,9 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
         "summary": {
             **verified,
             "patientClassificationCounts": patients["counts"],
+            "overlappingCategoryCounts": patients["overlappingCategoryCounts"],
+            "overlappingNote": patients["overlappingNote"],
+            "invitationReadinessCounts": patients["invitationReadinessCounts"],
             "salesPatientsMissingFromExports": patients["salesPatientsMissingFromExports"],
             "taxCents": finances["taxCents"],
             "adjustmentCents": finances["adjustmentCents"],
@@ -638,6 +751,15 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
             "serviceCounts": finances["serviceCounts"],
             "nonNabituInvoices": finances["nonNabituInvoices"],
         },
+        "patientReconciliation": {
+            "overlappingCategoryCounts": patients["overlappingCategoryCounts"],
+            "overlappingNote": patients["overlappingNote"],
+            "primaryStatusCounts": patients["counts"],
+            "invitationReadinessCounts": patients["invitationReadinessCounts"],
+            "sourceIdentifiersPreserved": True,
+            "nameOnlyMergeForbidden": True,
+        },
+        "financialValidation": financial_validation,
         "preliminaryComparison": comparison,
         "discrepancies": discrepancies,
         "patientPreview": public_patients,
@@ -665,28 +787,39 @@ def build_migration_preview(*, patient_export_csv, secondary_csv, sales_csv, exi
             },
         },
         "legacyPayloadReady": {
-            "patientRecords": len(to_legacy_records(patients["patients"])),
-            "invoiceRecords": len(to_legacy_invoices(finances)),
+            "patientRecords": len(legacy_records),
+            "invoiceRecords": len(legacy_invoices),
+            "invoicesWithSourcePatientId": sum(1 for inv in legacy_invoices if inv.get("sourcePatientId")),
+            "invoicesMissingSourcePatientId": sum(1 for inv in legacy_invoices if not inv.get("sourcePatientId")),
         },
         "errors": pe["errors"] + pw["errors"] + sales["errors"],
         "approvalRequiredForCheckpointE": [
-            "Owner reviews patient classification and contact gaps",
-            "Owner accepts financial totals and outstanding balance method",
-            "Verified staging database backup",
-            "LEGACY_PATIENT_IMPORT_ENABLED only on staging",
-            "No production import in Checkpoint E without separate approval",
+            "Owner reviews overlapping patient categories and contact gaps",
+            "Owner accepts financial totals and unverified payment labels",
+            "Confirm intended production DB_NAME and create recoverable backup",
+            "LEGACY_PATIENT_IMPORT_ENABLED only during authorized migration window",
+            "Idempotency dry-run against nt_legacy_* before write",
+            "No invitations, merges, or deploys without separate explicit approval",
+        ],
+        "approvalRequiredForProduction": [
+            "Final release report reviewed",
+            "Production environment and database confirmed",
+            "Recoverable backup verified (SHA-256 recorded)",
+            "Read-only reconciliation + import preview accepted",
+            "Explicit authorization for migration write and/or Hostinger deploy",
         ],
         "notes": [
             finances["note"],
             patients["note"],
+            patients["overlappingNote"],
+            "Invitation readiness is categorization only — no invites sent, no active accounts created.",
             "Raw CSV contents are not embedded in this preview.",
         ],
-        # Internal full rows for Checkpoint E adapters — not for logging.
         "_internal": {
             "patients": patients["patients"],
             "finances": finances,
-            "legacyRecords": to_legacy_records(patients["patients"]),
-            "legacyInvoices": to_legacy_invoices(finances),
+            "legacyRecords": legacy_records,
+            "legacyInvoices": legacy_invoices,
         },
     }
 
