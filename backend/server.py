@@ -689,6 +689,18 @@ async def get_state(request: Request):
     if role == "owner":
         out["inquiries"] = await db.nt_inquiries.find({}, NO_ID).sort("at", -1).to_list(20)
         out["mailOps"] = await notification_summary(db)
+        # Business ownership is not a care relationship. Dual-role therapists keep only their notes.
+        from rbac import has_strict_role
+        if has_strict_role(u, "practitioner") and sub:
+            out["soap"] = [note for note in out["soap"] if note.get("practitionerId") == sub]
+            out["plans"] = [plan for plan in out["plans"] if plan.get("practitionerId") == sub]
+        else:
+            out["soap"] = []
+    elif role == "manager":
+        # Manager ops use the owner workspace for business data; SOAP stays care-restricted.
+        out["inquiries"] = await db.nt_inquiries.find({}, NO_ID).sort("at", -1).to_list(20)
+        out["mailOps"] = await notification_summary(db)
+        out["soap"] = []
     elif role == "desk":
         out["soap"] = []
         out["plans"] = []
@@ -1530,9 +1542,10 @@ async def sign_soap(appt_id: str, request: Request, body: dict = Body(...)):
 
 
 async def clinical_user(request, appt_id):
-    u = await require(request, "owner", "practitioner")
+    from staff_identity import is_treating_clinician
+    u = await require(request, "practitioner")
     appt = await coll("appointments").find_one({"id": appt_id}, NO_ID)
-    if not appt or (u["role"] == "practitioner" and appt.get("practitionerId") != u["subject"]):
+    if not appt or not is_treating_clinician(u, appt):
         raise HTTPException(403, "Clinical notes restricted to the treating practitioner")
     return u
 

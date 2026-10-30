@@ -27,10 +27,11 @@ def test_multi_role_owner_and_practitioner_workspaces():
 
 
 def test_owner_without_practitioner_profile_gets_owner_and_optional_desk():
-    owner_a = {"role": "owner", "roles": ["owner", "desk"]}
+    owner_a = {"role": "owner", "roles": ["owner", "desk"], "subject": "accidental-subject"}
     spaces = workspaces_for(owner_a)
     assert spaces[0] == "owner"
     assert "desk" in spaces
+    # A subject alone must not open the practitioner workspace for administrators.
     assert "practitioner" not in spaces
 
 

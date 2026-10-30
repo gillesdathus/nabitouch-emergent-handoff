@@ -164,7 +164,14 @@ def onboarding_gaps(*, person, credentials, login_email, owner_email, schedule, 
             gaps.append({"id": f"{kind}_expiry", "label": f"{label} expiry", "status": cred_status})
     if mfa_required and not mfa_enrolled:
         gaps.append({"id": "mfa", "label": "Staff authenticator", "status": "pending enrollment"})
-    if not (person or {}).get("specialties"):
+    # Trial specialty is catalogue-only and does not satisfy "services offered" for regular booking.
+    specialties = list((person or {}).get("specialties") or [])
+    try:
+        from trial import TRIAL_SERVICE_SLUG
+        bookable_services = [slug for slug in specialties if slug != TRIAL_SERVICE_SLUG]
+    except Exception:
+        bookable_services = specialties
+    if not bookable_services:
         gaps.append({"id": "services", "label": "Services offered", "status": "pending owner approval"})
     weekly = (schedule or {}).get("weekly") or []
     if not weekly:

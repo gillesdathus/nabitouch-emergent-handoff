@@ -94,10 +94,12 @@ def clear_auth_cookies(resp: Response):
 
 
 def public(u):
+    from staff_identity import staff_session_fields
     roles = normalize_roles(u.get("roles"), u.get("role"))
     body = {k: u.get(k) for k in ("id", "email", "name", "role", "subject", "preferredWorkspace", "status")}
     body["roles"] = roles
     body["role"] = u.get("role") or primary_role(roles)
+    body.update(staff_session_fields({**u, "roles": roles, "role": body["role"]}))
     perms = u.get("staffPerms") if isinstance(u.get("staffPerms"), dict) else {}
     body["staffPerms"] = {"managePricing": bool(perms.get("managePricing"))}
     if is_sysadmin(u):
@@ -118,6 +120,49 @@ async def present(u, coll):
         spaces = [s for s in spaces if s != "practitioner"]
     body["workspaces"] = spaces
     return body
+
+
+async def _link_practitioner_subject(coll, db, *, roles, practitioner_id, name, email, phone="", onboarding_status="draft"):
+    """Reuse an existing practitioner profile. Never duplicate the canonical Nabitu identity."""
+    import uuid as _uuid
+    from availability import draft_schedule, launch_practitioner
+    from staff_identity import (
+        CANONICAL_PRACTITIONER_ID, CANONICAL_PRACTITIONER_NAME, account_may_link_practitioner,
+    )
+
+    is_nabitu_name = str(name or "").strip().lower() == CANONICAL_PRACTITIONER_NAME.lower()
+    if practitioner_id:
+        subject = practitioner_id
+    elif is_nabitu_name:
+        subject = CANONICAL_PRACTITIONER_ID
+    else:
+        subject = f"p-{_uuid.uuid4().hex[:8]}"
+    ok, reason = account_may_link_practitioner(roles, subject)
+    if not ok:
+        raise HTTPException(400, reason)
+    # Refuse a second Nabitu profile under a different id.
+    if is_nabitu_name and subject != CANONICAL_PRACTITIONER_ID:
+        if await coll("practitioners").find_one({"id": CANONICAL_PRACTITIONER_ID}, {"_id": 1}):
+            raise HTTPException(409, f"Link the existing {CANONICAL_PRACTITIONER_ID} profile instead of creating a duplicate")
+        subject = CANONICAL_PRACTITIONER_ID
+    existing = await coll("practitioners").find_one({"id": subject}, {"_id": 0, "id": 1, "name": 1})
+    if existing:
+        return subject
+    if subject == CANONICAL_PRACTITIONER_ID:
+        person = launch_practitioner()
+        await coll("practitioners").insert_one(person)
+        if not await db.nt_schedules.find_one({"practitionerId": subject}):
+            await db.nt_schedules.insert_one(draft_schedule(subject))
+        return subject
+    initials = "".join(part[0] for part in str(name or "NT").split()[:2]).upper() or "NT"
+    await coll("practitioners").insert_one({
+        "id": subject, "name": name, "initials": initials, "color": "#18A8F5", "isOwner": False,
+        "specialties": [], "available": False, "bookable": False, "onboardingStatus": onboarding_status,
+        "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "phone": (phone or "").strip(),
+        "email": email, "directBilling": False, "mobile": True, "demo": False,
+    })
+    await db.nt_schedules.insert_one(draft_schedule(subject))
+    return subject
 
 
 class RegisterIn(BaseModel):
@@ -196,6 +241,7 @@ class StaffRolesIn(BaseModel):
     preferredWorkspace: Optional[str] = None
     status: Optional[str] = None
     practitionerId: Optional[str] = None
+    operationalDesignation: Optional[str] = None
     managePricing: Optional[bool] = None
 
 
@@ -282,9 +328,16 @@ def build_auth(db, coll, add_audit):
                                         "name": "Jordan Ellis (Owner)", "role": "owner", "subject": "p-jordan", "demo": False,
                                         "createdAt": datetime.now(timezone.utc).isoformat()})
             else:
-                await users.insert_one({"id": owner_id, "email": owner_email, "password_hash": hash_pw(os.environ["OWNER_PASSWORD"]),
-                                        "name": "Nabitouch Owner", "role": "owner", "subject": owner_id, "demo": False,
-                                        "createdAt": datetime.now(timezone.utc).isoformat()})
+                from staff_identity import DESIGNATION_MANAGER_RECEPTIONIST
+                # Business owner account: ownership + manager/reception ops. Not a therapist.
+                await users.insert_one({
+                    "id": owner_id, "email": owner_email, "password_hash": hash_pw(os.environ["OWNER_PASSWORD"]),
+                    "name": "Nabitouch Owner", "role": "owner",
+                    "roles": ["owner", "manager", "desk"],
+                    "operationalDesignation": DESIGNATION_MANAGER_RECEPTIONIST,
+                    "subject": None, "preferredWorkspace": "owner", "demo": False,
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
+                })
         if is_production() or not demo_mode():
             return
         demo_pw = hash_pw(os.environ["DEMO_PASSWORD"])
@@ -916,39 +969,37 @@ def build_auth(db, coll, add_audit):
                 raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
         if await users.find_one({"email": email}):
             raise HTTPException(409, "Email already in use")
-        subject = None
+        from staff_identity import normalize_designation
         if "practitioner" in roles:
-            subject = body.practitionerId or f"p-{uuid.uuid4().hex[:6]}"
-            if not await coll("practitioners").find_one({"id": subject}):
-                initials = "".join(w[0] for w in body.name.split()[:2]).upper()
-                await coll("practitioners").insert_one({"id": subject, "name": body.name, "initials": initials, "color": "#18A8F5", "isOwner": False,
-                                                        "specialties": [], "available": False, "onboardingStatus": "draft", "bookable": False,
-                                                        "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "directBilling": False, "mobile": True})
-                from availability import draft_schedule
-                await db.nt_schedules.insert_one(draft_schedule(subject))
+            subject = await _link_practitioner_subject(
+                coll, db, roles=roles, practitioner_id=body.practitionerId, name=body.name, email=email,
+            )
+        else:
+            if body.practitionerId:
+                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            subject = None
         primary = primary_role(roles)
         preferred = "practitioner" if primary == "practitioner" else ("desk" if primary == "desk" else "owner")
+        designation = normalize_designation(None, roles, primary)
         u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": body.name, "role": primary,
              "roles": roles, "subject": subject, "preferredWorkspace": preferred, "status": "active",
+             "operationalDesignation": designation,
              "createdAt": datetime.now(timezone.utc).isoformat()}
         await users.insert_one(dict(u))
         await add_audit(owner["name"], f"Staff account created: {body.name} ({','.join(roles)})")
         return await present(u, coll)
 
     async def _issue_invite(owner, *, email, name, roles, phone, practitioner_id, preferred):
-        subject = None
+        from staff_identity import normalize_designation
         if "practitioner" in roles:
-            subject = practitioner_id or f"p-{uuid.uuid4().hex[:8]}"
-            if not await coll("practitioners").find_one({"id": subject}):
-                initials = "".join(part[0] for part in name.split()[:2]).upper() or "NT"
-                await coll("practitioners").insert_one({
-                    "id": subject, "name": name, "initials": initials, "color": "#18A8F5", "isOwner": False,
-                    "specialties": [], "available": False, "bookable": False, "onboardingStatus": "invited",
-                    "licenseExpiry": "", "insuranceExpiry": "", "bio": "", "phone": (phone or "").strip(),
-                    "email": email, "directBilling": False, "mobile": True, "demo": False, "origin": "invited",
-                })
-                from availability import draft_schedule
-                await db.nt_schedules.insert_one(draft_schedule(subject))
+            subject = await _link_practitioner_subject(
+                coll, db, roles=roles, practitioner_id=practitioner_id, name=name, email=email,
+                phone=phone or "", onboarding_status="invited",
+            )
+        else:
+            if practitioner_id:
+                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            subject = None
         now = datetime.now(timezone.utc)
         raw = secrets.token_urlsafe(32)
         secret = secrets.token_urlsafe(32)
@@ -957,9 +1008,11 @@ def build_auth(db, coll, add_audit):
         preferred_ws = preferred if preferred in ("owner", "practitioner", "desk") else (
             "practitioner" if primary == "practitioner" else ("desk" if primary == "desk" else "owner")
         )
+        designation = normalize_designation(None, roles, primary)
         await users.insert_one({
             "id": user_id, "email": email, "password_hash": hash_pw(secret), "name": name, "role": primary,
             "roles": roles, "subject": subject, "preferredWorkspace": preferred_ws, "status": "invited",
+            "operationalDesignation": designation,
             "createdAt": now.isoformat(), "invitePending": True,
         })
         invite = {
@@ -1085,15 +1138,30 @@ def build_auth(db, coll, add_audit):
             raise HTTPException(403, "Only an owner can grant the owner role")
         if is_sysadmin(account) and "owner" not in effective_roles(owner):
             raise HTTPException(403, "Protected system administrator accounts require an owner")
-        patch = {"roles": roles, "role": primary_role(roles)}
+        from staff_identity import normalize_designation
+        primary = primary_role(roles)
+        patch = {"roles": roles, "role": primary}
+        patch["operationalDesignation"] = normalize_designation(
+            body.operationalDesignation, roles, primary,
+        )
         if body.preferredWorkspace:
             patch["preferredWorkspace"] = body.preferredWorkspace
         if body.status in ("active", "suspended"):
             patch["status"] = body.status
             if body.status == "suspended":
                 await sessions.update_many({"userId": user_id, "revoked": False}, {"$set": {"revoked": True, "revokedReason": "suspended"}})
-        if body.practitionerId is not None:
-            patch["subject"] = body.practitionerId or None
+        if "practitioner" not in roles:
+            if body.practitionerId:
+                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            patch["subject"] = None
+        elif body.practitionerId is not None:
+            if body.practitionerId:
+                patch["subject"] = await _link_practitioner_subject(
+                    coll, db, roles=roles, practitioner_id=body.practitionerId,
+                    name=account.get("name") or "Practitioner", email=account.get("email") or "",
+                )
+            else:
+                patch["subject"] = None
         if body.managePricing is not None:
             prior_perms = dict(account.get("staffPerms") or {})
             prior_perms["managePricing"] = bool(body.managePricing)
