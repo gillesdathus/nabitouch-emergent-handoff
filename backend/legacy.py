@@ -336,6 +336,39 @@ def build_legacy_router(db, coll, add_audit, user_from):
         report["dryRun"] = True
         return report
 
+    @r.post("/nabitouch-csv/preview")
+    async def nabitouch_csv_preview(
+        request: Request,
+        patient_export: UploadFile = File(...),
+        patients_without_appointments: UploadFile = File(...),
+        practitioner_sales_report: UploadFile = File(...),
+    ):
+        """Checkpoint D dry-run for NabiTouch Noterro CSVs. Never writes operational data."""
+        user = await owner(request)
+        from nabitouch_csv_import import build_migration_preview, public_preview
+        pe = await patient_export.read()
+        pw = await patients_without_appointments.read()
+        sales = await practitioner_sales_report.read()
+        if max(len(pe), len(pw), len(sales)) > 8 * 1024 * 1024:
+            raise HTTPException(413, "File is too large")
+        existing = await coll("clients").find({}, {"_id": 0, "id": 1, "email": 1, "phone": 1}).to_list(5000)
+        report = build_migration_preview(
+            patient_export_csv=pe,
+            secondary_csv=pw,
+            sales_csv=sales,
+            existing_clients=existing,
+        )
+        finances = report["summary"].get("finances") or {}
+        # Do not log personal fields — counts only.
+        logger.info(
+            "nabitouch csv preview patients=%s invoices=%s errors=%s",
+            report["summary"].get("distinctDisplayNames"),
+            finances.get("invoiceCount"),
+            len(report.get("errors") or []),
+        )
+        await audit(user.get("email") or "owner", "nabitouch_csv_preview", None)
+        return public_preview(report)
+
     @r.post("/import")
     async def run_import(request: Request):
         from config import legacy_patient_import_enabled
