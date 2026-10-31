@@ -205,6 +205,8 @@ export const api = {
   clientWorkspace: (id) => http.get(`/clients/${id}/workspace`).then(data),
   insurers: () => http.get("/billing/insurers").then(data),
   eclaimsPathways: () => http.get("/billing/eclaims/pathways").then(data),
+  eclaimsPermissions: () => http.get("/billing/eclaims/permissions").then(data),
+  setEclaimsPractitionerPermissions: (subject, flags) => http.put(`/billing/eclaims/permissions/${encodeURIComponent(subject)}`, { flags }).then(data),
   invoiceEclaims: (id) => http.get(`/invoices/${id}/eclaims`).then(data),
   invoiceEclaimsFields: (id, policyId) => http.get(`/invoices/${id}/eclaims/fields`, { params: policyId ? { policyId } : {} }).then(data),
   previewImport: (file) => { const body = new FormData(); body.append("upload", file); return http.post("/billing/imports/preview", body).then(data); },

@@ -5,6 +5,7 @@ from insurers import (
     eclaims_pathway_suggestion,
     eclaims_pathways,
     insurance_profile_complete,
+    normalize_eclaims_practitioner_grants,
     redact_eclaims_sensitive,
     suggest_pathway_id,
 )
@@ -44,6 +45,27 @@ def test_practitioner_needs_grant_and_defaults_to_own_treatments():
     assert eclaims_allowed(
         ["practitioner"], action="view", practitioner_grants=["view", "all"], practitioner_subject="p-1", treating_practitioner_id="p-2",
     ) is True
+
+
+def test_practitioner_submit_grant_implies_view_at_runtime():
+    assert eclaims_allowed(
+        ["practitioner"], action="view", practitioner_grants=["submit"], practitioner_subject="p-1", treating_practitioner_id="p-1",
+    ) is True
+    assert eclaims_allowed(
+        ["practitioner"], action="submit", practitioner_grants=["submit"], practitioner_subject="p-1", treating_practitioner_id="p-1",
+    ) is True
+
+
+def test_normalize_eclaims_practitioner_grants_enforces_view_dependency():
+    assert normalize_eclaims_practitioner_grants(["submit"]) == ["view", "submit"]
+    assert normalize_eclaims_practitioner_grants({"view": False, "submit": True, "viewSensitive": True}) == []
+    assert normalize_eclaims_practitioner_grants({"view": False, "submit": False}) == []
+    assert normalize_eclaims_practitioner_grants({"submit": True, "viewSensitive": True}) == [
+        "view", "submit", "view_sensitive",
+    ]
+    assert normalize_eclaims_practitioner_grants({"view": True, "allTreatments": True}) == ["view", "all"]
+    assert normalize_eclaims_practitioner_grants({"view": True, "all": True}) == ["view", "all"]
+    assert normalize_eclaims_practitioner_grants([]) == []
 
 
 def test_eclaims_pathways_include_required_portals_and_never_submit():

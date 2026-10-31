@@ -105,6 +105,45 @@ def _as_grant_set(raw):
     return {str(item) for item in (raw or [])}
 
 
+# Practitioner grants Owners manage in Permissions. reconcile/manage stay server-capable but are not primary UI toggles.
+ECLAIMS_PRACTITIONER_GRANT_ORDER = ("view", "submit", "view_sensitive", "reconcile", "manage", "all")
+ECLAIMS_PRACTITIONER_VIEW_DEPENDENTS = frozenset({"submit", "view_sensitive", "reconcile", "manage", "all"})
+
+
+def normalize_eclaims_practitioner_grants(raw):
+    """Normalize practitioner eClaims grants for durable storage.
+
+    - Explicit view:false (dict) clears every grant so dependents cannot linger.
+    - Enabling submit / view_sensitive / reconcile / manage / all implies view.
+    - Without view, no other grant remains stored.
+    """
+    if isinstance(raw, dict):
+        aliases = {
+            "view": "view",
+            "submit": "submit",
+            "view_sensitive": "view_sensitive",
+            "viewSensitive": "view_sensitive",
+            "reconcile": "reconcile",
+            "manage": "manage",
+            "all": "all",
+            "allTreatments": "all",
+        }
+        if "view" in raw and not raw.get("view"):
+            return []
+        mapped = {}
+        for key, value in raw.items():
+            token = aliases.get(key)
+            if token:
+                mapped[token] = bool(value)
+        raw = mapped
+    grants = _as_grant_set(raw) & set(ECLAIMS_PRACTITIONER_GRANT_ORDER)
+    if grants & ECLAIMS_PRACTITIONER_VIEW_DEPENDENTS:
+        grants.add("view")
+    if "view" not in grants:
+        return []
+    return [name for name in ECLAIMS_PRACTITIONER_GRANT_ORDER if name in grants]
+
+
 def eclaims_allowed(
     roles,
     *,
