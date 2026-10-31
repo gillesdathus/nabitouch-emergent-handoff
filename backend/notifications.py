@@ -231,8 +231,11 @@ async def enqueue_practitioner_notice(db, appt, kind):
     return doc, True
 
 
-async def enqueue_billing(db, invoice, kind, key):
-    """Queue one invoice, receipt, or payment-link email. Callers must keep this behind INVOICE_EMAIL_ENABLED."""
+async def enqueue_billing(db, invoice, kind, key, *, payment_url=None, recipient_email=None, amount_cents=None):
+    """Queue one invoice, receipt, or payment-link email. Callers must keep this behind INVOICE_EMAIL_ENABLED.
+
+    payment_url / recipient_email / amount_cents are optional staff overrides for shareable Stripe links.
+    """
     if kind not in BILLING_KINDS:
         raise ValueError("Unknown billing email")
     now = _iso()
@@ -240,6 +243,12 @@ async def enqueue_billing(db, invoice, kind, key):
            "appointmentId": invoice.get("appointmentId"), "ref": invoice.get("number"), "clientId": invoice.get("clientId"), "status": PENDING,
            "attempts": 0, "maxAttempts": max_attempts(), "nextAttemptAt": now, "leaseUntil": None, "leaseOwner": None, "providerId": None,
            "providerAcceptedAt": None, "deliveredAt": None, "lastError": None, "createdAt": now, "updatedAt": now}
+    if payment_url:
+        doc["paymentUrl"] = str(payment_url)[:2000]
+    if recipient_email:
+        doc["recipientEmail"] = str(recipient_email).strip().lower()[:160]
+    if isinstance(amount_cents, int) and amount_cents >= 0:
+        doc["amountCents"] = amount_cents
     try:
         await db.nt_notifications.insert_one(dict(doc))
     except DuplicateKeyError:

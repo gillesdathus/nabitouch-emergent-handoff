@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { Download, Mail, Receipt, Loader2, CreditCard, Banknote, Landmark, ShieldCheck, Undo2, Gift, ArrowUpRight } from "lucide-react";
@@ -68,31 +68,41 @@ function Documents({ invoice, emailOn, staff }) {
 
 export function InvoiceDrawer({ invoice, open, onOpenChange, flags = {}, onChange, staffLink }) {
   const { pathname } = useLocation();
+  const [detail, setDetail] = useState(invoice);
+  useEffect(() => { setDetail(invoice); }, [invoice]);
+  useEffect(() => {
+    if (!open || !staffLink || !invoice?.id) return undefined;
+    let alive = true;
+    // Staff list rows omit contact + payableNow; refresh the authorized detail view for payment actions.
+    api.invoice(invoice.id).then((next) => { if (alive) setDetail(next); }).catch(() => {});
+    return () => { alive = false; };
+  }, [open, staffLink, invoice?.id]);
+  const view = detail || invoice;
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent className="mx-auto max-h-[92dvh] max-w-2xl rounded-t-[32px] border-0 bg-nb-canvas" data-testid="invoice-drawer">
-        {invoice && (
+        {view && (
           <div className="overflow-y-auto px-5 pb-[calc(2rem+var(--nb-safe-b))]">
             <div className="relative mt-3 overflow-hidden rounded-[28px] p-5 text-white nb-lagoon">
               <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-nb-turq/40 blur-2xl" />
               <div className="relative flex items-start justify-between gap-3">
-                <div><DrawerTitle className="text-lg font-semibold text-white" data-testid="invoice-drawer-number">{invoice.number || "Draft invoice"}</DrawerTitle><DrawerDescription className="text-sm text-white/75">{invoice.clientName && staffLink ? `${invoice.clientName} · ` : ""}{invoice.service}{invoice.duration ? ` · ${invoice.duration} min` : ""}{invoice.serviceDate ? ` · ${fmtDate(invoice.serviceDate)}` : ""}</DrawerDescription></div>
-                <InvoiceStatePill invoice={invoice} testid="invoice-drawer-state" />
+                <div><DrawerTitle className="text-lg font-semibold text-white" data-testid="invoice-drawer-number">{view.number || "Draft invoice"}</DrawerTitle><DrawerDescription className="text-sm text-white/75">{view.clientName && staffLink ? `${view.clientName} · ` : ""}{view.service}{view.duration ? ` · ${view.duration} min` : ""}{view.serviceDate ? ` · ${fmtDate(view.serviceDate)}` : ""}</DrawerDescription></div>
+                <InvoiceStatePill invoice={view} testid="invoice-drawer-state" />
               </div>
-              <p className="relative mt-5 text-xs text-white/70">{invoice.state === "draft" ? "Draft total · not issued" : "Outstanding"}</p>
-              <p className="nb-num relative text-4xl font-semibold" data-testid="invoice-drawer-balance">{invoice.state === "draft" ? invoice.total.display : invoice.balance.display}</p>
-              <div className="relative mt-4"><TideBar invoice={invoice} dark /></div>
+              <p className="relative mt-5 text-xs text-white/70">{view.state === "draft" ? "Draft total · not issued" : "Outstanding"}</p>
+              <p className="nb-num relative text-4xl font-semibold" data-testid="invoice-drawer-balance">{view.state === "draft" ? view.total.display : view.balance.display}</p>
+              <div className="relative mt-4"><TideBar invoice={view} dark /></div>
               <p className="relative mt-2 text-[11px] text-white/70">Solid: money received. Dashed: insurance expected, not yet received.</p>
             </div>
             <div className="mt-5 space-y-6">
-              <MoneyLedger invoice={invoice} staff={Boolean(staffLink)} />
+              <MoneyLedger invoice={view} staff={Boolean(staffLink)} />
               {staffLink
-                ? <><StaffInvoiceActions invoice={invoice} onChange={onChange} />{pathname !== staffLink && <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Record insurance and payments<ArrowUpRight className="h-4 w-4" /></Link>}</>
-                : <PayOptions invoice={invoice} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={onChange} />}
-              <Lines invoice={invoice} />
-              <Payments invoice={invoice} />
-              <Documents invoice={invoice} emailOn={flags.emailOn} staff={Boolean(staffLink)} />
-              {invoice.practitionerName && <p className="text-xs text-nb-mute">Practitioner: {invoice.practitionerName}{invoice.dueDate ? ` · Due ${fmtDate(invoice.dueDate.slice(0, 10))}` : ""}</p>}
+                ? <><StaffInvoiceActions invoice={view} onChange={(next) => { setDetail(next); onChange?.(next); }} staffLink={staffLink} emailOn={flags.emailOn} />{pathname !== staffLink && <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Open payments ledger<ArrowUpRight className="h-4 w-4" /></Link>}</>
+                : <PayOptions invoice={view} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={(next) => { setDetail(next); onChange?.(next); }} />}
+              <Lines invoice={view} />
+              <Payments invoice={view} />
+              <Documents invoice={view} emailOn={flags.emailOn} staff={Boolean(staffLink)} />
+              {view.practitionerName && <p className="text-xs text-nb-mute">Practitioner: {view.practitionerName}{view.dueDate ? ` · Due ${fmtDate(view.dueDate.slice(0, 10))}` : ""}</p>}
             </div>
           </div>
         )}

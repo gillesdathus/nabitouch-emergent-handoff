@@ -45,3 +45,21 @@ export function invoiceFacts(invoice) {
     number: invoice.number,
   };
 }
+
+/** Primary staff collection paths on an issued invoice (terminal stays on the visit panel). */
+export const STAFF_PAY_METHODS = ["insurance", "stripe", "cash", "etransfer"];
+
+export function usableClientEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!email || !email.includes("@") || email.endsWith("@example.com")) return "";
+  return email;
+}
+
+/** Patient-facing checkout amount: server payableNow, else share after expected insurance. */
+export function patientShareCents(invoice) {
+  if (Number.isInteger(invoice?.payableNow?.cents)) return Math.max(0, invoice.payableNow.cents);
+  const balance = Number.isInteger(invoice?.balance?.cents) ? invoice.balance.cents : 0;
+  const expected = Number.isInteger(invoice?.expectedInsurance?.cents) ? invoice.expectedInsurance.cents : 0;
+  if (expected > 0) return Math.max(0, balance - expected);
+  return Math.max(0, balance);
+}

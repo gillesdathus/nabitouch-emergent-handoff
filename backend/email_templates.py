@@ -39,7 +39,9 @@ def receipt_email(brand, client, view, link):
 
 
 def payment_link_email(brand, client, view, link):
-    rows = [("Invoice", view.get("number") or ""), ("Amount due", view["balance"]["display"])]
+    due = view.get("payableNow") or view.get("estimatedClientShare") or view["balance"]
+    amount = due["display"] if isinstance(due, dict) else view["balance"]["display"]
+    rows = [("Invoice", view.get("number") or ""), ("Amount due", amount)]
     return (f"Pay invoice {view.get('number') or ''} — {brand}", layout(brand, client, "You can pay the remaining balance securely online.", rows, ("Pay now", link),
                                                                      "A payment counts only after Nabitouch receives confirmation from the payment provider."))
 

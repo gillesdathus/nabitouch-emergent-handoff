@@ -2436,19 +2436,24 @@ async def _send_note(note, *, to, subject, html, idempotency_key=None):
 
 async def _deliver_billing(note):
     """Invoice, receipt, and payment-link mail. Amounts come from the invoice ledger view."""
-    from billing import public_invoice
+    from billing import money_view, public_invoice
     invoice = await db.nt_invoices.find_one({"id": note.get("invoiceId")}, NO_ID)
     if not invoice:
         raise PermanentDelivery("invoice_missing")
     client = await coll("clients").find_one({"id": invoice.get("clientId")}, NO_ID) or {}
-    to = (client.get("email") or "").strip().lower()
+    override = (note.get("recipientEmail") or "").strip().lower()
+    to = override or (client.get("email") or "").strip().lower()
     if not to or to.endswith("@example.com"):
         raise CancelDelivery("no_recipient")
     ledger = await db.nt_ledger.find({"invoiceId": invoice["id"]}, NO_ID).sort("at", 1).to_list(500)
     view = public_invoice(invoice, ledger)
-    link = f"{os.environ['APP_URL'].rstrip('/')}/me/billing"
+    if isinstance(note.get("amountCents"), int):
+        view = {**view, "payableNow": money_view(note["amountCents"])}
+    # Staff-generated payment links use the Stripe hosted URL. Other billing mail keeps the in-app billing page.
+    link = (note.get("paymentUrl") or "").strip() or f"{os.environ['APP_URL'].rstrip('/')}/me/billing"
     build = {"invoice": invoice_email, "receipt": receipt_email, "payment_link": payment_link_email, "billing_update": billing_update_email}[note["kind"]]
-    subject, html = build(os.environ["EMAIL_FROM_NAME"], client.get("preferredName") or client.get("firstName") or "there", view, link)
+    greeting = client.get("preferredName") or client.get("firstName") or "there"
+    subject, html = build(os.environ["EMAIL_FROM_NAME"], greeting, view, link)
     try:
         return await _send_note(note, to=to, subject=subject, html=html)
     except HTTPException as exc:
