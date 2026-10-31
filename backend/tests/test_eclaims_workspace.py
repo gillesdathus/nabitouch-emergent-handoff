@@ -1,5 +1,11 @@
 """eClaims portal helpers — copyable fields and pathways; no claim submission."""
-from insurers import copyable_claim_fields, eclaims_allowed, eclaims_pathways, insurance_profile_complete
+from insurers import (
+    copyable_claim_fields,
+    eclaims_allowed,
+    eclaims_pathways,
+    insurance_profile_complete,
+    redact_eclaims_sensitive,
+)
 
 
 def test_owner_and_manager_eclaims_access():
@@ -87,3 +93,31 @@ def test_platforms_are_marked_separately_from_carrier_portals():
     assert kinds["providerconnect"] == "platform"
     assert kinds["alberta-blue-cross"] == "carrier_portal"
     assert kinds["sun-life"] == "carrier_portal"
+
+
+def test_redact_eclaims_sensitive_clears_policy_and_member_ids():
+    fields = [
+        {"id": "patientName", "label": "Patient name", "value": "Sarah Thompson"},
+        {"id": "policyNumber", "label": "Policy or group number", "value": "GRP-9"},
+        {"id": "memberId", "label": "Member or certificate ID", "value": "M-1"},
+        {"id": "treatmentFee", "label": "Treatment fee", "value": "$100.00"},
+    ]
+    policies = [{
+        "id": "pol-1",
+        "insurer": "Alberta Blue Cross",
+        "policy": "GRP-9",
+        "memberId": "M-1",
+        "complete": True,
+    }]
+    safe_fields, safe_policies = redact_eclaims_sensitive(fields, policies)
+    by_id = {row["id"]: row for row in safe_fields}
+    assert by_id["patientName"]["value"] == "Sarah Thompson"
+    assert by_id["treatmentFee"]["value"] == "$100.00"
+    assert by_id["policyNumber"]["value"] == ""
+    assert by_id["memberId"]["value"] == ""
+    assert by_id["policyNumber"]["sensitiveRedacted"] is True
+    assert safe_policies[0]["insurer"] == "Alberta Blue Cross"
+    assert safe_policies[0]["policy"] == ""
+    assert safe_policies[0]["memberId"] == ""
+    assert safe_policies[0]["complete"] is True
+    assert safe_policies[0]["sensitiveRedacted"] is True

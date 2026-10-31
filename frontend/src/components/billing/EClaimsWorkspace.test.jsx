@@ -69,3 +69,20 @@ test("switching pathway updates the portal destination without claiming submissi
   expect(view.host.textContent).toMatch(/does not submit/i);
   view.unmount();
 });
+
+test("shows sensitive-redaction notice when viewSensitive is false", async () => {
+  h.eclaims.mockResolvedValue({
+    ...body,
+    viewSensitive: false,
+    fields: [
+      { id: "patientName", label: "Patient name", value: "Sarah Thompson" },
+      { id: "policyNumber", label: "Policy or group number", value: "", sensitiveRedacted: true },
+      { id: "memberId", label: "Member or certificate ID", value: "", sensitiveRedacted: true },
+    ],
+    policies: [{ id: "ins-1", insurer: "Alberta Blue Cross", policy: "", memberId: "", complete: true, sensitiveRedacted: true }],
+  });
+  const view = await render();
+  expect(view.host.querySelector('[data-testid="eclaims-sensitive-redacted"]')).toBeTruthy();
+  expect(view.host.querySelector('[data-testid="eclaims-field-policyNumber"]').textContent).toContain("Not on file");
+  view.unmount();
+});

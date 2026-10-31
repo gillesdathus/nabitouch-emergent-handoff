@@ -100,7 +100,10 @@ export function EClaimsWorkspace({ invoiceId, clientId }) {
           <select className="nb-input mt-1 h-10 w-full" value={policyId} onChange={(e) => selectPolicy(e.target.value)} data-testid="eclaims-policy-select">
             <option value="">Select a policy</option>
             {ctx.policies.map((row) => (
-              <option key={row.id} value={row.id}>{row.insurer || "Unnamed"} · {row.memberId || "no member ID"}</option>
+              <option key={row.id} value={row.id}>
+                {row.insurer || "Unnamed"}
+                {row.sensitiveRedacted ? "" : ` · ${row.memberId || "no member ID"}`}
+              </option>
             ))}
           </select>
         </label>
@@ -108,6 +111,12 @@ export function EClaimsWorkspace({ invoiceId, clientId }) {
 
       {(ctx.policies || []).length === 1 && !ctx.policies[0].complete && (
         <p className="text-xs text-amber-800" data-testid="eclaims-incomplete-policy">This policy is incomplete. Missing carrier, policy/group, or member ID stay blank — nothing is invented.</p>
+      )}
+
+      {ctx.viewSensitive === false && (
+        <p className="rounded-xl bg-slate-50 p-3 text-xs text-nb-mute" data-testid="eclaims-sensitive-redacted">
+          Policy and member identifiers are hidden for your role. Ask an owner to grant eClaims sensitive-view access if you need them for portal entry.
+        </p>
       )}
 
       <div>

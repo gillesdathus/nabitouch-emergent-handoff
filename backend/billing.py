@@ -1197,7 +1197,7 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.get("/invoices/{iid}/eclaims")
     async def eclaims_workspace(iid: str, request: Request):
         """Context for the portal-assisted eClaims workspace. Does not submit claims."""
-        from insurers import copyable_claim_fields, eclaims_pathways, insurance_profile_complete
+        from insurers import copyable_claim_fields, eclaims_pathways, insurance_profile_complete, redact_eclaims_sensitive
         user = await actor(request)
         invoice = await load(iid)
         appt = await appointment(invoice.get("appointmentId"), required=False)
@@ -1206,19 +1206,36 @@ def build_billing_router(db, coll, add_audit, user_from):
         view = await view_for(user, invoice)
         client = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0}) if invoice.get("clientId") else None
         client = client or {}
-        if not await can_eclaims(user, invoice, appt, "view_sensitive"):
-            # Still show DOB when view is allowed for claim copy; strip card images and extras.
-            client = {k: client.get(k) for k in ("id", "firstName", "lastName", "preferredName", "dob", "insurance", "noInsurance")}
+        # Always omit card images / extras from eClaims payloads.
+        client = {k: client.get(k) for k in ("id", "firstName", "lastName", "preferredName", "dob", "insurance", "noInsurance")}
         practitioner = await coll("practitioners").find_one({"id": invoice.get("practitionerId")}, {"_id": 0, "id": 1, "name": 1}) if invoice.get("practitionerId") else None
         practitioner = practitioner or {"name": invoice.get("practitionerName") or ""}
         registration = await _registration_number(invoice.get("practitionerId"))
-        policies = list(client.get("insurance") or [])
+        policies_raw = list(client.get("insurance") or [])
         can_submit = await can_eclaims(user, invoice, appt, "submit")
-        selected = policies[0] if len(policies) == 1 else {}
+        sensitive = await can_eclaims(user, invoice, appt, "view_sensitive")
+        selected = policies_raw[0] if len(policies_raw) == 1 else {}
         fields = copyable_claim_fields(
             patient=client, policy=selected, invoice=view, practitioner=practitioner, registration_number=registration,
         )
-        incomplete = [item["id"] for item in fields if not item["value"]]
+        policies = [
+            {
+                "id": row.get("id"),
+                "insurer": row.get("insurer") or "",
+                "policy": row.get("policy") or "",
+                "memberId": row.get("memberId") or "",
+                "holderName": row.get("holderName") or "",
+                "relationship": row.get("relationship") or "",
+                "complete": insurance_profile_complete(row),
+            }
+            for row in policies_raw
+        ]
+        if not sensitive:
+            fields, policies = redact_eclaims_sensitive(fields, policies)
+        incomplete = [
+            item["id"] for item in fields
+            if not item["value"] and not item.get("sensitiveRedacted")
+        ]
         return {
             "invoiceId": iid,
             "appointmentId": invoice.get("appointmentId"),
@@ -1227,23 +1244,13 @@ def build_billing_router(db, coll, add_audit, user_from):
                 "name": next((f["value"] for f in fields if f["id"] == "patientName"), ""),
                 "dob": client.get("dob") or "",
             },
-            "policies": [
-                {
-                    "id": row.get("id"),
-                    "insurer": row.get("insurer") or "",
-                    "policy": row.get("policy") or "",
-                    "memberId": row.get("memberId") or "",
-                    "holderName": row.get("holderName") or "",
-                    "relationship": row.get("relationship") or "",
-                    "complete": insurance_profile_complete(row),
-                }
-                for row in policies
-            ],
+            "policies": policies,
             "selectedPolicyId": selected.get("id"),
             "fields": fields,
             "incompleteFieldIds": incomplete,
             "pathways": eclaims_pathways(),
             "canSubmit": can_submit,
+            "viewSensitive": sensitive,
             "submitsFromApp": False,
             "notice": "Opening an insurer portal does not submit a claim. Record approvals and payments on the invoice ledger.",
         }
@@ -1258,7 +1265,7 @@ def build_billing_router(db, coll, add_audit, user_from):
 
     @r.get("/invoices/{iid}/eclaims/fields")
     async def eclaims_fields_for_policy(iid: str, request: Request, policyId: str = ""):
-        from insurers import copyable_claim_fields, insurance_profile_complete
+        from insurers import copyable_claim_fields, insurance_profile_complete, redact_eclaims_sensitive
         user = await actor(request)
         invoice = await load(iid)
         appt = await appointment(invoice.get("appointmentId"), required=False)
@@ -1278,11 +1285,26 @@ def build_billing_router(db, coll, add_audit, user_from):
             practitioner=practitioner or {"name": invoice.get("practitionerName") or ""},
             registration_number=registration,
         )
+        sensitive = await can_eclaims(user, invoice, appt, "view_sensitive")
+        policy_view = {
+            "id": (policy or {}).get("id"),
+            "insurer": (policy or {}).get("insurer") or "",
+            "policy": (policy or {}).get("policy") or "",
+            "memberId": (policy or {}).get("memberId") or "",
+            "complete": insurance_profile_complete(policy or {}),
+        }
+        if not sensitive:
+            fields, redacted_policies = redact_eclaims_sensitive(fields, [policy_view] if policy_view.get("id") or policy else [])
+            policy_view = redacted_policies[0] if redacted_policies else policy_view
         return {
             "selectedPolicyId": (policy or {}).get("id"),
-            "policyComplete": insurance_profile_complete(policy or {}),
+            "policyComplete": policy_view.get("complete", False),
+            "viewSensitive": sensitive,
             "fields": fields,
-            "incompleteFieldIds": [item["id"] for item in fields if not item["value"]],
+            "incompleteFieldIds": [
+                item["id"] for item in fields
+                if not item["value"] and not item.get("sensitiveRedacted")
+            ],
         }
 
     @r.get("/billing/stripe/status")

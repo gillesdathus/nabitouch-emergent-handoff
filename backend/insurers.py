@@ -219,3 +219,23 @@ def copyable_claim_fields(*, patient, policy, invoice, practitioner, registratio
 
 def insurance_profile_complete(policy):
     return bool(_text(policy.get("insurer")) and _text(policy.get("policy")) and _text(policy.get("memberId")))
+
+
+SENSITIVE_FIELD_IDS = frozenset({"policyNumber", "memberId"})
+
+
+def redact_eclaims_sensitive(fields, policies):
+    """Hide policy/member identifiers unless eclaims.view_sensitive (or manage) is granted."""
+    safe_fields = [
+        {**item, "value": "", "sensitiveRedacted": True} if item.get("id") in SENSITIVE_FIELD_IDS else dict(item)
+        for item in (fields or [])
+    ]
+    safe_policies = []
+    for row in policies or []:
+        safe_policies.append({
+            **row,
+            "policy": "",
+            "memberId": "",
+            "sensitiveRedacted": True,
+        })
+    return safe_fields, safe_policies
