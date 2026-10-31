@@ -98,6 +98,8 @@ const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
 const WellnessStudioDashboard = lazy(() => import("@/pages/owner/wellness-studio/WellnessStudioDashboard"));
 const WellnessStudioPlaceholder = lazy(() => import("@/pages/owner/wellness-studio/WellnessStudioPlaceholder"));
+const WellnessStudioEvents = lazy(() => import("@/pages/owner/wellness-studio/WellnessStudioEvents"));
+const EngageApp = lazy(() => import("@/pages/engage/EngageApp"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
 const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
@@ -221,7 +223,7 @@ export default function App() {
                   <Route path="/owner/wellness-studio/campaigns" element={<WellnessStudioPlaceholder />} />
                   <Route path="/owner/wellness-studio/assets" element={<WellnessStudioPlaceholder />} />
                   <Route path="/owner/wellness-studio/organizations" element={<WellnessStudioPlaceholder />} />
-                  <Route path="/owner/wellness-studio/events" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/events" element={<WellnessStudioEvents />} />
                   <Route path="/owner/wellness-studio/outreach" element={<WellnessStudioPlaceholder />} />
                   <Route path="/owner/wellness-studio/analytics" element={<WellnessStudioPlaceholder />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />
@@ -267,6 +269,9 @@ export default function App() {
                   <Route path="/desk/team/client-comms" element={<TeamClientComms role="desk" />} />
                 </Route>
                 <Route path="/train" element={<TrainingWorkspace />} />
+                {/* Public Engage — path prototype for engage.nabitouch.com */}
+                <Route path="/engage" element={<EngageApp />} />
+                <Route path="/engage/:eventId" element={<EngageApp />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Routes>
             </Suspense>

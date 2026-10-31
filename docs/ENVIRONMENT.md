@@ -21,6 +21,8 @@ Never commit real values. `backend/env.example` lists the names. Production star
 | `PAYMENT_MODE` | `simulated` is ignored in production |
 | `DOCUMENT_UPLOADS_ENABLED` | Unset stays off. Production must set it explicitly. `false` refuses file uploads before they are stored |
 | `STRIPE_CARD_CHECKOUT_ENABLED` | Unset stays off. Production must set it explicitly. `false` refuses Checkout and simulated card intents before any session is created |
+| `ENGAGE_PUBLIC_ENABLED` | Public Engage event/check-in APIs. Unset: on outside production, off in production until opted in |
+| `ENGAGE_WRITES_ENABLED` | When true, Engage check-in creates appointments via the existing booking engine (`workplace-chair`). Unset stays off |
 | `LEGACY_PATIENT_IMPORT_ENABLED` | Unset stays off. Production must set it explicitly. `false` refuses legacy and history imports |
 | `HOSTING_STRATEGY` | `shared-vps` or `dedicated-vps`. `shared-vps` refuses `CLAMAV_HOST` |
 | `LOG_LEVEL` | Optional `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
@@ -52,6 +54,8 @@ Tax rates and per-service taxable flags are stored in the database, not in these
 `deploy/validate-production-secrets.py` prints only `PASS`, `FAIL`, and `PENDING`. It does not source the environment file.
 
 The API calls Geocoding v6 and Directions v5 with `MAPBOX_TOKEN`. Those are public Mapbox APIs, so `nabitouch-backend-prod` can be a `pk.` token with no URL restriction. No endpoint in this application needs a secret `sk.` scope. `nabitouch-frontend-prod` is the only token that enters the frontend build, through Mapbox GL. Its URL restriction must include `https://nabitouch.com` and `https://www.nabitouch.com`, because those are the two origins that can load the map. Provisioning does not call Mapbox and does not change Nginx or DNS.
+
+Engage ships first as `https://nabitouch.com/engage` (same origin — no CORS change). If you later serve `https://engage.nabitouch.com`, add that origin to `CORS_ORIGINS` and to the Mapbox browser token URL allow-list. See `docs/ENGAGE_PRODUCTION_CHECKLIST_2026-10-30.md`.
 
 Resend uses domain `nabitouch.com`, sender `Nabitouch <bookings@nabitouch.com>`, reply-to `info@nabitouch.com`, and smoke recipient `info@nabitouch.com`. `OWNER_EMAIL` is the same address. An empty API key or webhook secret stays pending, and the email release gate stays blocked. Provisioning does not send mail.
 

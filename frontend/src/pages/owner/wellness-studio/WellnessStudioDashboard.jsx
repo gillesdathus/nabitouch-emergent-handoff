@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Building2,
@@ -256,9 +257,17 @@ export default function WellnessStudioDashboard() {
               <ul className="mt-3 flex flex-wrap gap-2">
                 {data.integrations.map((item) => (
                   <li key={item.id}>
-                    <Pill tone={item.status === "reuse" ? "turq" : "slate"} testid={`ws-integration-${item.id}`}>
-                      {item.label}: {item.target}
-                    </Pill>
+                    {item.id === "engage" ? (
+                      <Link to="/engage?mode=phone" data-testid={`ws-integration-${item.id}`}>
+                        <Pill tone="turq">
+                          {item.label}: {item.target} ({item.status})
+                        </Pill>
+                      </Link>
+                    ) : (
+                      <Pill tone={item.status === "reuse" ? "turq" : "slate"} testid={`ws-integration-${item.id}`}>
+                        {item.label}: {item.target}
+                      </Pill>
+                    )}
                   </li>
                 ))}
               </ul>

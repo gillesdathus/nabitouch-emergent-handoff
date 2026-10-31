@@ -423,4 +423,11 @@ export const api = {
   emailTest: () => http.post('/ops/email/test', {}).then(data),
   smsSummary: () => http.get('/sms/status-summary').then(data),
   smsTest: () => http.post('/sms/test', {}).then(data),
+  /** Engage — public corporate event check-in (path /engage). */
+  engageStatus: () => http.get('/engage/status').then(data),
+  engageEvents: () => http.get('/engage/events').then(data),
+  engageEvent: (eventId) => http.get(`/engage/events/${encodeURIComponent(eventId)}`).then(data),
+  engageCheckIn: (eventId, body) => http.post(`/engage/events/${encodeURIComponent(eventId)}/check-in`, body).then(data),
+  engageAttendance: (eventId) => http.get(`/engage/events/${encodeURIComponent(eventId)}/attendance`).then(data),
+  engagePrecautions: (checkInId) => http.get(`/engage/check-ins/${encodeURIComponent(checkInId)}/precautions`).then(data),
 };
