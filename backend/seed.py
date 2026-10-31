@@ -152,7 +152,7 @@ def build_seed():
         client("c-sarah", "Sarah", "Thompson", f"1990-{today.month:02d}-{min(today.day + 12, 28):02d}", "sarah",
                marketingConsent=True, favorites=["deep-tissue", "hot-stone"], preferredPractitioners=["p-nabitu-kahindo"],
                loyaltyPoints=340, onlineBookings=3, preferredName="Sarah",
-               insurance=[{"id": "ins-sarah", "insurer": "Sample Benefits Co. (demo)", "policy": "DEMO-448120",
+               insurance=[{"id": "ins-sarah", "insurer": "Alberta Blue Cross", "policy": "DEMO-448120",
                            "memberId": "MBR-0093321", "holderName": "Sarah Thompson", "relationship": "Self",
                            "holderDob": "", "secondary": "", "status": "direct_billing_available"}]),
         client("c-david", "David", "Okoro", "1984-03-14", "david", favorites=["sports"],

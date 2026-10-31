@@ -2,9 +2,11 @@
 from insurers import (
     copyable_claim_fields,
     eclaims_allowed,
+    eclaims_pathway_suggestion,
     eclaims_pathways,
     insurance_profile_complete,
     redact_eclaims_sensitive,
+    suggest_pathway_id,
 )
 
 
@@ -55,9 +57,28 @@ def test_eclaims_pathways_include_required_portals_and_never_submit():
         "providerconnect",
     ):
         assert needed in ids
+    by_id = {row["id"]: row for row in eclaims_pathways()}
+    assert by_id["telus-eclaims"]["url"] == "https://providerportal.telushealth.com/"
+    assert by_id["providerconnect"]["url"] == "https://www.providerconnect.ca/"
+    assert by_id["telus-eclaims"]["url"] != by_id["providerconnect"]["url"]
     for row in eclaims_pathways():
         assert row["url"].startswith("https://")
         assert row["submitsFromApp"] is False
+
+
+def test_suggest_pathway_from_saved_insurer_when_mapping_is_reliable():
+    assert suggest_pathway_id("Alberta Blue Cross") == "alberta-blue-cross"
+    assert suggest_pathway_id("Sun Life") == "sun-life"
+    assert suggest_pathway_id("Manulife") == "telus-eclaims"
+    assert suggest_pathway_id("Canada Life") == "telus-eclaims"
+    assert suggest_pathway_id("Green Shield Canada") == "providerconnect"
+    assert suggest_pathway_id("Other") is None
+    assert suggest_pathway_id("Sample Benefits Co. (demo)") is None
+    pathways, suggested = eclaims_pathway_suggestion("Alberta Blue Cross")
+    assert suggested == "alberta-blue-cross"
+    assert pathways[0]["id"] == "alberta-blue-cross"
+    assert pathways[0]["suggested"] is True
+    assert sum(1 for row in pathways if row["suggested"]) == 1
 
 
 def test_copyable_fields_leave_missing_values_blank():

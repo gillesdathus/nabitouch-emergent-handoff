@@ -1,20 +1,23 @@
 """Canadian insurer catalog and eClaims portal helpers. Nothing here submits a claim."""
 
 # Claim-submission platforms (pathways). Distinct from the patient's insurer/carrier.
+# TELUS Health eClaims launches from the TELUS Health Provider Portal (docs:
+# https://plus.telushealth.co/page/eclaims/help/learningcorner/Logging_into_eClaims_from_the_Provider_Portal.htm).
+# providerConnect is a separate multi-carrier portal at providerconnect.ca.
 PLATFORMS = (
     {
         "id": "telus-eclaims",
         "name": "TELUS Health eClaims",
         "kind": "platform",
-        "url": "https://www.providerconnect.ca/",
-        "notes": "Vendor/PMS certification required. Opening this portal does not submit a Nabitouch claim.",
+        "url": "https://providerportal.telushealth.com/",
+        "notes": "TELUS Health Provider Portal → eClaims. Distinct from providerConnect. Opening this portal does not submit a Nabitouch claim.",
     },
     {
         "id": "providerconnect",
         "name": "providerConnect",
         "kind": "platform",
         "url": "https://www.providerconnect.ca/",
-        "notes": "TELUS Health provider pathway. Keep insurer selection separate from this platform.",
+        "notes": "Separate multi-carrier provider portal (not the TELUS eClaims Provider Portal). Keep insurer selection separate from this platform.",
     },
 )
 
@@ -157,8 +160,102 @@ def catalog():
     } for item in PROVIDERS]
 
 
-def eclaims_pathways():
+# Normalized insurer name → pathway id. Only entries with a reliable public mapping.
+# Prefer dedicated carrier portals when the carrier is billed on its own site;
+# otherwise map known TELUS eClaims / providerConnect participants.
+_CARRIER_PATHWAY_ALIASES = {
+    "alberta blue cross": "alberta-blue-cross",
+    "abc": "alberta-blue-cross",
+    "pacific blue cross": "pacific-blue-cross",
+    "pbc": "pacific-blue-cross",
+    "medavie blue cross": "medavie-blue-cross",
+    "medavie": "medavie-blue-cross",
+    "sun life": "sun-life",
+    "sunlife": "sun-life",
+    "sun life financial": "sun-life",
+}
+
+_PROVIDERCONNECT_ALIASES = {
+    "green shield",
+    "green shield canada",
+    "greenshield",
+    "greenshield canada",
+    "gsc",
+}
+
+# TELUS Health eClaims participating insurers (public FAQ / register lists).
+# Do not invent mappings for free-text "Other" or demo sample names.
+_TELUS_ECLAIMS_ALIASES = {
+    "aga financial",
+    "aga financial group",
+    "alberta blue cross",  # also has carrier portal; carrier wins via _CARRIER_PATHWAY_ALIASES
+    "beneva",
+    "bpa",
+    "canada life",
+    "canada life pshcp",
+    "canada life - pshcp",
+    "claimsecure",
+    "desjardins",
+    "desjardins insurance",
+    "equitable",
+    "grouphealth",
+    "groupsource",
+    "industrial alliance",
+    "ia financial",
+    "johnson",
+    "johnson inc",
+    "belairdirect",
+    "johnston group",
+    "manion",
+    "manulife",
+    "manulife financial",
+    "maximum benefit",
+    "pacific blue cross",
+    "people corporation",
+    "rwam",
+    "simply benefits",
+    "telus adjudicare",
+    "uv insurance",
+}
+
+
+def _normalize_insurer(name):
+    text = _text(name).lower()
+    for ch in (",", ".", "/", "(", ")", "-", "_"):
+        text = text.replace(ch, " ")
+    return " ".join(text.split())
+
+
+def suggest_pathway_id(insurer_name):
+    """Return a pathway id when the saved insurer maps reliably; otherwise None."""
+    key = _normalize_insurer(insurer_name)
+    if not key or key in {"other", "unknown", "n a", "na", "none"}:
+        return None
+    if key in _CARRIER_PATHWAY_ALIASES:
+        return _CARRIER_PATHWAY_ALIASES[key]
+    if key in _PROVIDERCONNECT_ALIASES or "green shield" in key or key.startswith("greenshield"):
+        return "providerconnect"
+    if key in _TELUS_ECLAIMS_ALIASES:
+        return "telus-eclaims"
+    # Partial contains checks for common catalog labels (e.g. "Canada Life — PSHCP").
+    if "sun life" in key:
+        return "sun-life"
+    if "alberta blue cross" in key:
+        return "alberta-blue-cross"
+    if "pacific blue cross" in key:
+        return "pacific-blue-cross"
+    if "medavie" in key:
+        return "medavie-blue-cross"
+    if "green shield" in key or "greenshield" in key:
+        return "providerconnect"
+    if any(token in key for token in ("canada life", "manulife", "desjardins", "beneva", "claimsecure")):
+        return "telus-eclaims"
+    return None
+
+
+def eclaims_pathways(*, insurer=None):
     """Verified, configurable portal entry points. Opening a portal never submits a claim."""
+    suggested = suggest_pathway_id(insurer)
     rows = []
     for item in (*PLATFORMS, *CARRIER_PORTALS):
         rows.append({
@@ -168,8 +265,18 @@ def eclaims_pathways():
             "url": item["url"],
             "notes": item.get("notes") or "",
             "submitsFromApp": False,
+            "suggested": bool(suggested and item["id"] == suggested),
         })
+    if suggested:
+        rows.sort(key=lambda row: (0 if row["id"] == suggested else 1, row["name"]))
     return rows
+
+
+def eclaims_pathway_suggestion(insurer=None):
+    """Convenience: pathways list plus suggestedPathwayId for API responses."""
+    pathways = eclaims_pathways(insurer=insurer)
+    suggested = next((row["id"] for row in pathways if row.get("suggested")), None)
+    return pathways, suggested
 
 
 def invoke(provider_id, operation):

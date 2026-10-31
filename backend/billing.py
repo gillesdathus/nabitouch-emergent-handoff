@@ -1197,7 +1197,7 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.get("/invoices/{iid}/eclaims")
     async def eclaims_workspace(iid: str, request: Request):
         """Context for the portal-assisted eClaims workspace. Does not submit claims."""
-        from insurers import copyable_claim_fields, eclaims_pathways, insurance_profile_complete, redact_eclaims_sensitive
+        from insurers import copyable_claim_fields, eclaims_pathway_suggestion, insurance_profile_complete, redact_eclaims_sensitive
         user = await actor(request)
         invoice = await load(iid)
         appt = await appointment(invoice.get("appointmentId"), required=False)
@@ -1236,6 +1236,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             item["id"] for item in fields
             if not item["value"] and not item.get("sensitiveRedacted")
         ]
+        pathways, suggested_pathway_id = eclaims_pathway_suggestion((selected or {}).get("insurer"))
         return {
             "invoiceId": iid,
             "appointmentId": invoice.get("appointmentId"),
@@ -1248,7 +1249,8 @@ def build_billing_router(db, coll, add_audit, user_from):
             "selectedPolicyId": selected.get("id"),
             "fields": fields,
             "incompleteFieldIds": incomplete,
-            "pathways": eclaims_pathways(),
+            "pathways": pathways,
+            "suggestedPathwayId": suggested_pathway_id,
             "canSubmit": can_submit,
             "viewSensitive": sensitive,
             "submitsFromApp": False,
@@ -1265,7 +1267,7 @@ def build_billing_router(db, coll, add_audit, user_from):
 
     @r.get("/invoices/{iid}/eclaims/fields")
     async def eclaims_fields_for_policy(iid: str, request: Request, policyId: str = ""):
-        from insurers import copyable_claim_fields, insurance_profile_complete, redact_eclaims_sensitive
+        from insurers import copyable_claim_fields, eclaims_pathway_suggestion, insurance_profile_complete, redact_eclaims_sensitive
         user = await actor(request)
         invoice = await load(iid)
         appt = await appointment(invoice.get("appointmentId"), required=False)
@@ -1296,6 +1298,7 @@ def build_billing_router(db, coll, add_audit, user_from):
         if not sensitive:
             fields, redacted_policies = redact_eclaims_sensitive(fields, [policy_view] if policy_view.get("id") or policy else [])
             policy_view = redacted_policies[0] if redacted_policies else policy_view
+        pathways, suggested_pathway_id = eclaims_pathway_suggestion((policy or {}).get("insurer"))
         return {
             "selectedPolicyId": (policy or {}).get("id"),
             "policyComplete": policy_view.get("complete", False),
@@ -1305,6 +1308,8 @@ def build_billing_router(db, coll, add_audit, user_from):
                 item["id"] for item in fields
                 if not item["value"] and not item.get("sensitiveRedacted")
             ],
+            "pathways": pathways,
+            "suggestedPathwayId": suggested_pathway_id,
         }
 
     @r.get("/billing/stripe/status")

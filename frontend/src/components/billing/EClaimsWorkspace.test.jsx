@@ -21,13 +21,15 @@ const body = {
   notice: "Opening an insurer portal does not submit a claim.",
   policies: [{ id: "ins-1", insurer: "Alberta Blue Cross", policy: "P-1", memberId: "M-1", complete: true }],
   selectedPolicyId: "ins-1",
+  suggestedPathwayId: "alberta-blue-cross",
   fields: [
     { id: "patientName", label: "Patient name", value: "Sarah Thompson" },
     { id: "policyNumber", label: "Policy or group number", value: "P-1" },
   ],
   pathways: [
-    { id: "telus-eclaims", name: "TELUS Health eClaims", kind: "platform", url: "https://www.providerconnect.ca/", notes: "No auto submit" },
-    { id: "alberta-blue-cross", name: "Alberta Blue Cross", kind: "carrier_portal", url: "https://provider.ab.bluecross.ca/", notes: "Portal only" },
+    { id: "alberta-blue-cross", name: "Alberta Blue Cross", kind: "carrier_portal", url: "https://provider.ab.bluecross.ca/", notes: "Portal only", suggested: true },
+    { id: "telus-eclaims", name: "TELUS Health eClaims", kind: "platform", url: "https://providerportal.telushealth.com/", notes: "No auto submit", suggested: false },
+    { id: "providerconnect", name: "providerConnect", kind: "platform", url: "https://www.providerconnect.ca/", notes: "Distinct portal", suggested: false },
   ],
   canSubmit: true,
   submitsFromApp: false,
@@ -54,8 +56,9 @@ test("loads invoice eClaims context with copyable fields and portal noopener lin
   const view = await render();
   expect(h.eclaims).toHaveBeenCalledWith("inv-1");
   expect(view.host.querySelector('[data-testid="eclaims-field-patientName"]').textContent).toContain("Sarah Thompson");
+  expect(view.host.querySelector('[data-testid="eclaims-pathway-suggested"]').textContent).toMatch(/Alberta Blue Cross/);
   const portal = view.host.querySelector('[data-testid="eclaims-open-portal"]');
-  expect(portal.getAttribute("href")).toBe("https://www.providerconnect.ca/");
+  expect(portal.getAttribute("href")).toBe("https://provider.ab.bluecross.ca/");
   expect(portal.getAttribute("target")).toBe("_blank");
   expect(portal.getAttribute("rel")).toContain("noopener");
   expect(portal.getAttribute("rel")).toContain("noreferrer");
@@ -64,8 +67,10 @@ test("loads invoice eClaims context with copyable fields and portal noopener lin
 
 test("switching pathway updates the portal destination without claiming submission", async () => {
   const view = await render();
-  await act(async () => view.host.querySelector('[data-testid="eclaims-pathway-alberta-blue-cross"]').click());
-  expect(view.host.querySelector('[data-testid="eclaims-open-portal"]').getAttribute("href")).toBe("https://provider.ab.bluecross.ca/");
+  await act(async () => view.host.querySelector('[data-testid="eclaims-pathway-telus-eclaims"]').click());
+  expect(view.host.querySelector('[data-testid="eclaims-open-portal"]').getAttribute("href")).toBe("https://providerportal.telushealth.com/");
+  await act(async () => view.host.querySelector('[data-testid="eclaims-pathway-providerconnect"]').click());
+  expect(view.host.querySelector('[data-testid="eclaims-open-portal"]').getAttribute("href")).toBe("https://www.providerconnect.ca/");
   expect(view.host.textContent).toMatch(/does not submit/i);
   view.unmount();
 });

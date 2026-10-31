@@ -22,7 +22,7 @@ vi.mock("@/lib/api", () => ({
     invoiceEclaims: vi.fn(async () => ({
       policies: [],
       fields: [],
-      pathways: [{ id: "telus-eclaims", name: "TELUS Health eClaims", kind: "platform", url: "https://www.providerconnect.ca/", notes: "" }],
+      pathways: [{ id: "telus-eclaims", name: "TELUS Health eClaims", kind: "platform", url: "https://providerportal.telushealth.com/", notes: "" }],
       canSubmit: true,
       notice: "Opening an insurer portal does not submit a claim.",
     })),

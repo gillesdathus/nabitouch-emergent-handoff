@@ -47,7 +47,7 @@ export function EClaimsWorkspace({ invoiceId, clientId, patientsLink = "/owner/c
         if (!alive) return;
         setCtx(body);
         setPolicyId(body.selectedPolicyId || "");
-        setPathwayId(body.pathways?.[0]?.id || "");
+        setPathwayId(body.suggestedPathwayId || body.pathways?.find((row) => row.suggested)?.id || body.pathways?.[0]?.id || "");
       })
       .catch((e) => {
         if (!alive) return;
@@ -64,6 +64,10 @@ export function EClaimsWorkspace({ invoiceId, clientId, patientsLink = "/owner/c
     try {
       const next = await api.invoiceEclaimsFields(invoiceId, id);
       setCtx((prev) => (prev ? { ...prev, ...next, selectedPolicyId: next.selectedPolicyId } : prev));
+      if (next.suggestedPathwayId) setPathwayId(next.suggestedPathwayId);
+      else if (next.pathways?.length) {
+        setPathwayId(next.pathways.find((row) => row.suggested)?.id || pathwayId || next.pathways[0].id);
+      }
     } catch (e) {
       toast.error(apiError(e));
     }
@@ -130,7 +134,14 @@ export function EClaimsWorkspace({ invoiceId, clientId, patientsLink = "/owner/c
 
       <div>
         <p className="nb-eyebrow mb-2">Submission pathway</p>
-        <p className="mb-2 text-[11px] text-nb-mute">Choose the portal used to submit. The patient&apos;s insurer stays separate from the platform.</p>
+        <p className="mb-2 text-[11px] text-nb-mute">
+          Choose the portal used to submit. When the patient&apos;s insurer maps reliably, that pathway is pre-selected — you can still change it. Nabitouch never submits from the app.
+        </p>
+        {ctx.suggestedPathwayId && (
+          <p className="mb-2 text-[11px] text-nb-teal" data-testid="eclaims-pathway-suggested">
+            Suggested from saved insurer: {(ctx.pathways || []).find((row) => row.id === ctx.suggestedPathwayId)?.name || ctx.suggestedPathwayId}
+          </p>
+        )}
         <div className="grid gap-2 sm:grid-cols-2" data-testid="eclaims-pathways">
           {(ctx.pathways || []).map((row) => (
             <button
@@ -140,7 +151,12 @@ export function EClaimsWorkspace({ invoiceId, clientId, patientsLink = "/owner/c
               data-testid={`eclaims-pathway-${row.id}`}
               className={`rounded-xl px-3 py-2 text-left text-xs ring-1 transition-colors ${pathwayId === row.id ? "bg-nb-navy text-white ring-nb-navy" : "bg-slate-50 text-nb-ink ring-sky-100"}`}
             >
-              <span className="block font-semibold">{row.name}</span>
+              <span className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{row.name}</span>
+                {(row.suggested || row.id === ctx.suggestedPathwayId) && (
+                  <span className={`shrink-0 text-[10px] uppercase tracking-wide ${pathwayId === row.id ? "text-white/80" : "text-nb-teal"}`}>Suggested</span>
+                )}
+              </span>
               <span className={`block ${pathwayId === row.id ? "text-white/70" : "text-nb-mute"}`}>{row.kind === "platform" ? "Platform" : "Carrier portal"}</span>
             </button>
           ))}
