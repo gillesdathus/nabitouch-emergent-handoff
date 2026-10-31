@@ -1488,7 +1488,10 @@ def build_billing_router(db, coll, add_audit, user_from):
 
     @r.post("/invoices/{iid}/checkout")
     async def checkout(iid: str, request: Request):
-        from config import public_base_url
+        from config import public_base_url, stripe_card_checkout_enabled
+        # Disabled-feature contract: refuse before auth so launch/prod probes get 503, not 401.
+        if not stripe_card_checkout_enabled():
+            raise HTTPException(503, "Card checkout is turned off")
         user = await actor(request)
         invoice = await load(iid)
         await view_for(user, invoice)

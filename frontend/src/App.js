@@ -95,8 +95,6 @@ const Payments = lazy(() => import("@/pages/owner/Payments"));
 const EClaims = lazy(() => import("@/pages/owner/EClaims"));
 const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
-const ClientDuplicates = lazy(() => import("@/pages/owner/ClientDuplicates"));
-const ClientMergePreview = lazy(() => import("@/pages/owner/ClientMergePreview"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
 const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
@@ -212,8 +210,6 @@ export default function App() {
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
                   <Route path="/owner/clients" element={<StaffClients role="owner" />} />
-                  <Route path="/owner/clients/duplicates" element={<ClientDuplicates />} />
-                  <Route path="/owner/clients/duplicates/:pairId/preview" element={<ClientMergePreview />} />
                   <Route path="/owner/practitioners" element={<OwnerPractitioners />} />
                   <Route path="/owner/practitioners/:id" element={<StaffPractitionerProfile />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
