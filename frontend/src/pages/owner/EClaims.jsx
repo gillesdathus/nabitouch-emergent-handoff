@@ -28,7 +28,31 @@ export default function EClaims({ role = "owner" }) {
   const active = (rows || []).find((row) => row.id === openId) || null;
   const focus = (rows || []).find((row) => row.id === focusId) || null;
   const staffLink = role === "owner" ? "/owner/payments" : "/desk/verify";
+  const patientsLink = role === "owner" ? "/owner/clients" : "/desk/clients";
   const pathwaysHome = role === "owner" ? "/owner/zones" : null;
+  const receptionPerms = idx?.settings?.receptionPerms || {};
+  const deskMayEclaims = Boolean(
+    receptionPerms.eclaimsView || receptionPerms.eclaimsSubmit || receptionPerms.eclaimsManage,
+  );
+
+  if (role === "desk" && idx && !deskMayEclaims) {
+    return (
+      <div className="min-w-0 space-y-4" data-testid="desk-eclaims-denied">
+        <PageHeader
+          eyebrow="Billing"
+          title="eClaims"
+          accent="workspace"
+          description="eClaims access for reception is controlled by dedicated permissions."
+        />
+        <EmptyState
+          icon={Shield}
+          title="eClaims is not enabled for reception"
+          body="Ask an owner to turn on eClaims view or submit under Permissions. Payment management alone does not grant eClaims access."
+          testid="eclaims-desk-denied"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0 space-y-6" data-testid={`${role}-eclaims`}>
@@ -92,7 +116,7 @@ export default function EClaims({ role = "owner" }) {
           )}
           testid="eclaims-focus-panel"
         >
-          <EClaimsWorkspace invoiceId={focus.id} clientId={focus.clientId} staffLink={staffLink} />
+          <EClaimsWorkspace invoiceId={focus.id} clientId={focus.clientId} patientsLink={patientsLink} />
         </Panel>
       )}
 

@@ -5,9 +5,11 @@ import { Copy, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 
 function CopyField({ field }) {
+  const redacted = Boolean(field.sensitiveRedacted);
   const empty = !field.value;
+  const display = redacted ? "Hidden for your role" : empty ? "Not on file" : field.value;
   const copy = async () => {
-    if (empty) return;
+    if (empty || redacted) return;
     try {
       await navigator.clipboard?.writeText(field.value);
       toast.success(`${field.label} copied`);
@@ -19,16 +21,16 @@ function CopyField({ field }) {
     <div className="flex items-start gap-2 rounded-xl bg-white/80 p-2.5 ring-1 ring-sky-100" data-testid={`eclaims-field-${field.id}`}>
       <div className="min-w-0 flex-1">
         <p className="text-[11px] text-nb-mute">{field.label}</p>
-        <p className={`break-words text-sm font-medium ${empty ? "text-nb-mute" : "text-nb-ink"}`}>{empty ? "Not on file" : field.value}</p>
+        <p className={`break-words text-sm font-medium ${empty || redacted ? "text-nb-mute" : "text-nb-ink"}`}>{display}</p>
       </div>
-      <button type="button" onClick={copy} disabled={empty} aria-label={`Copy ${field.label}`} data-testid={`eclaims-copy-${field.id}`} className="nb-btn-ghost h-9 shrink-0 px-2 text-xs">
+      <button type="button" onClick={copy} disabled={empty || redacted} aria-label={`Copy ${field.label}`} data-testid={`eclaims-copy-${field.id}`} className="nb-btn-ghost h-9 shrink-0 px-2 text-xs">
         <Copy className="h-3.5 w-3.5" />
       </button>
     </div>
   );
 }
 
-export function EClaimsWorkspace({ invoiceId, clientId }) {
+export function EClaimsWorkspace({ invoiceId, clientId, patientsLink = "/owner/clients" }) {
   const [ctx, setCtx] = useState(undefined);
   const [error, setError] = useState("");
   const [policyId, setPolicyId] = useState("");
@@ -90,7 +92,7 @@ export function EClaimsWorkspace({ invoiceId, clientId }) {
       {(ctx.policies || []).length === 0 && (
         <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="eclaims-no-policy">
           No insurance details are saved on this patient. Complete the insurance profile before submitting externally.
-          {clientId && <Link to="/owner/clients" className="mt-2 block font-semibold text-nb-blue">Open patients</Link>}
+          {clientId && <Link to={patientsLink} className="mt-2 block font-semibold text-nb-blue" data-testid="eclaims-open-patients">Open patients</Link>}
         </div>
       )}
 

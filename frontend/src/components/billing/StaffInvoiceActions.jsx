@@ -67,7 +67,7 @@ function ManualPayment({ invoice, onChange, method }) {
   );
 }
 
-function InsurancePanel({ invoice, staffLink }) {
+function InsurancePanel({ invoice, staffLink, patientsLink }) {
   const claim = (invoice.claims || [])[0];
   return (
     <div className="space-y-3 rounded-2xl p-4 tint-ice" data-testid="staff-pay-insurance">
@@ -85,7 +85,7 @@ function InsurancePanel({ invoice, staffLink }) {
       {claim
         ? <p className="text-xs text-nb-mute" data-testid="staff-ins-claim">{claim.provider || "Insurer"} · claimed {claim.claimed?.display} · approved {claim.approved?.display} · received {claim.received?.display}</p>
         : <p className="text-xs text-nb-mute" data-testid="staff-ins-claim-empty">No claim has been recorded on this invoice yet. Approval is not payment.</p>}
-      <EClaimsWorkspace invoiceId={invoice.id} clientId={invoice.clientId} staffLink={staffLink} />
+      <EClaimsWorkspace invoiceId={invoice.id} clientId={invoice.clientId} patientsLink={patientsLink} />
       {staffLink && <Link to={staffLink} data-testid="staff-ins-open-ledger" className="nb-btn-ghost inline-flex h-10 items-center gap-2 text-sm">Record insurance on the payments ledger<ArrowUpRight className="h-4 w-4" /></Link>}
     </div>
   );
@@ -193,7 +193,7 @@ function StripeLinkPanel({ invoice, emailOn, onLink }) {
   );
 }
 
-export function StaffInvoiceActions({ invoice, onChange, staffLink, emailOn = false }) {
+export function StaffInvoiceActions({ invoice, onChange, staffLink, patientsLink, emailOn = false }) {
   const [busy, setBusy] = useState("");
   const [method, setMethod] = useState("stripe");
   const [tip, setTip] = useState({ amount: "", method: "cash", reference: "" });
@@ -227,7 +227,7 @@ export function StaffInvoiceActions({ invoice, onChange, staffLink, emailOn = fa
               </button>
             ))}
           </div>
-          {method === "insurance" && <InsurancePanel invoice={invoice} staffLink={staffLink} />}
+          {method === "insurance" && <InsurancePanel invoice={invoice} staffLink={staffLink} patientsLink={patientsLink} />}
           {method === "stripe" && <StripeLinkPanel invoice={invoice} emailOn={emailOn} />}
           {method === "cash" && <ManualPayment invoice={invoice} onChange={onChange} method="cash" />}
           {method === "etransfer" && <ManualPayment invoice={invoice} onChange={onChange} method="etransfer" />}

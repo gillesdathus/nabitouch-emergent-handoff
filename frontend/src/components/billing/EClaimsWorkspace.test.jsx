@@ -83,6 +83,6 @@ test("shows sensitive-redaction notice when viewSensitive is false", async () =>
   });
   const view = await render();
   expect(view.host.querySelector('[data-testid="eclaims-sensitive-redacted"]')).toBeTruthy();
-  expect(view.host.querySelector('[data-testid="eclaims-field-policyNumber"]').textContent).toContain("Not on file");
+  expect(view.host.querySelector('[data-testid="eclaims-field-policyNumber"]').textContent).toContain("Hidden for your role");
   view.unmount();
 });

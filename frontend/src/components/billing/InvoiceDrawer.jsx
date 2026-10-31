@@ -97,7 +97,7 @@ export function InvoiceDrawer({ invoice, open, onOpenChange, flags = {}, onChang
             <div className="mt-5 space-y-6">
               <MoneyLedger invoice={view} staff={Boolean(staffLink)} />
               {staffLink
-                ? <><StaffInvoiceActions invoice={view} onChange={(next) => { setDetail(next); onChange?.(next); }} staffLink={staffLink} emailOn={flags.emailOn} />{pathname !== staffLink && <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Open payments ledger<ArrowUpRight className="h-4 w-4" /></Link>}</>
+                ? <><StaffInvoiceActions invoice={view} onChange={(next) => { setDetail(next); onChange?.(next); }} staffLink={staffLink} patientsLink={staffLink?.startsWith("/desk") ? "/desk/clients" : "/owner/clients"} emailOn={flags.emailOn} />{pathname !== staffLink && <Link to={staffLink} data-testid="invoice-open-payments" className="nb-btn-ghost h-11 w-full text-sm">Open payments ledger<ArrowUpRight className="h-4 w-4" /></Link>}</>
                 : <PayOptions invoice={view} cardsOn={flags.cardsOn} giftOn={flags.giftOn} onChange={(next) => { setDetail(next); onChange?.(next); }} />}
               <Lines invoice={view} />
               <Payments invoice={view} />
