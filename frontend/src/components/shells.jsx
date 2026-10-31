@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Shield, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
@@ -70,6 +70,7 @@ const OWNER_MORE_GROUPS = [
       { to: "/owner/permissions", label: "Reception access" },
       { to: "/owner/patients/invitations", label: "Patients · Invitations" },
       { to: "/owner/legacy", label: "Legacy clients" },
+      { to: "/owner/clients/duplicates", label: "Potential duplicates" },
     ],
   },
   {
@@ -110,6 +111,7 @@ const STAFF = {
       { to: "/owner/schedule", label: "Schedule", icon: CalendarDays },
       { to: "/owner/manage", label: "Manage", icon: LayoutGrid },
       { to: "/owner/payments", label: "Invoices", icon: ReceiptText },
+      { to: "/owner/eclaims", label: "eClaims", short: "eClaims", icon: Shield },
     ],
     more: [],
   },
@@ -123,6 +125,7 @@ const STAFF = {
     more: [
       { to: "/desk/team", label: "Team Connect", icon: Headphones },
       { to: "/desk/verify", label: "Payments", icon: ShieldCheck },
+      { to: "/desk/eclaims", label: "eClaims", icon: Shield },
       { to: "/desk/messages", label: "Messages", icon: MessageSquare },
       { to: "/desk/safety", label: "Safety", icon: ShieldCheck },
     ],

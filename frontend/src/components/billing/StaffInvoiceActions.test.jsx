@@ -19,6 +19,14 @@ vi.mock("@/lib/api", () => ({
     releaseInvoice: vi.fn(),
     recordTip: vi.fn(),
     issueInvoice: vi.fn(),
+    invoiceEclaims: vi.fn(async () => ({
+      policies: [],
+      fields: [],
+      pathways: [{ id: "telus-eclaims", name: "TELUS Health eClaims", kind: "platform", url: "https://www.providerconnect.ca/", notes: "" }],
+      canSubmit: true,
+      notice: "Opening an insurer portal does not submit a claim.",
+    })),
+    invoiceEclaimsFields: vi.fn(async () => ({ fields: [], incompleteFieldIds: [] })),
   },
   apiError: (e) => e?.message || "error",
 }));

@@ -1168,6 +1168,123 @@ def build_billing_router(db, coll, add_audit, user_from):
         from insurers import catalog
         return {"providers": catalog()}
 
+    async def can_eclaims(user, invoice=None, appt=None, action="view"):
+        """eClaims access: owner/manager; desk via dedicated eclaims* flags; practitioners via explicit grant."""
+        from insurers import eclaims_allowed
+        from rbac import effective_roles
+        cfg = await settings()
+        treating = None
+        if invoice is not None or appt is not None:
+            treating = ((appt or {}).get("practitionerId") if appt is not None else None) or (invoice or {}).get("practitionerId")
+        grants = (cfg.get("eclaimsPractitionerGrants") or {}).get(user.get("subject")) or []
+        return eclaims_allowed(
+            effective_roles(user),
+            action=action,
+            desk_perms=await perms(),
+            practitioner_grants=grants,
+            practitioner_subject=user.get("subject"),
+            treating_practitioner_id=treating,
+        )
+
+    @r.get("/billing/eclaims/pathways")
+    async def eclaims_pathways_catalog(request: Request):
+        user = await actor(request)
+        if not await can_eclaims(user, action="view"):
+            raise HTTPException(403, "Not permitted to view eClaims pathways")
+        from insurers import eclaims_pathways
+        return {"pathways": eclaims_pathways(), "submitsFromApp": False}
+
+    @r.get("/invoices/{iid}/eclaims")
+    async def eclaims_workspace(iid: str, request: Request):
+        """Context for the portal-assisted eClaims workspace. Does not submit claims."""
+        from insurers import copyable_claim_fields, eclaims_pathways, insurance_profile_complete
+        user = await actor(request)
+        invoice = await load(iid)
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_eclaims(user, invoice, appt, "view"):
+            raise HTTPException(403, "Not permitted to view eClaims for this invoice")
+        view = await view_for(user, invoice)
+        client = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0}) if invoice.get("clientId") else None
+        client = client or {}
+        if not await can_eclaims(user, invoice, appt, "view_sensitive"):
+            # Still show DOB when view is allowed for claim copy; strip card images and extras.
+            client = {k: client.get(k) for k in ("id", "firstName", "lastName", "preferredName", "dob", "insurance", "noInsurance")}
+        practitioner = await coll("practitioners").find_one({"id": invoice.get("practitionerId")}, {"_id": 0, "id": 1, "name": 1}) if invoice.get("practitionerId") else None
+        practitioner = practitioner or {"name": invoice.get("practitionerName") or ""}
+        registration = await _registration_number(invoice.get("practitionerId"))
+        policies = list(client.get("insurance") or [])
+        can_submit = await can_eclaims(user, invoice, appt, "submit")
+        selected = policies[0] if len(policies) == 1 else {}
+        fields = copyable_claim_fields(
+            patient=client, policy=selected, invoice=view, practitioner=practitioner, registration_number=registration,
+        )
+        incomplete = [item["id"] for item in fields if not item["value"]]
+        return {
+            "invoiceId": iid,
+            "appointmentId": invoice.get("appointmentId"),
+            "clientId": invoice.get("clientId"),
+            "patient": {
+                "name": next((f["value"] for f in fields if f["id"] == "patientName"), ""),
+                "dob": client.get("dob") or "",
+            },
+            "policies": [
+                {
+                    "id": row.get("id"),
+                    "insurer": row.get("insurer") or "",
+                    "policy": row.get("policy") or "",
+                    "memberId": row.get("memberId") or "",
+                    "holderName": row.get("holderName") or "",
+                    "relationship": row.get("relationship") or "",
+                    "complete": insurance_profile_complete(row),
+                }
+                for row in policies
+            ],
+            "selectedPolicyId": selected.get("id"),
+            "fields": fields,
+            "incompleteFieldIds": incomplete,
+            "pathways": eclaims_pathways(),
+            "canSubmit": can_submit,
+            "submitsFromApp": False,
+            "notice": "Opening an insurer portal does not submit a claim. Record approvals and payments on the invoice ledger.",
+        }
+
+    async def _registration_number(practitioner_id):
+        if not practitioner_id:
+            return ""
+        rows = await db.nt_credentials.find(
+            {"practitionerId": practitioner_id, "kind": "registration"}, {"_id": 0, "identifier": 1},
+        ).sort([("verifiedAt", -1), ("createdAt", -1)]).limit(1).to_list(1)
+        return (rows[0].get("identifier") if rows else "") or ""
+
+    @r.get("/invoices/{iid}/eclaims/fields")
+    async def eclaims_fields_for_policy(iid: str, request: Request, policyId: str = ""):
+        from insurers import copyable_claim_fields, insurance_profile_complete
+        user = await actor(request)
+        invoice = await load(iid)
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_eclaims(user, invoice, appt, "view"):
+            raise HTTPException(403, "Not permitted to view eClaims for this invoice")
+        view = await view_for(user, invoice)
+        client = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0}) if invoice.get("clientId") else {}
+        client = client or {}
+        policies = list(client.get("insurance") or [])
+        policy = next((row for row in policies if row.get("id") == policyId), None) if policyId else (policies[0] if len(policies) == 1 else {})
+        if policyId and not policy:
+            raise HTTPException(404, "Insurance policy not found on this patient")
+        practitioner = await coll("practitioners").find_one({"id": invoice.get("practitionerId")}, {"_id": 0, "id": 1, "name": 1}) if invoice.get("practitionerId") else None
+        registration = await _registration_number(invoice.get("practitionerId"))
+        fields = copyable_claim_fields(
+            patient=client, policy=policy or {}, invoice=view,
+            practitioner=practitioner or {"name": invoice.get("practitionerName") or ""},
+            registration_number=registration,
+        )
+        return {
+            "selectedPolicyId": (policy or {}).get("id"),
+            "policyComplete": insurance_profile_complete(policy or {}),
+            "fields": fields,
+            "incompleteFieldIds": [item["id"] for item in fields if not item["value"]],
+        }
+
     @r.get("/billing/stripe/status")
     async def stripe_status(request: Request):
         await actor(request)

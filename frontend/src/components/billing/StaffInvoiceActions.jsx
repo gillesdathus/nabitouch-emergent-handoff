@@ -8,6 +8,7 @@ import { api, apiError } from "@/lib/api";
 import { newKey } from "@/lib/useInvoices";
 import { formatCents } from "@/lib/billing";
 import { payableCents } from "@/components/billing/PayOptions";
+import { EClaimsWorkspace } from "@/components/billing/EClaimsWorkspace";
 import { fmtDate } from "@/lib/domain";
 
 const METHODS = [
@@ -84,7 +85,7 @@ function InsurancePanel({ invoice, staffLink }) {
       {claim
         ? <p className="text-xs text-nb-mute" data-testid="staff-ins-claim">{claim.provider || "Insurer"} · claimed {claim.claimed?.display} · approved {claim.approved?.display} · received {claim.received?.display}</p>
         : <p className="text-xs text-nb-mute" data-testid="staff-ins-claim-empty">No claim has been recorded on this invoice yet. Approval is not payment.</p>}
-      <p className="text-xs text-cyan-800">eClaims portal helpers arrive in a later slice. Use the existing ledger to record approvals and insurer payments without inventing missing policy details.</p>
+      <EClaimsWorkspace invoiceId={invoice.id} clientId={invoice.clientId} staffLink={staffLink} />
       {staffLink && <Link to={staffLink} data-testid="staff-ins-open-ledger" className="nb-btn-ghost inline-flex h-10 items-center gap-2 text-sm">Record insurance on the payments ledger<ArrowUpRight className="h-4 w-4" /></Link>}
     </div>
   );

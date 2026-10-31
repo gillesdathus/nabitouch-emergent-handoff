@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClientDirectory } from "@/components/clients/ClientDirectory";
 import { Avatar, CatalogueImage, Pill } from "@/components/ui-kit";
 import { HubLink, HubSection, PageHeader } from "@/components/tide";
-import { BadgeCheck, BarChart3, CalendarClock, Gift, GraduationCap, Headphones, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
+import { BadgeCheck, BarChart3, CalendarClock, Gift, GitMerge, GraduationCap, Headphones, LifeBuoy, MailPlus, MapPinned, Radio, Receipt, Route, Settings, Shield, Sparkles, Tag, Users, UserRound, Zap, Archive } from "lucide-react";
 import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 import { ClientProfile, PractitionerProfile } from "@/components/ops/Profiles";
@@ -342,10 +342,12 @@ export default function Manage() {
         </HubSection>
         <HubSection title="Business administration" testid="manage-section-admin">
           <HubLink to="/owner/payments" icon={Receipt} tint="tint-ice" title="Invoices" detail="Collections, insurance receivables, and period reports." meta={balances ? String(balances) : undefined} testid="manage-link-invoices" />
+          <HubLink to="/owner/eclaims" icon={Shield} tint="tint-mint" title="eClaims" detail="Copy claim fields and open insurer portals. Nothing is submitted from Nabitouch." testid="manage-link-eclaims" />
           <HubLink to="/owner/insights" icon={BarChart3} tint="tint-lagoon" title="Insights" detail="Service mix, booked hours, and the audit trail." testid="manage-link-insights" />
           <HubLink to="/owner/permissions" icon={Shield} tint="tint-mint" title="Staff access" detail="Reception permissions and authenticator rules." testid="manage-link-staff" />
           <HubLink to="/owner/zones" icon={Settings} tint="tint-meadow" title="Settings" detail="Clinic booking, payment policy, and GST." testid="manage-link-settings" />
           <HubLink to="/owner/patients/invitations" icon={Archive} tint="tint-ice" title="Patients · Invitations" detail="Manually invite imported patients. Nothing sends until you confirm." testid="manage-link-legacy" />
+          <HubLink to="/owner/clients/duplicates" icon={GitMerge} tint="tint-lagoon" title="Potential duplicates" detail="Synthetic comparison and dry-run merge preview. Execution stays off." testid="manage-link-duplicates" />
           <HubLink to="/owner/recovery" icon={LifeBuoy} tint="tint-mint" title="Recovery" detail="Restore a visit that was closed by mistake." testid="manage-link-recovery" />
           <HubLink to="/owner/training" icon={GraduationCap} tint="tint-lagoon" title="Training" detail="Isolated scenarios. They do not write to live clients." testid="manage-link-training" />
         </HubSection>

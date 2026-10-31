@@ -210,6 +210,11 @@ export const RECEPTION_PERMS = [
   ['assign', 'Assign / reassign practitioners'], ['createBooking', 'Create or reschedule bookings'], ['viewInsuranceStatus', 'View insurance verification status'],
   ['viewInsuranceDocs', 'View insurance documents'], ['managePayments', 'Manage payment statuses'], ['viewHistory', 'Access operational history'],
   ['clinical', 'Access clinical information (restricted by default)'],
+  ['eclaimsView', 'eClaims: view workspace and copy claim fields'],
+  ['eclaimsSubmit', 'eClaims: open insurer portals for submission'],
+  ['eclaimsReconcile', 'eClaims: reconcile insurer results on the ledger'],
+  ['eclaimsViewSensitive', 'eClaims: view sensitive insurance identifiers'],
+  ['eclaimsManage', 'eClaims: manage workspace settings for reception'],
 ];
 
 export const LOCATION_TYPES = [

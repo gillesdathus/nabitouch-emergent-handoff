@@ -92,8 +92,11 @@ const Zones = lazy(() => import("@/pages/owner/Zones"));
 const Insights = lazy(() => import("@/pages/owner/Insights"));
 const Permissions = lazy(() => import("@/pages/owner/Permissions"));
 const Payments = lazy(() => import("@/pages/owner/Payments"));
+const EClaims = lazy(() => import("@/pages/owner/EClaims"));
 const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
+const ClientDuplicates = lazy(() => import("@/pages/owner/ClientDuplicates"));
+const ClientMergePreview = lazy(() => import("@/pages/owner/ClientMergePreview"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
 const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
@@ -209,6 +212,8 @@ export default function App() {
                   <Route path="/owner/winback" element={<OwnerWinback />} />
                   <Route path="/owner/channels" element={<OwnerChannels />} />
                   <Route path="/owner/clients" element={<StaffClients role="owner" />} />
+                  <Route path="/owner/clients/duplicates" element={<ClientDuplicates />} />
+                  <Route path="/owner/clients/duplicates/:pairId/preview" element={<ClientMergePreview />} />
                   <Route path="/owner/practitioners" element={<OwnerPractitioners />} />
                   <Route path="/owner/practitioners/:id" element={<StaffPractitionerProfile />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
@@ -220,6 +225,7 @@ export default function App() {
                   <Route path="/owner/reports" element={<OwnerReports />} />
                   <Route path="/owner/permissions" element={<Permissions />} />
                   <Route path="/owner/payments" element={<Payments />} />
+                  <Route path="/owner/eclaims" element={<EClaims role="owner" />} />
                   <Route path="/owner/credentials" element={<Credentials />} />
                   <Route path="/owner/patients/invitations" element={<LegacyClients />} />
                   <Route path="/owner/legacy" element={<LegacyClients />} />
@@ -242,6 +248,7 @@ export default function App() {
                   <Route path="/desk/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/desk/giftcards" element={<GiftCardsAdmin />} />
                   <Route path="/desk/verify" element={<Verify />} />
+                  <Route path="/desk/eclaims" element={<EClaims role="desk" />} />
                   <Route path="/desk/messages" element={<Messages />} />
                   <Route path="/desk/safety" element={<SafetyAlerts />} />
                   <Route path="/desk/team" element={<TeamHome role="desk" />} />
