@@ -242,6 +242,61 @@
   .scroll-tabs::-webkit-scrollbar { height: 4px; }
   .scroll-tabs::-webkit-scrollbar-thumb { background: rgba(21, 101, 240, 0.25); border-radius: 999px; }
   .nb-hatch { background-image: repeating-linear-gradient(135deg, rgba(74,90,122,.10) 0 6px, transparent 6px 12px); }
+
+  /* Engage — full-viewport no-scroll intake */
+  .engage-shell {
+    --nb-nav-h: 0px;
+    --nb-dock-offset: var(--nb-safe-b);
+    --nb-sticky-bottom: max(var(--nb-dock-offset), var(--nb-keyboard-inset));
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, #d8f7f1 0%, transparent 55%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, #dceefc 0%, transparent 50%),
+      linear-gradient(165deg, #eefaf7 0%, #f5fbfc 45%, #eaf4fb 100%);
+  }
+  .engage-ambient::before {
+    content: "";
+    position: absolute;
+    inset: -20% -10% auto auto;
+    height: 55%;
+    width: 55%;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(20, 216, 196, 0.18), transparent 70%);
+  }
+  .engage-ambient::after {
+    content: "";
+    position: absolute;
+    inset: auto auto -15% -15%;
+    height: 50%;
+    width: 50%;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(21, 101, 240, 0.12), transparent 70%);
+  }
+  .engage-card {
+    @apply flex min-h-0 flex-1 flex-col rounded-[1.5rem] border border-white/80 bg-white/95;
+    box-shadow: 0 12px 40px -20px rgba(11, 46, 138, 0.28);
+  }
+  .engage-card-body {
+    @apply min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5 sm:py-5;
+  }
+  .engage-card-body--scroll {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .engage-input {
+    @apply w-full h-12 rounded-2xl border-0 bg-[#E8F6F3] px-4 text-[15px] text-nb-ink placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-nb-teal/45 transition-shadow;
+  }
+  .engage-primary {
+    @apply nb-btn h-12 w-full px-6 text-white;
+    background: linear-gradient(120deg, #0B3B3A 0%, #0E6B68 55%, #14A89A 100%);
+    box-shadow: 0 10px 24px -10px rgba(14, 107, 104, 0.55);
+  }
+  .engage-primary:hover {
+    box-shadow: 0 14px 30px -10px rgba(14, 107, 104, 0.7);
+  }
+  .engage-secondary {
+    @apply nb-btn h-12 w-full px-5 bg-[#E8EEF2] text-nb-ink hover:bg-[#dce4ea];
+  }
 }
 
 @keyframes nb-page { from { opacity: 0; transform: translate3d(0,10px,0); } to { opacity: 1; transform: none; } }

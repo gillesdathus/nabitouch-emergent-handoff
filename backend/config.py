@@ -107,6 +107,16 @@ def stripe_card_checkout_enabled():
     return _flag("STRIPE_CARD_CHECKOUT_ENABLED", False)
 
 
+def engage_public_enabled():
+    """Public Engage APIs. Unset: on outside production, off in production until opted in."""
+    return _flag("ENGAGE_PUBLIC_ENABLED", not is_production())
+
+
+def engage_writes_enabled():
+    """Engage check-in creates appointments via the booking engine. Unset stays off."""
+    return _flag("ENGAGE_WRITES_ENABLED", False)
+
+
 def invoice_email_enabled():
     """Invoice, receipt, and payment-link email. Unset stays off."""
     return _flag("INVOICE_EMAIL_ENABLED", False)

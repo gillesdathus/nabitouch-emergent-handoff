@@ -91,7 +91,7 @@ export const wellnessStudioDashboard = {
   ],
   integrations: [
     { id: "public-landing", label: "Public landing", target: "/corporate-wellness", status: "planned" },
-    { id: "engage", label: "Employee engage", target: "engage.nabitouch.com", status: "planned" },
+    { id: "engage", label: "Employee engage", target: "engage.nabitouch.com → /engage", status: "prototype" },
     { id: "core", label: "Identity · bookings · billing", target: "Existing NabiTouch services", status: "reuse" },
   ],
 };

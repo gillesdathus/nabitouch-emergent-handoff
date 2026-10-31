@@ -35,6 +35,7 @@ from fastapi import Request
 from payments import build_router, with_settle, claim_eligible
 from billing import build_billing_router, clear_billing, ensure_billing
 from clinical import build_clinical_router, clear_clinical, ensure_clinical
+from engage import build_engage_router, ensure_engage
 from history_import import build_import_router, clear_imports, ensure_imports
 from legacy import build_legacy_router, clear_legacy, ensure_legacy
 from tracking import build_tracking_router, clear_runtime, end_tracking, issue_guest_capability, on_transition, open_sharing_session
@@ -284,6 +285,7 @@ async def lifespan(_app):
     await ensure_winback(db)
     await ensure_followup(db)
     await ensure_sms(db)
+    await ensure_engage(db)
     await db.nt_cron_runs.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("at", expireAfterSeconds=120)
@@ -3161,6 +3163,7 @@ app.include_router(build_devices_router(db, user_from))
 app.include_router(build_winback_router(db, coll, add_audit, user_from))
 app.include_router(build_followup_router(db, coll, add_audit, user_from))
 app.include_router(build_sms_router(db, coll, add_audit, user_from))
+app.include_router(build_engage_router(db, coll, add_audit, user_from, create_booking))
 
 
 @app.post("/api/cron/sms-reminders")
