@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, ClipboardList, Clock, HandHeart, Headphones, Home, LayoutDashboard, LayoutGrid, Menu, MessageSquare, MoreHorizontal, ReceiptText, Route as RouteIcon, Shield, Sun, Tag, Truck, UserRound, Users, LogIn, LogOut, RotateCcw, ShieldCheck, Star, X } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
@@ -72,6 +72,7 @@ const OWNER_MORE_GROUPS = [
       { to: "/owner/permissions", label: "Reception access" },
       { to: "/owner/patients/invitations", label: "Patients · Invitations" },
       { to: "/owner/legacy", label: "Legacy clients" },
+      { to: "/owner/clients/duplicates", label: "Potential duplicates" },
     ],
   },
   {
@@ -112,6 +113,7 @@ const STAFF = {
       { to: "/owner/schedule", label: "Schedule", icon: CalendarDays },
       { to: "/owner/manage", label: "Manage", icon: LayoutGrid },
       { to: "/owner/payments", label: "Invoices", icon: ReceiptText },
+      { to: "/owner/eclaims", label: "eClaims", short: "eClaims", icon: Shield },
     ],
     more: [],
   },
@@ -125,6 +127,7 @@ const STAFF = {
     more: [
       { to: "/desk/team", label: "Team Connect", icon: Headphones },
       { to: "/desk/verify", label: "Payments", icon: ShieldCheck },
+      { to: "/desk/eclaims", label: "eClaims", icon: Shield },
       { to: "/desk/messages", label: "Messages", icon: MessageSquare },
       { to: "/desk/safety", label: "Safety", icon: ShieldCheck },
     ],
@@ -354,6 +357,13 @@ function StaffShellInner({ role }) {
   const { idx, practitionerId, user, api } = useDemo();
   const me = role === "pro" ? idx?.practitioners?.[practitionerId] || null : null;
   const name = me?.name || user?.name || cfg.title;
+  const receptionPerms = idx?.settings?.receptionPerms || {};
+  const deskMayEclaims = Boolean(
+    receptionPerms.eclaimsView || receptionPerms.eclaimsSubmit || receptionPerms.eclaimsManage,
+  );
+  const more = role === "desk"
+    ? cfg.more.filter((item) => item.to !== "/desk/eclaims" || deskMayEclaims)
+    : cfg.more;
   const [unread, setUnread] = useState(0);
   const [teamUnread, setTeamUnread] = useState(0);
   const visitSeq = useRef(0);
@@ -443,7 +453,7 @@ function StaffShellInner({ role }) {
               {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white" data-testid={`nav-unread-${n.label.toLowerCase()}`}>{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
             </NavLink>
           ))}
-          {cfg.more.map((n) => (
+          {more.map((n) => (
             <NavLink key={n.to} to={n.to} data-testid={`${role}-side-${n.label.toLowerCase().replace(/\s+/g, "-")}`} className={({ isActive }) => cn("flex h-11 items-center justify-between gap-2 rounded-2xl px-3 text-sm font-medium transition-colors", isActive ? "bg-nb-ink text-white" : "text-nb-mute hover:bg-sky-50 hover:text-nb-ink")}>
               <span className="flex items-center gap-3"><n.icon className="h-[18px] w-[18px]" />{n.label}</span>
               {badges[n.to] > 0 && <span className="rounded-full bg-nb-coral px-1.5 text-[10px] font-bold text-white">{badges[n.to] > 9 ? "9+" : badges[n.to]}</span>}
@@ -492,7 +502,7 @@ function StaffShellInner({ role }) {
       </div>
       <FloatingNav
         items={cfg.nav}
-        more={role === "owner" ? OWNER_MORE : cfg.more}
+        more={role === "owner" ? OWNER_MORE : more}
         groups={role === "owner" ? OWNER_MORE_GROUPS : undefined}
         testid={`${role}-bottom`}
         badges={badges}

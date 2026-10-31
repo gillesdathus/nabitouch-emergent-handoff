@@ -343,6 +343,7 @@ export default function Manage() {
         </HubSection>
         <HubSection title="Business administration" testid="manage-section-admin">
           <HubLink to="/owner/payments" icon={Receipt} tint="tint-ice" title="Invoices" detail="Collections, insurance receivables, and period reports." meta={balances ? String(balances) : undefined} testid="manage-link-invoices" />
+          <HubLink to="/owner/eclaims" icon={Shield} tint="tint-mint" title="eClaims" detail="Copy claim fields and open insurer portals. Nothing is submitted from Nabitouch." testid="manage-link-eclaims" />
           <HubLink to="/owner/insights" icon={BarChart3} tint="tint-lagoon" title="Insights" detail="Service mix, booked hours, and the audit trail." testid="manage-link-insights" />
           <HubLink to="/owner/permissions" icon={Shield} tint="tint-mint" title="Staff access" detail="Reception permissions and authenticator rules." testid="manage-link-staff" />
           <HubLink to="/owner/zones" icon={Settings} tint="tint-meadow" title="Settings" detail="Clinic booking, payment policy, and GST." testid="manage-link-settings" />

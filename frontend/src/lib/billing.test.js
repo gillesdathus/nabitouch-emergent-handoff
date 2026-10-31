@@ -1,4 +1,4 @@
-import { billingBars, dollarsToCents, formatCents, invoiceFacts, payableNowCents } from "./billing";
+import { billingBars, dollarsToCents, formatCents, invoiceFacts, patientShareCents, payableNowCents, STAFF_PAY_METHODS, usableClientEmail } from "./billing";
 
 test("cents format without treating dollars as the source of truth", () => {
   expect(formatCents(12000)).toBe("$120.00");
@@ -43,4 +43,20 @@ test("invoice facts come from the server view", () => {
     balance: { cents: 3000, display: "$30.00" },
   });
   expect(facts).toEqual({ total: "$120.00", balance: "$30.00", state: "partially_paid", number: "NT-INV-00007" });
+});
+
+test("staff pay methods stay the four primary collection paths", () => {
+  expect(STAFF_PAY_METHODS).toEqual(["insurance", "stripe", "cash", "etransfer"]);
+});
+
+test("usable client email rejects empty and demo placeholders", () => {
+  expect(usableClientEmail("Sarah@Example.COM")).toBe("");
+  expect(usableClientEmail("")).toBe("");
+  expect(usableClientEmail("client@nabitouch.com")).toBe("client@nabitouch.com");
+});
+
+test("patient share prefers payableNow then insurance remainder", () => {
+  expect(patientShareCents({ payableNow: { cents: 2000 }, balance: { cents: 10000 }, expectedInsurance: { cents: 8000 } })).toBe(2000);
+  expect(patientShareCents({ balance: { cents: 10000 }, expectedInsurance: { cents: 8000 } })).toBe(2000);
+  expect(patientShareCents({ balance: { cents: 10000 }, expectedInsurance: { cents: 0 } })).toBe(10000);
 });

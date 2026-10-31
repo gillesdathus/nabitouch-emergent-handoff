@@ -147,11 +147,16 @@ export default function Permissions() {
         {RECEPTION_PERMS.map(([k, l]) => (
           <label key={k} className="flex items-center gap-4 p-4">
             {k === "clinical" ? <ShieldAlert className="h-5 w-5 text-amber-600" /> : <ShieldCheck className="h-5 w-5 text-nb-teal" />}
-            <span className="flex-1 text-sm"><b className="font-medium">{l}</b>{k === "clinical" && <span className="block text-xs text-nb-mute">Off by default. Even when on, reception sees completion status only — never SOAP content.</span>}{k === "viewLocations" && <span className="block text-xs text-nb-mute">Only on-duty practitioners during authorised work trips.</span>}</span>
+            <span className="flex-1 text-sm">
+              <b className="font-medium">{l}</b>
+              {k === "clinical" && <span className="block text-xs text-nb-mute">Off by default. Even when on, reception sees completion status only — never SOAP content.</span>}
+              {k === "viewLocations" && <span className="block text-xs text-nb-mute">Only on-duty practitioners during authorised work trips.</span>}
+              {k?.startsWith("eclaims") && <span className="block text-xs text-nb-mute">Separate from payment management. Opening a portal never submits a claim from Nabitouch.</span>}
+            </span>
             <Switch checked={!!perms[k]} onCheckedChange={(v) => toggle(k, v)} data-testid={`perm-${k}-switch`} />
           </label>))}
       </div>
-      <p className="text-xs text-nb-mute">Tracking, payment and clinical endpoints enforce these permissions on the server for signed-in staff.</p>
+      <p className="text-xs text-nb-mute">Tracking, payment, clinical, and eClaims endpoints enforce these permissions on the server for signed-in staff. Practitioners need an explicit eClaims grant and are limited to their own treatments unless granted broader access.</p>
       <AuthenticatorCard />
       <StaffAccounts />
     </div>

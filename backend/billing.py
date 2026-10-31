@@ -409,6 +409,11 @@ def build_billing_router(db, coll, add_audit, user_from):
             for claim in view["claims"]:
                 claim["notes"] = ""
                 claim["documents"] = [item for item in claim["documents"] if item["clientVisible"]]
+        elif has_role(user, "owner") or await desk_can(user, "managePayments") or await desk_can(user, "viewInsuranceStatus"):
+            # Staff-only contact hint for payment-link email prefill. Never invent an address.
+            person = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0, "email": 1}) if invoice.get("clientId") else None
+            email = str((person or {}).get("email") or "").strip().lower()
+            view["clientEmail"] = email if email and "@" in email and not email.endswith("@example.com") else ""
         return view
 
     async def notify_client(invoice, dedupe):
@@ -714,10 +719,33 @@ def build_billing_router(db, coll, add_audit, user_from):
         key = str(body.get("idempotencyKey") or "")
         if not 8 <= len(key) <= 80:
             raise HTTPException(400, "Idempotency key is required")
-        note, created = await enqueue_billing(db, invoice, kind, key)
+        payment_url = None
+        amount_cents = None
+        recipient = None
+        if kind == "payment_link":
+            # Shareable Stripe links are a staff collection action; clients use in-app checkout.
+            if user["role"] == "client":
+                raise HTTPException(403, "Clients open checkout in the app instead of emailing a payment link")
+            if not (has_role(user, "owner") or await desk_can(user, "managePayments")):
+                raise HTTPException(403, "Not permitted to email a payment link")
+            recipient = str(body.get("recipientEmail") or body.get("to") or view.get("clientEmail") or "").strip().lower()
+            if not recipient or "@" not in recipient or recipient.endswith("@example.com") or len(recipient) > 160:
+                raise HTTPException(400, "A valid recipient email is required to send the payment link")
+            started = await start_checkout(user, invoice, tip=0, app_url=None, limit_to_client_share=True)
+            payment_url = started.get("url")
+            amount_cents = (started.get("amount") or {}).get("cents")
+            if not payment_url:
+                raise HTTPException(409, "No shareable Stripe URL is available. Create and copy a payment link instead.")
+        note, created = await enqueue_billing(
+            db, invoice, kind, key,
+            payment_url=payment_url, recipient_email=recipient, amount_cents=amount_cents,
+        )
         if created:
             await add_audit(user.get("name") or "staff", f"{view['number']} {kind} email queued", invoice.get("appointmentId"))
-        return {"queued": True, "status": note.get("status"), "delivered": False}
+        out = {"queued": True, "status": note.get("status"), "delivered": False}
+        if payment_url:
+            out.update(paymentUrl=payment_url, amount=money_view(amount_cents or 0), recipientEmail=recipient)
+        return out
 
     @r.post("/invoices/{iid}/giftcard")
     async def redeem_giftcard(iid: str, request: Request):
@@ -1140,6 +1168,150 @@ def build_billing_router(db, coll, add_audit, user_from):
         from insurers import catalog
         return {"providers": catalog()}
 
+    async def can_eclaims(user, invoice=None, appt=None, action="view"):
+        """eClaims access: owner/manager; desk via dedicated eclaims* flags; practitioners via explicit grant."""
+        from insurers import eclaims_allowed
+        from rbac import effective_roles
+        cfg = await settings()
+        treating = None
+        if invoice is not None or appt is not None:
+            treating = ((appt or {}).get("practitionerId") if appt is not None else None) or (invoice or {}).get("practitionerId")
+        grants = (cfg.get("eclaimsPractitionerGrants") or {}).get(user.get("subject")) or []
+        return eclaims_allowed(
+            effective_roles(user),
+            action=action,
+            desk_perms=await perms(),
+            practitioner_grants=grants,
+            practitioner_subject=user.get("subject"),
+            treating_practitioner_id=treating,
+        )
+
+    @r.get("/billing/eclaims/pathways")
+    async def eclaims_pathways_catalog(request: Request):
+        user = await actor(request)
+        if not await can_eclaims(user, action="view"):
+            raise HTTPException(403, "Not permitted to view eClaims pathways")
+        from insurers import eclaims_pathways
+        return {"pathways": eclaims_pathways(), "submitsFromApp": False}
+
+    @r.get("/invoices/{iid}/eclaims")
+    async def eclaims_workspace(iid: str, request: Request):
+        """Context for the portal-assisted eClaims workspace. Does not submit claims."""
+        from insurers import copyable_claim_fields, eclaims_pathway_suggestion, insurance_profile_complete, redact_eclaims_sensitive
+        user = await actor(request)
+        invoice = await load(iid)
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_eclaims(user, invoice, appt, "view"):
+            raise HTTPException(403, "Not permitted to view eClaims for this invoice")
+        view = await view_for(user, invoice)
+        client = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0}) if invoice.get("clientId") else None
+        client = client or {}
+        # Always omit card images / extras from eClaims payloads.
+        client = {k: client.get(k) for k in ("id", "firstName", "lastName", "preferredName", "dob", "insurance", "noInsurance")}
+        practitioner = await coll("practitioners").find_one({"id": invoice.get("practitionerId")}, {"_id": 0, "id": 1, "name": 1}) if invoice.get("practitionerId") else None
+        practitioner = practitioner or {"name": invoice.get("practitionerName") or ""}
+        registration = await _registration_number(invoice.get("practitionerId"))
+        policies_raw = list(client.get("insurance") or [])
+        can_submit = await can_eclaims(user, invoice, appt, "submit")
+        sensitive = await can_eclaims(user, invoice, appt, "view_sensitive")
+        selected = policies_raw[0] if len(policies_raw) == 1 else {}
+        fields = copyable_claim_fields(
+            patient=client, policy=selected, invoice=view, practitioner=practitioner, registration_number=registration,
+        )
+        policies = [
+            {
+                "id": row.get("id"),
+                "insurer": row.get("insurer") or "",
+                "policy": row.get("policy") or "",
+                "memberId": row.get("memberId") or "",
+                "holderName": row.get("holderName") or "",
+                "relationship": row.get("relationship") or "",
+                "complete": insurance_profile_complete(row),
+            }
+            for row in policies_raw
+        ]
+        if not sensitive:
+            fields, policies = redact_eclaims_sensitive(fields, policies)
+        incomplete = [
+            item["id"] for item in fields
+            if not item["value"] and not item.get("sensitiveRedacted")
+        ]
+        pathways, suggested_pathway_id = eclaims_pathway_suggestion((selected or {}).get("insurer"))
+        return {
+            "invoiceId": iid,
+            "appointmentId": invoice.get("appointmentId"),
+            "clientId": invoice.get("clientId"),
+            "patient": {
+                "name": next((f["value"] for f in fields if f["id"] == "patientName"), ""),
+                "dob": client.get("dob") or "",
+            },
+            "policies": policies,
+            "selectedPolicyId": selected.get("id"),
+            "fields": fields,
+            "incompleteFieldIds": incomplete,
+            "pathways": pathways,
+            "suggestedPathwayId": suggested_pathway_id,
+            "canSubmit": can_submit,
+            "viewSensitive": sensitive,
+            "submitsFromApp": False,
+            "notice": "Opening an insurer portal does not submit a claim. Record approvals and payments on the invoice ledger.",
+        }
+
+    async def _registration_number(practitioner_id):
+        if not practitioner_id:
+            return ""
+        rows = await db.nt_credentials.find(
+            {"practitionerId": practitioner_id, "kind": "registration"}, {"_id": 0, "identifier": 1},
+        ).sort([("verifiedAt", -1), ("createdAt", -1)]).limit(1).to_list(1)
+        return (rows[0].get("identifier") if rows else "") or ""
+
+    @r.get("/invoices/{iid}/eclaims/fields")
+    async def eclaims_fields_for_policy(iid: str, request: Request, policyId: str = ""):
+        from insurers import copyable_claim_fields, eclaims_pathway_suggestion, insurance_profile_complete, redact_eclaims_sensitive
+        user = await actor(request)
+        invoice = await load(iid)
+        appt = await appointment(invoice.get("appointmentId"), required=False)
+        if not await can_eclaims(user, invoice, appt, "view"):
+            raise HTTPException(403, "Not permitted to view eClaims for this invoice")
+        view = await view_for(user, invoice)
+        client = await coll("clients").find_one({"id": invoice.get("clientId")}, {"_id": 0}) if invoice.get("clientId") else {}
+        client = client or {}
+        policies = list(client.get("insurance") or [])
+        policy = next((row for row in policies if row.get("id") == policyId), None) if policyId else (policies[0] if len(policies) == 1 else {})
+        if policyId and not policy:
+            raise HTTPException(404, "Insurance policy not found on this patient")
+        practitioner = await coll("practitioners").find_one({"id": invoice.get("practitionerId")}, {"_id": 0, "id": 1, "name": 1}) if invoice.get("practitionerId") else None
+        registration = await _registration_number(invoice.get("practitionerId"))
+        fields = copyable_claim_fields(
+            patient=client, policy=policy or {}, invoice=view,
+            practitioner=practitioner or {"name": invoice.get("practitionerName") or ""},
+            registration_number=registration,
+        )
+        sensitive = await can_eclaims(user, invoice, appt, "view_sensitive")
+        policy_view = {
+            "id": (policy or {}).get("id"),
+            "insurer": (policy or {}).get("insurer") or "",
+            "policy": (policy or {}).get("policy") or "",
+            "memberId": (policy or {}).get("memberId") or "",
+            "complete": insurance_profile_complete(policy or {}),
+        }
+        if not sensitive:
+            fields, redacted_policies = redact_eclaims_sensitive(fields, [policy_view] if policy_view.get("id") or policy else [])
+            policy_view = redacted_policies[0] if redacted_policies else policy_view
+        pathways, suggested_pathway_id = eclaims_pathway_suggestion((policy or {}).get("insurer"))
+        return {
+            "selectedPolicyId": (policy or {}).get("id"),
+            "policyComplete": policy_view.get("complete", False),
+            "viewSensitive": sensitive,
+            "fields": fields,
+            "incompleteFieldIds": [
+                item["id"] for item in fields
+                if not item["value"] and not item.get("sensitiveRedacted")
+            ],
+            "pathways": pathways,
+            "suggestedPathwayId": suggested_pathway_id,
+        }
+
     @r.get("/billing/stripe/status")
     async def stripe_status(request: Request):
         await actor(request)
@@ -1217,34 +1389,30 @@ def build_billing_router(db, coll, add_audit, user_from):
         _demo_webhook_secret = secret
         return {"saved": True}
 
-    @r.post("/invoices/{iid}/checkout")
-    async def checkout(iid: str, request: Request):
-        from config import payments_simulated, stripe_card_checkout_enabled
+    async def start_checkout(user, invoice, *, tip=0, requested=None, app_url=None, limit_to_client_share=None):
+        """Create or reuse the server-authorized Stripe Checkout session for an issued invoice."""
+        from config import payments_simulated, public_base_url, stripe_card_checkout_enabled
         if not stripe_card_checkout_enabled():
             raise HTTPException(503, "Card checkout is turned off")
-        user = await actor(request)
-        invoice = await load(iid)
-        await view_for(user, invoice)
         if invoice["state"] in ("draft", "voided"):
             raise HTTPException(409, "Issue the invoice before checkout")
-        body = await _body(request)
+        iid = invoice["id"]
         received, balance, _state, _overdue = project(invoice, await ledger_for(iid))
         visit = await appointment(invoice["appointmentId"])
         if visit.get("status") == "cancelled":
             raise HTTPException(409, "A cancelled visit cannot start a new payment")
-        requested = body.get("amountCents") if "amountCents" in body else None
         try:
             amount = authorized_checkout_cents(visit, balance, received, requested)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if user["role"] == "client":
+        apply_share = user["role"] == "client" if limit_to_client_share is None else bool(limit_to_client_share)
+        if apply_share:
             expected = min(int(invoice.get("expectedInsuranceCents") or 0), balance)
             share = balance - expected
             if amount > share:
                 amount = share
             if amount <= 0:
                 raise HTTPException(409, "The remaining balance is expected from insurance")
-        tip = body.get("tipCents") or 0
         if type(tip) is not int or tip < 0 or tip > min(20000, int(invoice["totalCents"])):
             raise HTTPException(400, "Tip must be between $0 and the invoice total (max $200)")
         key = os.environ.get("STRIPE_SECRET_KEY") or ""
@@ -1253,7 +1421,6 @@ def build_billing_router(db, coll, add_audit, user_from):
         # One immutable provider request per invoice version, including
         # simultaneous clicks and retries after an uncertain network response.
         request_key = "checkout-" + hashlib.sha256(f"{iid}:{invoice['version']}".encode()).hexdigest()
-        from config import public_base_url
         while True:
             previous = await db.nt_checkouts.find_one({"requestKey": request_key}, {"_id": 0})
             if not previous or datetime.fromisoformat(previous["expiresAt"]) > now():
@@ -1272,9 +1439,11 @@ def build_billing_router(db, coll, add_audit, user_from):
             "practitionerId": invoice.get("practitionerId"), "status": "pending",
             "createdBy": user.get("role"), "at": now_iso(),
             "expiresAt": (now() + timedelta(minutes=CHECKOUT_HOLD_MINUTES + 1)).isoformat(),
-            "appUrl": public_base_url(request),
+            "appUrl": app_url or os.environ.get("APP_URL", "").rstrip("/"),
             "provider": "stripe" if key else "simulated",
         }
+        if not reservation["appUrl"]:
+            raise HTTPException(503, "APP_URL is required to start card checkout")
         try:
             await db.nt_checkouts.insert_one(dict(reservation))
         except DuplicateKeyError:
@@ -1286,12 +1455,11 @@ def build_billing_router(db, coll, add_audit, user_from):
         if reservation.get("url"):
             return {"confirmed": reservation.get("status") == "paid", "sessionId": reservation["sessionId"], "url": reservation["url"], "amount": money_view(amount), "tip": money_view(tip)}
         if key:
-            app_url = reservation["appUrl"]
             form = {
                 "mode": "payment",
                 "integration_identifier": "nabitouch_qlagoonx",
-                "success_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
-                "cancel_url": app_url + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
+                "success_url": reservation["appUrl"] + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": reservation["appUrl"] + "/me/billing/payment-result?session_id={CHECKOUT_SESSION_ID}",
                 "line_items[0][quantity]": "1",
                 "line_items[0][price_data][currency]": "cad",
                 "line_items[0][price_data][unit_amount]": str(amount),
@@ -1317,6 +1485,25 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(503, "Card checkout is not configured")
         await db.nt_checkouts.update_one({"id": reservation["id"]}, {"$set": {"sessionId": session_id, "url": hosted_url}})
         return {"confirmed": False, "sessionId": session_id, "url": hosted_url, "amount": money_view(amount), "tip": money_view(tip)}
+
+    @r.post("/invoices/{iid}/checkout")
+    async def checkout(iid: str, request: Request):
+        from config import public_base_url, stripe_card_checkout_enabled
+        # Disabled-feature contract: refuse before auth so launch/prod probes get 503, not 401.
+        if not stripe_card_checkout_enabled():
+            raise HTTPException(503, "Card checkout is turned off")
+        user = await actor(request)
+        invoice = await load(iid)
+        await view_for(user, invoice)
+        body = await _body(request)
+        tip = body.get("tipCents") or 0
+        requested = body.get("amountCents") if "amountCents" in body else None
+        # Shareable patient links and client self-serve stay within the client share after expected insurance.
+        for_client = user["role"] == "client" or bool(body.get("forClient") or body.get("shareWithClient"))
+        return await start_checkout(
+            user, invoice, tip=tip, requested=requested, app_url=public_base_url(request),
+            limit_to_client_share=for_client,
+        )
 
     @r.post("/invoices/{iid}/release")
     async def release_invoice(iid: str, request: Request):
