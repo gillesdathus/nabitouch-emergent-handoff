@@ -205,6 +205,8 @@ export const api = {
   clientWorkspace: (id) => http.get(`/clients/${id}/workspace`).then(data),
   insurers: () => http.get("/billing/insurers").then(data),
   eclaimsPathways: () => http.get("/billing/eclaims/pathways").then(data),
+  eclaimsPermissions: () => http.get("/billing/eclaims/permissions").then(data),
+  setEclaimsPractitionerPermissions: (subject, flags) => http.put(`/billing/eclaims/permissions/${encodeURIComponent(subject)}`, { flags }).then(data),
   invoiceEclaims: (id) => http.get(`/invoices/${id}/eclaims`).then(data),
   invoiceEclaimsFields: (id, policyId) => http.get(`/invoices/${id}/eclaims/fields`, { params: policyId ? { policyId } : {} }).then(data),
   previewImport: (file) => { const body = new FormData(); body.append("upload", file); return http.post("/billing/imports/preview", body).then(data); },
@@ -421,4 +423,11 @@ export const api = {
   emailTest: () => http.post('/ops/email/test', {}).then(data),
   smsSummary: () => http.get('/sms/status-summary').then(data),
   smsTest: () => http.post('/sms/test', {}).then(data),
+  /** Engage (engage.nabitouch.com / /engage) — thin public event / check-in facade. */
+  engageStatus: () => http.get('/engage/status').then(data),
+  engageEvents: () => http.get('/engage/events').then(data),
+  engageEvent: (eventId) => http.get(`/engage/events/${encodeURIComponent(eventId)}`).then(data),
+  engageCheckIn: (eventId, body) => http.post(`/engage/events/${encodeURIComponent(eventId)}/check-in`, body).then(data),
+  engageAttendance: (eventId) => http.get(`/engage/events/${encodeURIComponent(eventId)}/attendance`).then(data),
+  engagePrecautions: (checkInId) => http.get(`/engage/check-ins/${encodeURIComponent(checkInId)}/precautions`).then(data),
 };

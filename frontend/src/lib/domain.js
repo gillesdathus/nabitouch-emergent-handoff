@@ -210,11 +210,21 @@ export const RECEPTION_PERMS = [
   ['assign', 'Assign / reassign practitioners'], ['createBooking', 'Create or reschedule bookings'], ['viewInsuranceStatus', 'View insurance verification status'],
   ['viewInsuranceDocs', 'View insurance documents'], ['managePayments', 'Manage payment statuses'], ['viewHistory', 'Access operational history'],
   ['clinical', 'Access clinical information (restricted by default)'],
-  ['eclaimsView', 'eClaims: view workspace and copy claim fields'],
-  ['eclaimsSubmit', 'eClaims: open insurer portals for submission'],
-  ['eclaimsReconcile', 'eClaims: reconcile insurer results on the ledger'],
-  ['eclaimsViewSensitive', 'eClaims: view sensitive insurance identifiers'],
-  ['eclaimsManage', 'eClaims: manage workspace settings for reception'],
+];
+
+export const RECEPTION_ECLAIMS_PERMS = [
+  ['eclaimsView', 'View eClaims workspace and copy claim fields'],
+  ['eclaimsSubmit', 'Open insurer portals for submission'],
+  ['eclaimsReconcile', 'Reconcile insurer results on the ledger'],
+  ['eclaimsViewSensitive', 'View sensitive insurance identifiers'],
+  ['eclaimsManage', 'Manage eClaims workspace settings for reception'],
+];
+
+export const PRACTITIONER_ECLAIMS_FLAGS = [
+  ['view', 'View eClaims', 'Access authorized claim information for permitted treatments.'],
+  ['submit', 'Submit eClaims', 'Prepare claims and open external insurer portals. Nabitouch never auto-submits.'],
+  ['viewSensitive', 'View sensitive insurance information', 'Show policy and member identifiers.'],
+  ['allTreatments', 'Access other practitioners’ treatments', 'Off by default. Own treatments only unless this is on.'],
 ];
 
 export const LOCATION_TYPES = [

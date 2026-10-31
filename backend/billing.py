@@ -1194,6 +1194,120 @@ def build_billing_router(db, coll, add_audit, user_from):
         from insurers import eclaims_pathways
         return {"pathways": eclaims_pathways(), "submitsFromApp": False}
 
+    @r.get("/billing/eclaims/permissions")
+    async def eclaims_permissions_catalog(request: Request):
+        """Owner-only: practitioner eClaims grants for the Permissions page."""
+        from insurers import normalize_eclaims_practitioner_grants
+        user = await actor(request)
+        if not await can_eclaims(user, action="manage_permissions"):
+            raise HTTPException(403, "Only the owner can manage eClaims permissions")
+        cfg = await settings()
+        stored = dict(cfg.get("eclaimsPractitionerGrants") or {})
+        practitioners = []
+        async for row in coll("users").find(
+            {"$or": [{"role": "practitioner"}, {"roles": "practitioner"}]},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "subject": 1, "roles": 1, "role": 1, "status": 1},
+        ):
+            subject = row.get("subject")
+            if not subject:
+                continue
+            grants = normalize_eclaims_practitioner_grants(stored.get(subject) or [])
+            practitioners.append({
+                "userId": row.get("id"),
+                "subject": subject,
+                "name": row.get("name") or "",
+                "email": row.get("email") or "",
+                "status": row.get("status") or "active",
+                "grants": grants,
+                "flags": {
+                    "view": "view" in grants,
+                    "submit": "submit" in grants,
+                    "viewSensitive": "view_sensitive" in grants,
+                    "allTreatments": "all" in grants,
+                },
+            })
+        practitioners.sort(key=lambda item: (item["name"] or item["email"] or item["subject"]).lower())
+        reception = cfg.get("receptionPerms") or {}
+        return {
+            "practitioners": practitioners,
+            "manager": {
+                "inheritsEclaims": True,
+                "canManagePermissions": False,
+                "note": "Managers inherit full eClaims workspace access. Only the owner can grant or revoke eClaims permissions.",
+            },
+            "reception": {
+                "eclaimsView": bool(reception.get("eclaimsView")),
+                "eclaimsSubmit": bool(reception.get("eclaimsSubmit")),
+                "eclaimsReconcile": bool(reception.get("eclaimsReconcile")),
+                "eclaimsViewSensitive": bool(reception.get("eclaimsViewSensitive")),
+                "eclaimsManage": bool(reception.get("eclaimsManage")),
+            },
+            "canManage": True,
+        }
+
+    @r.put("/billing/eclaims/permissions/{subject}")
+    async def set_eclaims_practitioner_permissions(subject: str, request: Request):
+        """Owner-only write path. Normalizes grants so clearing View drops dependents."""
+        from insurers import normalize_eclaims_practitioner_grants
+        user = await actor(request)
+        if not await can_eclaims(user, action="manage_permissions"):
+            raise HTTPException(403, "Only the owner can manage eClaims permissions")
+        subject = str(subject or "").strip()
+        if not subject or len(subject) > 80:
+            raise HTTPException(400, "A valid practitioner subject is required")
+        target = await coll("users").find_one(
+            {"subject": subject, "$or": [{"role": "practitioner"}, {"roles": "practitioner"}]},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "subject": 1},
+        )
+        if not target:
+            raise HTTPException(404, "Practitioner account not found")
+        body = await _body(request)
+        raw = body.get("flags") if isinstance(body.get("flags"), dict) else body.get("grants", body)
+        if isinstance(raw, dict):
+            # Accept UI camelCase and API snake_case.
+            raw = {
+                "view": raw.get("view"),
+                "submit": raw.get("submit"),
+                "view_sensitive": raw.get("view_sensitive", raw.get("viewSensitive")),
+                "all": raw.get("all", raw.get("allTreatments")),
+                "reconcile": raw.get("reconcile"),
+                "manage": raw.get("manage"),
+            }
+        grants = normalize_eclaims_practitioner_grants(raw)
+        cfg = await settings()
+        mapping = dict(cfg.get("eclaimsPractitionerGrants") or {})
+        previous = normalize_eclaims_practitioner_grants(mapping.get(subject) or [])
+        if grants:
+            mapping[subject] = grants
+        else:
+            mapping.pop(subject, None)
+        await coll("settings").update_one(
+            {"id": "app"},
+            {"$set": {"eclaimsPractitionerGrants": mapping}},
+            upsert=True,
+        )
+        label = target.get("name") or target.get("email") or subject
+        if grants == previous:
+            action = f"eClaims permissions unchanged for {label}"
+        elif not grants:
+            action = f"eClaims permissions revoked for {label}"
+        elif not previous:
+            action = f"eClaims permissions granted for {label}: {', '.join(grants)}"
+        else:
+            action = f"eClaims permissions updated for {label}: {', '.join(grants) or 'none'}"
+        await add_audit(user.get("name") or "owner", action, None, actor_id=user.get("id"))
+        return {
+            "subject": subject,
+            "grants": grants,
+            "flags": {
+                "view": "view" in grants,
+                "submit": "submit" in grants,
+                "viewSensitive": "view_sensitive" in grants,
+                "allTreatments": "all" in grants,
+            },
+            "previousGrants": previous,
+        }
+
     @r.get("/invoices/{iid}/eclaims")
     async def eclaims_workspace(iid: str, request: Request):
         """Context for the portal-assisted eClaims workspace. Does not submit claims."""
