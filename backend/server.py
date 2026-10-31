@@ -285,18 +285,18 @@ async def lifespan(_app):
     await ensure_winback(db)
     await ensure_followup(db)
     await ensure_sms(db)
-    await ensure_engage(db)
     await db.nt_cron_runs.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("id", unique=True)
     await db.nt_statement_locks.create_index("at", expireAfterSeconds=120)
-    # Seed before trial/welcome upserts. ensure_trial_service inserts a catalogue
-    # row on empty DBs; running it first would make services.count > 0 and skip
+    # Seed before trial/engage/welcome upserts. Those helpers insert catalogue
+    # rows on empty DBs; running them first would make services.count > 0 and skip
     # reset_data, leaving QA/launch boots without swedish, practitioners, or settings.
     if await coll("services").count_documents({}) == 0:
         await reset_data()
     await ensure_trial_service(db)
     await ensure_trial_campaign_locations(db)
     await ensure_welcome_offer(db)
+    await ensure_engage(db)
     if not is_production():
         await coll("promotions").update_many(
             {"approval": {"$exists": False}, "enabled": True},
