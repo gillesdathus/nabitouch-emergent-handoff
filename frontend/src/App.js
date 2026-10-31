@@ -11,6 +11,7 @@ import { PageSkeleton } from "@/components/ui-kit";
 import { AppErrorBoundary, installChunkRecovery } from "@/components/AppErrorBoundary";
 import { PwaUpdateBanner } from "@/components/PwaUpdateBanner";
 import { useVisualViewportInset } from "@/lib/viewport";
+import { NotFoundPage } from "@/pages/RouteStatus";
 
 installChunkRecovery();
 
@@ -95,6 +96,8 @@ const Payments = lazy(() => import("@/pages/owner/Payments"));
 const EClaims = lazy(() => import("@/pages/owner/EClaims"));
 const Credentials = lazy(() => import("@/pages/owner/Credentials"));
 const LegacyClients = lazy(() => import("@/pages/owner/LegacyClients"));
+const WellnessStudioDashboard = lazy(() => import("@/pages/owner/wellness-studio/WellnessStudioDashboard"));
+const WellnessStudioPlaceholder = lazy(() => import("@/pages/owner/wellness-studio/WellnessStudioPlaceholder"));
 const Desk = lazy(() => import("@/pages/reception/Desk"));
 const StaffClients = lazy(() => import("@/pages/staff/Clients"));
 const Verify = lazy(() => import("@/pages/reception/Verify"));
@@ -214,6 +217,13 @@ export default function App() {
                   <Route path="/owner/practitioners/:id" element={<StaffPractitionerProfile />} />
                   <Route path="/owner/clients/:id" element={<ClientWorkspace />} />
                   <Route path="/owner/campaigns" element={<OwnerCampaigns />} />
+                  <Route path="/owner/wellness-studio" element={<WellnessStudioDashboard />} />
+                  <Route path="/owner/wellness-studio/campaigns" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/assets" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/organizations" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/events" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/outreach" element={<WellnessStudioPlaceholder />} />
+                  <Route path="/owner/wellness-studio/analytics" element={<WellnessStudioPlaceholder />} />
                   <Route path="/owner/training" element={<TrainingCenter />} />
                   <Route path="/owner/rewards" element={<OwnerRewards />} />
                   <Route path="/owner/zones" element={<Zones />} />
@@ -257,7 +267,7 @@ export default function App() {
                   <Route path="/desk/team/client-comms" element={<TeamClientComms role="desk" />} />
                 </Route>
                 <Route path="/train" element={<TrainingWorkspace />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
+                <Route path="*" element={<NotFoundPage />} />
               </Routes>
             </Suspense>
             </AppErrorBoundary>

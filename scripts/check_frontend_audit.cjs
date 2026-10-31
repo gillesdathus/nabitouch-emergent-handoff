@@ -23,6 +23,21 @@ const allowed = [
     expiry: Date.parse('2026-11-15T00:00:00Z'),
     note: 'Pinned zod@3.24.4; zod v4 upgrade tracked separately from CSRF hotfix.',
   },
+  {
+    // Build/dev tooling only (eslint, Capacitor CLI). Browsers never run these paths.
+    id: 'GHSA-g3hv-75wg-m249',
+    module: 'minimatch',
+    pathPrefix: '',
+    expiry: Date.parse('2026-11-30T00:00:00Z'),
+    note: 'eslint + @capacitor/cli minimatch paths; upgrade with next toolchain pin.',
+  },
+  {
+    id: 'GHSA-3g3m-2fjr-6pw4',
+    module: 'glob',
+    pathPrefix: '@capacitor/cli>',
+    expiry: Date.parse('2026-11-30T00:00:00Z'),
+    note: 'Capacitor CLI glob walker only; not shipped in the browser bundle.',
+  },
 ];
 
 let known = 0;

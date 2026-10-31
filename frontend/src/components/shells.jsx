@@ -7,11 +7,12 @@ import { Attribution, Lockup, Logo } from "@/components/brand";
 import { WhatsAppFab } from "@/components/ContactCards";
 import { Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
-import { homeFor, spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
+import { spacesOf, WORKSPACES, workspaceForPath } from "@/lib/workspaces";
 import { BOTTOM_NAV, PUBLIC_NAV, showsFocusedBookingChrome, showsMarketingFooter } from "@/lib/navigation";
 import { UNREAD_REFRESH_EVENT, visibleStaffUnreadFromInbox, visibleUnreadFromInbox } from "@/lib/team-connect";
 import { cn } from "@/lib/utils";
 import { registerPush } from "@/lib/nativeShell";
+import { ForbiddenPage } from "@/pages/RouteStatus";
 
 const ICONS = {
   Home,
@@ -39,6 +40,7 @@ const OWNER_MORE_GROUPS = [
   {
     title: "Marketing & growth",
     items: [
+      { to: "/owner/wellness-studio", label: "Corporate Wellness Studio" },
       { to: "/owner/promos", label: "Promotions & rewards" },
       { to: "/owner/campaigns", label: "Flash campaigns" },
       { to: "/owner/giftcards", label: "Gift cards" },
@@ -342,7 +344,10 @@ export function StaffShell({ role }) {
   // Gate already waits for user === undefined. null means signed out.
   if (user === undefined) return null;
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname)}`} replace />;
-  if (!spacesOf(user).includes(NEED[role])) return <Navigate to={homeFor(user)} replace />;
+  // Signed-in but wrong workspace → 403 (never bounce a protected URL to the public homepage).
+  if (!spacesOf(user).includes(NEED[role])) {
+    return <ForbiddenPage requiredRole={NEED[role] === "practitioner" ? "practitioner" : NEED[role]} />;
+  }
   return <StaffShellInner role={role} />;
 }
 
