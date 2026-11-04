@@ -16,18 +16,19 @@ import uuid
 import requests
 
 
-def _required(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise SystemExit(f"{name} is required")
-    return value
+def _first(*names: str) -> str:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    raise SystemExit(f"One of {', '.join(names)} is required")
 
 
 def main() -> int:
-    base = _required("REACT_APP_BACKEND_URL").rstrip("/")
+    base = _first("REACT_APP_BACKEND_URL", "PUBLIC_BACKEND_URL").rstrip("/")
     api = base + "/api" if not base.endswith("/api") else base
-    email = _required("OWNER_EMAIL")
-    password = _required("OWNER_PASSWORD")
+    email = _first("OWNER_EMAIL", "NABITOUCH_OWNER_EMAIL", "OWNER_PROBE_EMAIL")
+    password = _first("OWNER_PASSWORD", "NABITOUCH_OWNER_PASSWORD", "OWNER_PROBE_PASSWORD")
 
     s = requests.Session()
     login = s.post(f"{api}/auth/login", json={"email": email, "password": password}, timeout=30)
