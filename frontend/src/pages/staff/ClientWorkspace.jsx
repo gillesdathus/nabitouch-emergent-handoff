@@ -11,6 +11,7 @@ import { ClientProfileEditor } from "@/components/clients/ClientProfileEditor";
 import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { hasStaffRole } from "@/lib/staffRoles";
 import { edmontonNow } from "@/components/ops/calendar/time";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
@@ -163,6 +164,7 @@ export default function ClientWorkspace() {
   const [invoice, setInvoice] = useState(false);
   const [editing, setEditing] = useState(false);
   const role = user?.role;
+  const ownerLike = hasStaffRole(user, "owner");
   const [thread, setThread] = useState(null);
   const [ws, setWs] = useState(null);
   const [error, setError] = useState("");
@@ -179,13 +181,13 @@ export default function ClientWorkspace() {
   const addresses = ws.client.addresses || [];
   return (
     <div className="mx-auto max-w-6xl min-w-0" data-testid="client-workspace">
-      <Link to={role === "owner" ? "/owner/clients" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
+      <Link to={ownerLike ? "/owner/clients" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
         <ArrowLeft className="h-4 w-4" />Clients
       </Link>
       <Hero c={ws.client} appts={ws.appointments} totals={sumInvoices(invoiceRows)} canMoney={money} actions={<>
         {canEdit && <button type="button" onClick={() => setEditing(true)} className="nb-btn-dark h-9 px-3 text-xs" data-testid="cw-edit-profile"><Pencil className="h-3.5 w-3.5" />Edit profile</button>}
-        {(role === "owner" || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
-        {money && (role === "owner" || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
+        {(ownerLike || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
+        {money && (ownerLike || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
         {ws.client.phone && <a href={`tel:${ws.client.phone}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-call"><Phone className="h-3.5 w-3.5" />Call</a>}
         {ws.client.email && <a href={`mailto:${ws.client.email}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-email"><Mail className="h-3.5 w-3.5" />Email</a>}
       </>} />
@@ -238,7 +240,7 @@ export default function ClientWorkspace() {
           onSaved={(next) => { setWs(next); setEditing(false); }}
         />
       )}
-      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
+      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={ownerLike ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
     </div>
   );
 }

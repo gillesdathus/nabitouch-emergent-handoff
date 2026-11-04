@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatPositions, formatRoles, toggleList } from "./staffRoles";
+import { formatPositions, formatRoles, hasStaffRole, toggleList } from "./staffRoles";
 
 describe("staffRoles helpers", () => {
   it("formats desk as Receptionist and keeps positions display-only", () => {
+    expect(hasStaffRole({ role: "manager" }, "owner")).toBe(true);
+    expect(hasStaffRole({ role: "desk" }, "owner")).toBe(false);
+    expect(hasStaffRole({ role: "desk", roles: ["desk", "manager"] }, "owner")).toBe(true);
     expect(formatRoles(["owner", "manager", "desk"])).toBe("Owner, Manager, Receptionist");
     expect(formatPositions({ positions: ["owner", "general_manager", "receptionist"] })).toBe(
       "Owner, General Manager, Receptionist",

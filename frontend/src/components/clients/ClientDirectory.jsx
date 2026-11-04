@@ -8,6 +8,7 @@ import { EmptyState, SearchField, Segmented } from "@/components/ds";
 import { Avatar, Pill } from "@/components/ui-kit";
 import { formatCents } from "@/lib/billing";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { hasStaffRole } from "@/lib/staffRoles";
 import { useInvoices } from "@/lib/useInvoices";
 import { edmontonNow } from "@/components/ops/calendar/time";
 import { useDemo } from "@/store/DemoStore";
@@ -50,9 +51,9 @@ function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook,
 }
 
 export function ClientDirectory({ role = "owner" }) {
-  const { state, perm } = useDemo();
+  const { state, perm, user } = useDemo();
   const nav = useNavigate();
-  const owner = role === "owner";
+  const owner = role === "owner" || hasStaffRole(user, "owner");
   const canBook = owner || perm("createBooking");
   const canInvoice = owner || perm("managePayments");
   const canCreate = owner || perm("createBooking") || perm("editClientProfile");

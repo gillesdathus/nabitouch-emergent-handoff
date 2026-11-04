@@ -21,6 +21,14 @@ export function roleLabel(role) {
   return String(role || "").replace(/^\w/, (c) => c.toUpperCase());
 }
 
+/** Mirror backend rbac.has_role: owner and manager are operationally equivalent. */
+export function hasStaffRole(user, ...allowed) {
+  const have = new Set([...(user?.roles || []), user?.role].filter(Boolean));
+  const want = new Set(allowed);
+  if ((want.has("owner") || want.has("manager")) && (have.has("owner") || have.has("manager"))) return true;
+  return [...want].some((role) => have.has(role));
+}
+
 export function formatRoles(roles) {
   return (roles || []).map(roleLabel).join(", ") || "—";
 }
