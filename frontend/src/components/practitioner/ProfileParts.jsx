@@ -94,7 +94,7 @@ export function CredentialPanel({ person, status, credentials, owner, onChanged 
   const pending = credentials.filter((c) => c.practitionerId === person.id && c.status !== "verified");
   const save = async (e) => {
     e.preventDefault();
-    if (!form.expiresOn) { toast.error("Choose the expiry date"); return; }
+    if (form.kind !== "cpr" && !form.expiresOn) { toast.error("Choose the expiry date"); return; }
     try { await run(() => api.addCredential({ ...form, practitionerId: person.id }), owner ? "Credential recorded" : "Credential submitted for review"); setForm(null); onChanged(); } catch { /* toast */ }
   };
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -120,7 +120,7 @@ export function CredentialPanel({ person, status, credentials, owner, onChanged 
           <label className="text-xs text-nb-mute">Insurance provider<input className="nb-input mt-1 h-10" value={form.provider} onChange={set("provider")} /></label>
           <label className="text-xs text-nb-mute">Province<input className="nb-input mt-1 h-10" value={form.province} onChange={set("province")} /></label>
           <div className="text-xs text-nb-mute">Effective<DateField value={form.effectiveOn} onChange={(v) => setForm({ ...form, effectiveOn: v })} className="mt-1 h-10 w-full" testid="pr-cred-effective" /></div>
-          <div className="text-xs text-nb-mute">Expires *<DateField value={form.expiresOn} onChange={(v) => setForm({ ...form, expiresOn: v })} className="mt-1 h-10 w-full" testid="pr-cred-expires" /></div>
+          <div className="text-xs text-nb-mute">{form.kind === "cpr" ? "Expires (optional — leave blank if none)" : "Expires *"}<DateField value={form.expiresOn} onChange={(v) => setForm({ ...form, expiresOn: v })} className="mt-1 h-10 w-full" testid="pr-cred-expires" /></div>
           <label className="text-xs text-nb-mute">Document note<input className="nb-input mt-1 h-10" value={form.documentNote} onChange={set("documentNote")} placeholder="Where the certificate is kept" /></label>
           <p className="text-[11px] text-nb-mute sm:col-span-2">Document file upload is turned off in this release. Keep the certificate on record and note where it is stored.</p>
           <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setForm(null)} className="nb-btn-ghost h-10 px-4 text-sm">Cancel</button><button type="submit" className="nb-btn-primary h-10 px-4 text-sm" data-testid="pr-cred-save">{owner ? "Save credential" : "Submit for verification"}</button></div>

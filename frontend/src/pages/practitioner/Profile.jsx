@@ -147,7 +147,8 @@ function CredentialsSelf({ personId }) {
   const mine = rows.filter((row) => row.practitionerId === personId);
   const save = async (event) => {
     event?.preventDefault?.();
-    if (!form.identifier?.trim() || !form.expiresOn) return;
+    if (!form.identifier?.trim()) return;
+    if (form.kind !== "cpr" && !form.expiresOn) return;
     await run(() => api.addCredential({ ...form, practitionerId: personId }), "Credential submitted for review");
     setForm({ kind: "registration", identifier: "", issuingAuthority: "", province: "AB", provider: "", effectiveOn: "", expiresOn: "", documentNote: "" });
     load();
@@ -180,7 +181,7 @@ function CredentialsSelf({ personId }) {
             <label className="text-xs"><span className="mb-1 block text-nb-mute">Province</span><input className="nb-input h-10" value={form.province} onChange={(e) => setForm({ ...form, province: e.target.value })} /></label>
             <label className="text-xs"><span className="mb-1 block text-nb-mute">Provider (insurance)</span><input className="nb-input h-10" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} /></label>
             <label className="text-xs"><span className="mb-1 block text-nb-mute">Effective</span><input type="date" className="nb-input h-10" value={form.effectiveOn} onChange={(e) => setForm({ ...form, effectiveOn: e.target.value })} /></label>
-            <label className="text-xs"><span className="mb-1 block text-nb-mute">Expires</span><input type="date" required className="nb-input h-10" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="pro-credential-expires" /></label>
+            <label className="text-xs"><span className="mb-1 block text-nb-mute">{form.kind === "cpr" ? "Expires (optional)" : "Expires"}</span><input type="date" required={form.kind !== "cpr"} className="nb-input h-10" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="pro-credential-expires" />{form.kind === "cpr" ? <span className="mt-1 block text-[11px] text-nb-mute">Leave blank if the certificate has no expiry.</span> : null}</label>
             <label className="text-xs sm:col-span-2"><span className="mb-1 block text-nb-mute">Document note</span><input className="nb-input h-10" value={form.documentNote} onChange={(e) => setForm({ ...form, documentNote: e.target.value })} placeholder="Certificate on file with owner" /></label>
           </div>
         </FlowStepShell>

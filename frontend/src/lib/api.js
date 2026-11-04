@@ -62,6 +62,7 @@ export const api = {
   demoLogin: (role, subject) => http.post('/auth/demo-login', { role, subject }).then(data),
   logout: () => (isNative() ? native.logout() : http.post('/auth/logout').then(data)),
   staff: () => http.get('/auth/staff').then(data),
+  staffRoleHistory: () => http.get('/auth/staff/role-history').then(data),
   createStaff: (body) => http.post('/auth/staff', body).then(data),
   inviteStaff: (body) => http.post('/auth/staff/invite', body).then(data),
   acceptInvite: (token, password) => http.post('/auth/invite/accept', { token, password }).then(data),

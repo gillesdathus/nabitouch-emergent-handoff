@@ -117,13 +117,13 @@ export default function Credentials() {
         </label>
         <label className="text-sm"><span className="nb-label">Kind</span><select className="nb-input" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} data-testid="credential-kind">{KINDS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label className="text-sm"><span className="nb-label">Number</span><input className="nb-input" required value={form.identifier} onChange={(e) => setForm({ ...form, identifier: e.target.value })} data-testid="credential-identifier" /></label>
-        <label className="text-sm"><span className="nb-label">Expires</span><input type="date" required className="nb-input" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="credential-expires" /></label>
+        <label className="text-sm"><span className="nb-label">{form.kind === "cpr" ? "Expires (optional)" : "Expires"}</span><input type="date" required={form.kind !== "cpr"} className="nb-input" value={form.expiresOn} onChange={(e) => setForm({ ...form, expiresOn: e.target.value })} data-testid="credential-expires" />{form.kind === "cpr" ? <span className="mt-1 block text-xs text-nb-mute">Leave blank when the CPR / First Aid certificate has no expiry date.</span> : null}</label>
         <button className="nb-btn-primary h-12 sm:col-span-2" data-testid="credential-save">Add credential</button>
       </form>}
       <ul className="space-y-2">
         {rows.map((row) => (
           <li key={row.id} className="nb-card flex flex-wrap items-center justify-between gap-2 p-4 text-sm" data-testid={`credential-${row.id}`}>
-            <span>{row.practitionerId} · {row.kind} · {row.identifier || "no number"} · expires {row.expiresOn}</span>
+            <span>{row.practitionerId} · {row.kind} · {row.identifier || "no number"} · {row.expiresOn ? `expires ${row.expiresOn}` : "no expiry"}</span>
             {row.status === "verified" ? <span className="text-teal-700">Verified</span> : <button type="button" className="nb-btn-ghost h-10" data-testid={`credential-verify-${row.id}`} onClick={async () => { await run(() => api.verifyCredential(row.id), "Credential verified"); load(); }}>Mark verified</button>}
           </li>
         ))}
