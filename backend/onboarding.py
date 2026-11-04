@@ -20,6 +20,9 @@ REQUIRED_CREDENTIAL_KINDS = (
 REQUIRED_KIND_IDS = tuple(kind for kind, _ in REQUIRED_CREDENTIAL_KINDS)
 # Kept for attestation API compatibility; no longer opens booking.
 ATTESTABLE_KINDS = ("registration", "liability")
+# Temporary booking waivers only — never rewrite nt_credentials verification status.
+OVERRIDEABLE_BOOKING_KINDS = ("cpr",)
+DEFAULT_CREDENTIAL_OVERRIDE_HOURS = 48
 
 
 def acceptable_identifier(value):
@@ -101,12 +104,51 @@ def within_credential_grace(person, today=None):
     return today <= credential_grace_deadline(person, today=today)
 
 
-def missing_required_credentials(credentials, today=None):
+def _parse_override_instant(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def active_credential_booking_override(person, kind, now=None):
+    """Return the active temporary booking override for a required kind, else None.
+
+    Overrides waive the booking gate only. They do not change credential verification
+    status and do not satisfy onboarding gap tracking.
+    """
+    if kind not in OVERRIDEABLE_BOOKING_KINDS:
+        return None
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    row = ((person or {}).get("credentialBookingOverrides") or {}).get(kind)
+    if not isinstance(row, dict):
+        return None
+    expires = _parse_override_instant(row.get("expiresAt"))
+    if expires is None:
+        return None
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= now:
+        return None
+    return row
+
+
+def missing_required_credentials(credentials, today=None, person=None, now=None):
     today = today or date.today()
     missing = []
     for kind, label in REQUIRED_CREDENTIAL_KINDS:
-        if not _current(credentials, kind, today):
-            missing.append(label)
+        if _current(credentials, kind, today):
+            continue
+        if person is not None and active_credential_booking_override(person, kind, now=now):
+            continue
+        missing.append(label)
     return missing
 
 
@@ -115,7 +157,7 @@ TRACKED_STATUSES = ("invited", "draft", "pending", "approved")
 ACTIVATION_HARD_GAPS = frozenset({"login_email"})
 
 
-def assignment_credential_problem(person, credentials, today=None):
+def assignment_credential_problem(person, credentials, today=None, now=None):
     """Approved profiles book during a 14-day grace; afterwards the four required numbers must be verified."""
     status = (person or {}).get("onboardingStatus")
     if status in ("invited", "draft", "pending"):
@@ -125,7 +167,7 @@ def assignment_credential_problem(person, credentials, today=None):
     today = today or date.today()
     if within_credential_grace(person, today=today):
         return None
-    missing = missing_required_credentials(credentials, today=today)
+    missing = missing_required_credentials(credentials, today=today, person=person, now=now)
     if not missing:
         return None
     if len(missing) == 1:

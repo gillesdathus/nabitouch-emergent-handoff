@@ -12,7 +12,14 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 &/',.\-]{1,79}$")
 VISIBILITY = ("draft", "published", "hidden")
 OWNER_FIELDS = {"name", "designation", "bio", "experience", "qualifications", "specialties", "profileVisibility", "displayOrder", "slug"}
 SELF_FIELDS = {"name", "designation", "bio", "experience", "qualifications", "specialties"}
-HIDDEN = {"base", "licenseExpiry", "insuranceExpiry", "photoMediaId", "credentialAttestations"}
+HIDDEN = {
+    "base",
+    "licenseExpiry",
+    "insuranceExpiry",
+    "photoMediaId",
+    "credentialAttestations",
+    "credentialBookingOverrides",
+}
 
 
 def profile_visibility(person):

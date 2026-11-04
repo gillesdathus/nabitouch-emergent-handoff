@@ -6,11 +6,12 @@ import { useDemo } from "@/store/DemoStore";
 import { apiError } from "@/lib/api";
 
 const CRED_KINDS = [
-  ["registration", "Registration / license"],
+  ["association", "Association license #"],
   ["liability", "Liability insurance"],
-  ["association", "Association"],
-  ["membership", "Membership"],
-  ["municipal", "Municipal licence"],
+  ["municipal", "Municipality license #"],
+  ["cpr", "CPR / First Aid"],
+  ["registration", "Registration / license (optional)"],
+  ["membership", "Membership (optional)"],
   ["other", "Other / education"],
 ];
 

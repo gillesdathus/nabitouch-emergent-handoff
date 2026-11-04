@@ -297,8 +297,11 @@ def build_clinical_router(db, coll, add_audit, user_from):
         if not has_strict_role(user, "owner"):
             raise HTTPException(403, "Only the owner verifies a credential")
         await step_up(user)
-        from onboarding import acceptable_identifier
-        existing = await db.nt_credentials.find_one({"id": credential_id}, {"_id": 0, "identifier": 1})
+        from onboarding import OVERRIDEABLE_BOOKING_KINDS, acceptable_identifier
+        existing = await db.nt_credentials.find_one(
+            {"id": credential_id},
+            {"_id": 0, "identifier": 1, "kind": 1, "practitionerId": 1},
+        )
         if not existing:
             raise HTTPException(404, "Credential not found")
         if not acceptable_identifier(existing.get("identifier")):
@@ -309,7 +312,22 @@ def build_clinical_router(db, coll, add_audit, user_from):
         )
         if not updated:
             raise HTTPException(404, "Credential not found")
-        return {"verified": True}
+        kind = existing.get("kind")
+        practitioner_id = existing.get("practitionerId")
+        cleared_override = False
+        if kind in OVERRIDEABLE_BOOKING_KINDS and practitioner_id:
+            result = await coll("practitioners").update_one(
+                {"id": practitioner_id, f"credentialBookingOverrides.{kind}": {"$exists": True}},
+                {"$unset": {f"credentialBookingOverrides.{kind}": ""}},
+            )
+            if result.modified_count:
+                cleared_override = True
+                await add_audit(
+                    user.get("name") or "owner",
+                    f"Temporary {kind} booking override cleared for {practitioner_id} after credential verify",
+                    None,
+                )
+        return {"verified": True, "overrideCleared": cleared_override}
 
     @r.get("/credentials/reminders")
     async def credential_reminders(request: Request):

@@ -76,7 +76,15 @@ function CredentialRow({ kind, label, info, owner, personId, onChanged, booking 
   );
 }
 
-const KINDS = [["registration", "Registration / licence"], ["liability", "Liability insurance"], ["association", "Association"], ["membership", "Membership"], ["municipal", "Municipal licence"], ["other", "Other / education"]];
+const KINDS = [
+  ["association", "Association license #"],
+  ["liability", "Liability insurance"],
+  ["municipal", "Municipality license #"],
+  ["cpr", "CPR / First Aid"],
+  ["registration", "Registration / licence (optional)"],
+  ["membership", "Membership (optional)"],
+  ["other", "Other / education"],
+];
 const BLANK = { kind: "registration", identifier: "", issuingAuthority: "", province: "AB", provider: "", effectiveOn: "", expiresOn: "", documentNote: "" };
 
 export function CredentialPanel({ person, status, credentials, owner, onChanged }) {
