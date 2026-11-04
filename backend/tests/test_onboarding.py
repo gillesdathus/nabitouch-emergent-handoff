@@ -141,6 +141,34 @@ def test_assignment_blocks_after_grace_until_four_credentials_exist():
     assert expired and "missing or expired" in expired
 
 
+def test_verified_cpr_without_expiry_satisfies_assignment_gate():
+    past = TODAY - timedelta(days=CREDENTIAL_GRACE_DAYS + 1)
+    approved = {
+        **PERSON,
+        "onboardingStatus": "approved",
+        "activatedAt": past.isoformat() + "T12:00:00+00:00",
+    }
+    three = [
+        _credential("association", "2027-01-01"),
+        _credential("liability", "2027-01-01"),
+        _credential("municipal", "2027-01-01"),
+    ]
+    assert "CPR" in (assignment_credential_problem(approved, three, TODAY) or "")
+    cpr_blank = _credential("cpr", "", "CPR-NO-EXPIRY-1")
+    cpr_blank["expiresOn"] = None
+    assert assignment_credential_problem(approved, three + [cpr_blank], TODAY) is None
+    cpr_empty = _credential("cpr", "", "CPR-NO-EXPIRY-2")
+    assert assignment_credential_problem(approved, three + [cpr_empty], TODAY) is None
+    # Other kinds still require a real future expiry.
+    bad_assoc = _credential("association", "", "ASSOC-NO-EXP")
+    bad_assoc["expiresOn"] = None
+    assert assignment_credential_problem(
+        approved,
+        [bad_assoc, _credential("liability", "2027-01-01"), _credential("municipal", "2027-01-01"), cpr_blank],
+        TODAY,
+    )
+
+
 def test_temporary_cpr_booking_override_waives_only_cpr_and_expires():
     from datetime import datetime, timezone
 

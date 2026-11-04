@@ -68,8 +68,14 @@ def _current(credentials, kind, today):
             continue
         if not acceptable_identifier(row.get("identifier")):
             continue
-        expires = expiry_date(row.get("expiresOn"))
-        if expires is None or expires < today:
+        expires_raw = str(row.get("expiresOn") or "").strip()
+        expires = expiry_date(expires_raw)
+        if expires is None:
+            # CPR / First Aid may be issued without a printed expiry date.
+            if kind == "cpr" and not expires_raw:
+                found.append(row)
+            continue
+        if expires < today:
             continue
         found.append(row)
     return found[-1] if found else None
@@ -203,7 +209,9 @@ def onboarding_gaps(*, person, credentials, login_email, owner_email, schedule, 
     for kind, label in REQUIRED_CREDENTIAL_KINDS:
         if not _current(credentials, kind, today):
             gaps.append({"id": kind, "label": label, "status": cred_status})
-            gaps.append({"id": f"{kind}_expiry", "label": f"{label} expiry", "status": cred_status})
+            # CPR may be recorded without a printed expiry; do not invent an expiry gap for it.
+            if kind != "cpr":
+                gaps.append({"id": f"{kind}_expiry", "label": f"{label} expiry", "status": cred_status})
     if mfa_required and not mfa_enrolled:
         gaps.append({"id": "mfa", "label": "Staff authenticator", "status": "pending enrollment"})
     # Trial specialty is catalogue-only and does not satisfy "services offered" for regular booking.
