@@ -146,6 +146,7 @@ export const api = {
   setWorkspace: (workspace) => http.post('/auth/workspace', { workspace }).then(data),
   searchClients: (q) => http.get('/clients/search', { params: { q } }).then(data),
   createClient: (body) => http.post('/clients', body).then(data),
+  clientProfileHistory: (id) => http.get(`/clients/${id}/profile-history`).then(data),
   createInvoice: (body) => http.post('/invoices', body).then(data),
   patchStaff: (id, body) => http.patch(`/auth/staff/${id}`, body).then(data),
   resendStaffInvite: (id) => http.post(`/auth/staff/invites/${id}/resend`, {}).then(data),

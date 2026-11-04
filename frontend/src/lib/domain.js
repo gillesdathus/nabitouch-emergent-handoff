@@ -210,6 +210,10 @@ export const RECEPTION_PERMS = [
   ['viewLocations', 'View live practitioner locations'], ['viewEta', 'View ETAs'], ['viewAddresses', 'View appointment addresses'],
   ['assign', 'Assign / reassign practitioners'], ['createBooking', 'Create or reschedule bookings'], ['viewInsuranceStatus', 'View insurance verification status'],
   ['viewInsuranceDocs', 'View insurance documents'], ['managePayments', 'Manage payment statuses'], ['viewHistory', 'Access operational history'],
+  ['editClientProfile', 'Edit client contact and preference details'],
+  ['editClientAddresses', 'Add and edit client saved addresses'],
+  ['editClientInsurance', 'Edit client insurance details'],
+  ['correctClientIdentity', 'Correct legal name and date of birth (with verification)'],
   ['clinical', 'Access clinical information (restricted by default)'],
 ];
 

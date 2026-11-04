@@ -87,7 +87,15 @@ from travel_fees import (
     can_manage_pricing, municipality_fee_estimates, quote_address_travel, travel_fee_settings_patch_allowed,
     validate_travel_fees_config,
 )
-from addresses import classify, normalize_destination_line, parse_civic, postal_code
+from addresses import (
+    classify, normalize_destination_line, parse_civic, postal_code,
+    requires_manual_travel_approval, verification_state_for, MANUAL_APPROVAL_KM,
+)
+from client_admin import (
+    build_staff_client, merge_client_patch, profile_change_audit,
+    RECEPTION_CORRECT_IDENTITY, RECEPTION_EDIT_ADDRESSES, RECEPTION_EDIT_INSURANCE,
+    RECEPTION_EDIT_PROFILE,
+)
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
     enqueue_booking_confirmation, enqueue_operational, enqueue_practitioner_notice, ensure_notifications,
@@ -606,29 +614,53 @@ async def search_clients(request: Request, q: str = "", limit: int = 20):
 
 @api.post("/clients")
 async def create_client(request: Request, body: dict = Body(...)):
-    """Staff patient registration. Does not merge duplicates automatically."""
+    """Staff patient registration. Email and online account are optional. Does not merge duplicates."""
     from rbac import has_role
     user = await require(request, "owner", "desk")
-    if has_role(user, "desk") and not has_role(user, "owner") and not (await reception_perms()).get("createBooking"):
+    perms = await reception_perms()
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    if desk_only and not (perms.get("createBooking") or perms.get(RECEPTION_EDIT_PROFILE)):
         raise HTTPException(403, "Not permitted")
-    first = str(body.get("firstName") or "").strip()
-    last = str(body.get("lastName") or "").strip()
-    email = str(body.get("email") or "").strip().lower()
-    phone = str(body.get("phone") or "").strip()
-    if not first or not last:
-        raise HTTPException(400, "First and last name are required")
-    if email and await coll("clients").find_one({"email": email}, {"_id": 1}):
+    try:
+        client = build_staff_client(body, user=user)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    client["createdAt"] = now_iso()
+    if desk_only:
+        # Reception may only attach addresses / insurance when those permissions are granted.
+        if not (perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking")):
+            client["addresses"] = []
+        if not (perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus")):
+            client["insurance"] = []
+    if client.get("email") and await coll("clients").find_one({"email": client["email"]}, {"_id": 1}):
         raise HTTPException(409, "A patient with that email already exists")
-    client = {
-        "id": "c-" + uuid.uuid4().hex[:10], "firstName": first, "lastName": last, "preferredName": str(body.get("preferredName") or "").strip(),
-        "email": email, "phone": phone, "dob": str(body.get("dob") or "").strip(), "language": body.get("language") or "English",
-        "contactMethod": body.get("contactMethod") or "Text", "marketingConsent": bool(body.get("marketingConsent")),
-        "smsConsent": bool(body.get("smsConsent")), "addresses": [], "insurance": [], "favorites": [], "preferredPractitioners": [],
-        "loyaltyPoints": 0, "onlineBookings": 0, "createdAt": now_iso(), "createdBy": user.get("id"),
-    }
-    await coll("clients").insert_one(dict(client))
-    await add_audit(user.get("name") or "staff", f"Patient created {first} {last}")
-    return client
+    if client.get("insurance"):
+        client["insurance"] = seal_insurance(client["insurance"])
+    stored = dict(client)
+    await coll("clients").insert_one(stored)
+    await add_audit(
+        user.get("name") or "staff",
+        f"Patient created {client['firstName']} {client['lastName']}",
+        actor_id=user.get("id"),
+    )
+    out = dict(client)
+    if out.get("insurance"):
+        out["insurance"] = open_insurance(out["insurance"])
+    return out
+
+
+@api.get("/clients/{client_id}/profile-history")
+async def client_profile_history(client_id: str, request: Request):
+    """Protected administrative change history for a client profile. No clinical notes."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    if desk_only and not (await reception_perms()).get("viewHistory"):
+        raise HTTPException(403, "Not permitted")
+    if not await coll("clients").find_one({"id": client_id}, {"_id": 1}):
+        raise HTTPException(404, "Client not found")
+    rows = await db.nt_client_profile_audit.find({"clientId": client_id}, NO_ID).sort("at", -1).to_list(100)
+    return {"history": rows}
 
 
 @api.get("/clients/{client_id}/workspace")
@@ -669,11 +701,18 @@ async def client_workspace(client_id: str, request: Request):
     invoices = []
     if has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")):
         invoices = await db.nt_invoices.find({"clientId": client_id}, {"_id": 0, "id": 1, "number": 1, "state": 1, "totalCents": 1, "serviceDate": 1, "origin": 1}).sort("serviceDate", -1).to_list(50)
+    can_edit_profile = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_PROFILE) or perms.get("createBooking"))
+    can_edit_addresses = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking"))
+    can_edit_insurance = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus"))
+    can_correct_identity = has_role(user, "owner") or bool(perms.get(RECEPTION_CORRECT_IDENTITY))
     await add_audit(user.get("name") or "staff", f"Opened client record {client.get('firstName', '')} {client.get('lastName', '')}".strip())
     return {"client": client, "appointments": appts, "consents": consent_view, "threads": threads, "plans": plans, "invoices": invoices,
             "access": {"role": user["role"], "threads": can_read_threads, "plans": has_role(user, "owner"), "clinical": False,
                        "invoices": has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")),
-                       "insurance": has_role(user, "owner") or bool(perms.get("viewInsuranceStatus"))}}
+                       "insurance": has_role(user, "owner") or bool(perms.get("viewInsuranceStatus")),
+                       "editProfile": can_edit_profile, "editAddresses": can_edit_addresses,
+                       "editInsurance": can_edit_insurance, "correctIdentity": can_correct_identity,
+                       "viewHistory": has_role(user, "owner") or bool(perms.get("viewHistory"))}}
 
 
 @api.get("/state")
@@ -1025,6 +1064,7 @@ async def locate_visit(address, zones, settings):
     fee_km = travel_calc.get("drivingKm") if travel_calc.get("drivingKm") is not None else km
     zone = {**zone, "_travelCalc": travel_calc}
     stored_line = normalize_destination_line(hit.get("line") or line) or (hit.get("line") or line)
+    needs_approval = requires_manual_travel_approval(fee_km) or (travel_calc or {}).get("status") == "needs_review"
     stored = {
         "line": stored_line, "unit": unit, "lat": hit["lat"], "lng": hit["lng"], "zoneId": zone["id"],
         "notes": str(address.get("notes") or "")[:240],
@@ -1033,6 +1073,14 @@ async def locate_visit(address, zones, settings):
         "arrival": address.get("arrival") or {"lat": hit["lat"], "lng": hit["lng"]},
         "version": 1,
         "municipalityId": travel_calc.get("municipalityId") or zone.get("municipalityId"),
+        "verificationState": verification_state_for(
+            confidence=assessed["confidence"],
+            client_confirmed=True,
+            postal_status=assessed.get("postalStatus"),
+            eligible=True,
+        ),
+        "requiresManualApproval": bool(needs_approval),
+        "distanceKm": round(fee_km, 2) if fee_km is not None else None,
     }
     return stored, zone, fee_km
 
@@ -1116,6 +1164,24 @@ async def _verdict(hit, zones, settings):
             "estimated": bool(travel_calc.get("estimated")),
             "message": travel_calc.get("message") or "",
         }
+    # Address validity (geocode) stays separate from booking eligibility / travel approval.
+    distance_for_approval = out.get("km")
+    out["requiresManualApproval"] = bool(
+        (eligible and zone and requires_manual_travel_approval(distance_for_approval))
+        or (travel_calc and travel_calc.get("status") == "needs_review")
+        or distance_for_approval is None and bool(eligible and zone)
+    )
+    out["manualApprovalKm"] = MANUAL_APPROVAL_KM
+    out["verificationState"] = verification_state_for(
+        confidence="address" if out.get("eligible") else "review",
+        client_confirmed=False,
+        eligible=out.get("eligible"),
+    )
+    if out["requiresManualApproval"] and out.get("eligible"):
+        out["message"] = (
+            f"{out['message']} Destinations beyond {int(MANUAL_APPROVAL_KM)} km "
+            "are accepted as a request and need owner or practitioner approval before confirmation."
+        )
     return out
 
 
@@ -1198,6 +1264,20 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
         and not assessed["arrivalDiscrepancy"] and bool(eligible)
     )
     assessed["postalNormalized"] = postal_code(body.get("postal") or "")
+    assessed["requiresManualApproval"] = bool(
+        (eligible and requires_manual_travel_approval(km))
+        or (travel_calc and travel_calc.get("status") == "needs_review")
+        or (eligible and km is None)
+    )
+    assessed["manualApprovalKm"] = MANUAL_APPROVAL_KM
+    if not assessed.get("verificationState"):
+        assessed["verificationState"] = verification_state_for(
+            confidence=assessed.get("confidence"),
+            client_confirmed=assessed["clientConfirmed"],
+            postal_status=assessed.get("postalStatus"),
+            eligible=eligible,
+            po_box=assessed.get("poBox"),
+        )
     return assessed
 
 
@@ -2237,7 +2317,18 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             raise
     seq = await db.nt_counters.find_one_and_update({"id": "booking"}, {"$inc": {"n": 1}}, upsert=True, return_document=ReturnDocument.AFTER)
     ts = now_iso()
-    status = "assigned" if practitioner_id else "requested"
+    # Destinations beyond MANUAL_APPROVAL_KM (or without a driving route) stay requested
+    # until an owner/practitioner confirms — do not silently finalize.
+    needs_travel_approval = bool(
+        location != "clinic"
+        and isinstance(address, dict)
+        and (
+            address.get("requiresManualApproval")
+            or requires_manual_travel_approval(km if location != "clinic" else 0)
+            or ((quoted.get("travelCalc") or {}).get("status") == "needs_review")
+        )
+    )
+    status = "requested" if needs_travel_approval or not practitioner_id else "assigned"
     idem = payload.get("idempotencyKey")
     preferences = fields.get("preferences") if isinstance(fields.get("preferences"), dict) else {}
     quoted.setdefault("loyaltyPoints", 0)
@@ -2254,6 +2345,18 @@ async def create_booking(request: Request, payload: dict = Body(...)):
             ([{"status": "assigned", "at": ts, "actor": "system"}] if status == "assigned" else []),
             "timestamps": {"requested": ts, **({"assigned": ts} if status == "assigned" else {})},
             "soapStatus": "none", "timer": {"pausedMs": 0}, "source": source, "createdAt": ts, "payments": []}
+    if needs_travel_approval:
+        appt["manualApprovalRequired"] = True
+        appt["manualApprovalReason"] = (
+            "driving_route_unavailable"
+            if ((quoted.get("travelCalc") or {}).get("status") == "needs_review")
+            else f"destination_over_{int(MANUAL_APPROVAL_KM)}_km"
+        )
+        appt["events"].append({
+            "status": "manual_approval_required", "at": ts,
+            "actor": "system",
+            "note": "Pending owner or practitioner approval before confirmation.",
+        })
     if trial_visit:
         appt["appointmentKind"] = "trial"
         appt["treatmentScope"] = (service or {}).get("treatmentScope") or "neck_shoulders"
@@ -2585,7 +2688,7 @@ async def _deliver_booking(note):
         raise PermanentDelivery("provider_rejected") from exc
 
 
-CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "dob", "language", "contactMethod", "noInsurance", "preferredNavApp",
+CLIENT_FIELDS = {"firstName", "lastName", "preferredName", "email", "phone", "altPhone", "dob", "language", "contactMethod", "noInsurance", "preferredNavApp",
                  "emergencyContact", "marketingConsent", "smsConsent", "photo", "addresses", "paymentPreference", "insurance",
                  "favorites", "preferredPractitioners"}
 PROMO_FIELDS = {"enabled", "name", "type", "value", "maxDiscount", "eligibility", "start", "end", "services",
@@ -2875,25 +2978,71 @@ async def patch_doc(name: str, doc_id: str, request: Request, doc: dict = Body(.
             if target.get("status") == "requested":
                 await prepare_assignment(target, doc["practitionerId"])
     elif name == "clients":
+        from rbac import has_role as _has_role
         if role == "client" and doc_id == sub:
-            doc = {key: value for key, value in doc.items() if key in CLIENT_FIELDS}
+            # Clients may update preferred name and contact details; legal identity stays staff-gated.
+            blocked_identity = {"firstName", "lastName", "dob"}
+            doc = {key: value for key, value in doc.items() if key in CLIENT_FIELDS and key not in blocked_identity}
             if not doc:
                 raise HTTPException(400, "No permitted fields")
+            if "addresses" in doc:
+                from client_admin import normalize_addresses
+                doc["addresses"] = normalize_addresses(doc.get("addresses") or [], existing=target.get("addresses"))
             if "insurance" in doc:
                 doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
+            if "email" in doc:
+                # Contact email on the profile does not transfer login credentials.
+                new_email = str(doc.get("email") or "").strip().lower()
+                if new_email and new_email != str(target.get("email") or "").strip().lower():
+                    linked = await db.nt_users.find_one({"subject": doc_id, "role": "client"}, {"_id": 0, "email": 1})
+                    if linked and linked.get("email") and linked["email"].lower() != new_email:
+                        raise HTTPException(
+                            409,
+                            "Changing the login email requires verifying ownership of the new address. "
+                            "Update the contact email only after verification, or ask staff to correct the contact record.",
+                        )
             # Profile avatars are separate from clinical document uploads.
             if "photo" in doc and not profile_photos_enabled():
                 doc.pop("photo", None)
             elif "photo" in doc and isinstance(doc.get("photo"), str) and len(doc["photo"]) > 200000:
                 raise HTTPException(400, "Photo is too large")
-        elif role == "desk" and perms.get("viewInsuranceStatus"):
-            doc = only_fields(doc, {"insurance"})
-            if "insurance" in doc:
-                doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
-        elif role == "owner":
-            doc = only_fields(doc, CLIENT_FIELDS | {"insurance"}, {"loyaltyPoints", "onlineBookings", "hasProfile", "createdAt"})
-            if "insurance" in doc:
-                doc["insurance"] = seal_insurance(lock_client_insurance(open_insurance(target.get("insurance")), doc["insurance"]))
+        elif _has_role(user, "owner") or role == "desk":
+            # Owner and authorized manager (via has_role owner) get full admin fields.
+            # Desk uses explicit reception permissions — never escalate silently.
+            effective_role = "owner" if _has_role(user, "owner") else "desk"
+            try:
+                patched, identity_meta, changed = merge_client_patch(target, doc, role=effective_role, perms=perms)
+            except PermissionError as exc:
+                raise HTTPException(403, str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if not patched:
+                raise HTTPException(400, "No permitted fields")
+            if "insurance" in patched:
+                # Preserve claim/verification status on existing policy ids; never resubmit claims.
+                patched["insurance"] = seal_insurance(
+                    lock_client_insurance(open_insurance(target.get("insurance")), patched["insurance"])
+                )
+            if "photo" in patched and not profile_photos_enabled():
+                patched.pop("photo", None)
+            elif "photo" in patched and isinstance(patched.get("photo"), str) and len(patched["photo"]) > 200000:
+                raise HTTPException(400, "Photo is too large")
+            # Staff contact-email correction updates the client record only — never resets passwords
+            # or transfers the linked login account as a side effect.
+            patched.pop("loginEmailUnchanged", None)
+            patched.pop("emailPendingVerification", None)
+            action, history = profile_change_audit(
+                actor=user.get("name") or "staff",
+                actor_id=user.get("id"),
+                client_id=doc_id,
+                changed=changed,
+                identity=identity_meta,
+                note=audit_msg,
+            )
+            history["at"] = now_iso()
+            await db.nt_client_profile_audit.insert_one(dict(history))
+            audit_msg = action
+            doc = patched
         else:
             raise HTTPException(403, "Not permitted")
     elif name == "promotions":

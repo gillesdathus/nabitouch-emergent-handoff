@@ -33,6 +33,62 @@ _ABBREV = (
     (re.compile(r"\bHwy\.?\b", re.I), "Highway"),
 )
 
+# PO Box / General Delivery — valid mailing forms, not mobile service destinations.
+_PO_BOX = re.compile(
+    r"\b(?:P\.?\s*O\.?\s*Box|Post\s*Office\s*Box|POB)\s*#?\s*\d+\b|\bGeneral\s+Delivery\b",
+    re.I,
+)
+
+# Explicit verification states shown to staff/clients. Distinct from provider confidence.
+VERIFICATION_STATES = ("verified", "needs_confirmation", "manual_review", "invalid")
+
+# Driving-distance threshold above which a mobile visit needs owner/practitioner approval.
+MANUAL_APPROVAL_KM = 40.0
+
+
+def is_po_box(line):
+    return bool(_PO_BOX.search(str(line or "")))
+
+
+def alberta_postal(postal):
+    """Alberta forward sortation starts with T. Other Canadian FSAs are still valid mail."""
+    code = postal_code(postal)
+    return bool(code) and code[0] == "T"
+
+
+def verification_state_for(*, confidence=None, client_confirmed=False, postal_status=None,
+                           eligible=None, po_box=False, purpose="home"):
+    """Map geocoder confidence + confirmation into an explicit verification state.
+
+    Manual entry alone never yields verified. Provider confidence stays separate
+    from client/staff confirmation (clientConfirmed).
+    """
+    conf = str(confidence or "").strip().lower()
+    postal = str(postal_status or "").strip().lower()
+    if conf in ("invalid",) or postal == "invalid":
+        return "invalid"
+    if po_box and purpose in ("service", "home", "temporary"):
+        # A PO box may be stored as mailing; it is not a verified service destination.
+        return "manual_review" if purpose != "mailing" else "needs_confirmation"
+    if conf == "address" and client_confirmed and postal in ("", "match", "supplied", None):
+        if eligible is False:
+            return "manual_review"
+        return "verified"
+    if conf in ("review", "unresolved", "approximate") or postal in ("conflict", "missing"):
+        return "manual_review" if conf in ("review", "unresolved") or postal == "conflict" else "needs_confirmation"
+    if client_confirmed:
+        return "needs_confirmation"
+    return "needs_confirmation"
+
+
+def requires_manual_travel_approval(km):
+    """Destinations beyond MANUAL_APPROVAL_KM need owner/practitioner approval before confirm."""
+    try:
+        distance = float(km)
+    except (TypeError, ValueError):
+        return True  # Unknown distance → require review rather than fabricate.
+    return distance > MANUAL_APPROVAL_KM
+
 
 def postal_code(value):
     match = POSTAL.search(str(value or "").upper())
@@ -118,14 +174,26 @@ def _km(a, b):
     return 6371 * 2 * math.asin(math.sqrt(hav))
 
 
-def classify(hit, requested_line, requested_postal, arrival=None):
+def classify(hit, requested_line, requested_postal, arrival=None, *, service_region="AB"):
+    """Classify a geocode hit.
+
+    Canadian postal codes outside Alberta are valid mailing addresses. The
+    Alberta (T*) service-region check only affects mobile-visit confidence when
+    service_region is AB — it does not mark an out-of-province mailing address
+    invalid.
+    """
     civic = parse_civic(hit.get("line") or "")
     civic["postal"] = postal_code(hit.get("postal")) or civic["postal"]
     supplied = postal_code(requested_postal)
     civic_postal = civic.get("postal") or ""
-    precise = bool(civic.get("number")) and hit.get("provider") in ("local", "mapbox")
+    precise = bool(civic.get("number") or is_po_box(hit.get("line") or requested_line)) and hit.get("provider") in ("local", "mapbox")
+    # PO boxes are precise enough to store as mailing, but never as a service pin.
+    if is_po_box(hit.get("line") or requested_line):
+        precise = hit.get("provider") in ("local", "mapbox", "manual") or bool(supplied or civic_postal)
     confidence = "address" if precise else "approximate"
-    if requested_postal and (not POSTAL.fullmatch(str(requested_postal).strip()) or not supplied.startswith("T")):
+    raw_postal = str(requested_postal or "").strip()
+    if requested_postal and not supplied and raw_postal:
+        # Genuinely malformed postal text.
         confidence = "review"
         postal_status = "invalid"
     elif civic_postal and supplied and civic_postal != supplied:
@@ -141,6 +209,11 @@ def classify(hit, requested_line, requested_postal, arrival=None):
         postal_status = "supplied"
     else:
         postal_status = "match"
+    # Outside the Alberta mobile region: keep the address valid; flag service use for review.
+    if supplied and service_region == "AB" and not alberta_postal(supplied) and not is_po_box(requested_line):
+        # Valid Canadian mail — not an automatic service destination.
+        if confidence == "address":
+            confidence = "approximate"
     requested = parse_civic(normalize_rural_query(requested_line))
     if requested.get("number") and civic.get("number") and requested["number"].casefold() != civic["number"].casefold():
         confidence = "review"
@@ -152,7 +225,8 @@ def classify(hit, requested_line, requested_postal, arrival=None):
         confidence = "review"
     if requested.get("type") and civic.get("type") and requested["type"].lower()[:2] != civic["type"].lower()[:2]:
         confidence = "review"
-    if not civic.get("number"):
+    po_box = is_po_box(hit.get("line") or requested_line)
+    if not civic.get("number") and not po_box:
         confidence = "review"
     if hit.get("matchConfidence") in ("low", "medium"):
         confidence = "review"
@@ -163,12 +237,22 @@ def classify(hit, requested_line, requested_postal, arrival=None):
         discrepancy = _km({"lat": hit["lat"], "lng": hit["lng"]}, arrival) > 0.15
         if discrepancy:
             confidence = "review"
+    state = verification_state_for(
+        confidence=confidence,
+        client_confirmed=False,
+        postal_status=postal_status,
+        po_box=po_box,
+        purpose="mailing" if po_box else "home",
+    )
     return {
         "civic": civic,
         "confidence": confidence,
         "provider": hit.get("provider") or "",
-        "providerConfidence": hit.get("provider") or "",
+        "providerConfidence": hit.get("matchConfidence") or hit.get("provider") or "",
         "postalStatus": postal_status,
         "arrivalDiscrepancy": discrepancy,
         "clientConfirmed": False,
+        "verificationState": state,
+        "poBox": po_box,
+        "mailingOnly": po_box,
     }

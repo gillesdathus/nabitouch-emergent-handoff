@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { CalendarPlus, Mail, Phone, Receipt, UserRound, Users } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { CalendarPlus, Mail, Phone, Receipt, UserPlus, UserRound, Users } from "lucide-react";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
+import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
 import { EmptyState, SearchField, Segmented } from "@/components/ds";
 import { Avatar, Pill } from "@/components/ui-kit";
 import { formatCents } from "@/lib/billing";
@@ -50,14 +51,17 @@ function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook,
 
 export function ClientDirectory({ role = "owner" }) {
   const { state, perm } = useDemo();
+  const nav = useNavigate();
   const owner = role === "owner";
   const canBook = owner || perm("createBooking");
   const canInvoice = owner || perm("managePayments");
+  const canCreate = owner || perm("createBooking") || perm("editClientProfile");
   const { rows: invoices } = useInvoices({}, canInvoice);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [book, setBook] = useState(null);
   const [invoice, setInvoice] = useState(null);
+  const [creating, setCreating] = useState(false);
   const now = edmontonNow();
   const nowKey = `${now.date}${now.time}`;
   const info = useMemo(() => {
@@ -83,15 +87,27 @@ export function ClientDirectory({ role = "owner" }) {
       <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
         <SearchField value={q} onChange={setQ} placeholder="Search name, phone or email" testid="client-search" />
         <Segmented options={FILTERS} value={filter} onChange={setFilter} testid="client-filter" label="Client filter" />
+        {canCreate && (
+          <button type="button" className="nb-btn-dark h-10 shrink-0 px-3 text-sm" onClick={() => setCreating(true)} data-testid="client-create-btn">
+            <UserPlus className="h-4 w-4" />New client
+          </button>
+        )}
       </div>
       <p className="text-xs text-nb-mute" data-testid="client-count">{list.length} of {state.clients.length} clients</p>
       {list.length ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((c) => <ClientCard key={c.id} c={c} info={info[c.id]} base={base} canBook={canBook} canInvoice={canInvoice} showInsurance={owner || perm("viewInsuranceStatus")} onBook={setBook} onInvoice={setInvoice} />)}
         </div>
-      ) : <EmptyState icon={Users} title={state.clients.length ? "No clients match" : "No clients yet"} body={state.clients.length ? "Clear the search or choose another filter." : "Clients appear after their first booking or when you add one during a phone booking."} testid="client-empty" />}
+      ) : <EmptyState icon={Users} title={state.clients.length ? "No clients match" : "No clients yet"} body={state.clients.length ? "Clear the search or choose another filter." : "Create a client without a booking, or add one during a phone booking."} testid="client-empty" />}
       {book && <NewBookingDialog open clientId={book} onClose={() => setBook(null)} />}
       {invoice && <CreateInvoiceDialog open clientId={invoice} onClose={() => setInvoice(null)} />}
+      {creating && (
+        <CreateClientDialog
+          open
+          onClose={() => setCreating(false)}
+          onCreated={(created) => { setCreating(false); if (created?.id) nav(`${base}/${created.id}`); }}
+        />
+      )}
     </div>
   );
 }
