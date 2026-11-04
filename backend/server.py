@@ -695,13 +695,16 @@ async def get_state(request: Request):
     staff_roles = {"owner", "manager", "desk", "practitioner"}
     loaded_people = out.get("practitioners") or []
     filtered_people = []
+    from profiles import load_career_appointment_rows, resolved_historical_as_of
     for person in loaded_people:
         if not visible_profile(person, role, sub):
             continue
         # Public / client visitors never receive non-bookable staff orphan profiles.
         if role not in staff_roles and not public_therapist_listing_eligible(person):
             continue
-        filtered_people.append(present_practitioner(person, role))
+        as_of = resolved_historical_as_of(person)
+        career_rows = await load_career_appointment_rows(db, person.get("id"), as_of)
+        filtered_people.append(present_practitioner(person, role, career_rows))
     out["practitioners"] = filtered_people
     if role != "owner":
         out["services"] = [row for row in out["services"] if catalogue_public(row)]
