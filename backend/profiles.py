@@ -23,15 +23,20 @@ HIDDEN = {
 
 
 def profile_visibility(person):
-    """A missing flag follows onboarding. Approved demo profiles stay published."""
+    """A missing flag follows onboarding. Approved demo profiles stay published.
+
+    Invited / incomplete staff drafts must never default to a public therapist listing.
+    """
     if not person:
         return "draft"
     value = person.get("profileVisibility")
     if value in VISIBILITY:
         return value
     status = person.get("onboardingStatus")
-    if status in ("draft", "pending"):
+    if status in ("draft", "pending", "invited"):
         return "draft"
+    if person.get("listingEligible") is False or person.get("archivedReason"):
+        return "hidden"
     return "published"
 
 
@@ -56,13 +61,25 @@ def can_edit_profile(user, person):
     return user.get("role") == "practitioner" and user.get("subject") == person.get("id")
 
 
+def public_therapist_listing_eligible(person):
+    """Public directory / booking selection: active therapist profiles only, never staff orphans."""
+    if not person:
+        return False
+    if person.get("listingEligible") is False or person.get("archivedReason"):
+        return False
+    if profile_visibility(person) != "published":
+        return False
+    if person.get("available") is False or person.get("bookable") is False:
+        return False
+    status = person.get("onboardingStatus")
+    return status in (None, "approved")
+
+
 def person_booking_block(person, service, credentials=None):
     """Why this practitioner cannot take this booking. None means the profile is eligible."""
     if not person:
         return "That practitioner is not available"
-    if profile_visibility(person) != "published":
-        return "That practitioner is not available"
-    if person.get("available") is False or person.get("bookable") is False:
+    if not public_therapist_listing_eligible(person):
         return "That practitioner is not available"
     status = person.get("onboardingStatus")
     if status and status != "approved":

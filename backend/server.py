@@ -27,7 +27,14 @@ from catalog import (
     draft_service, ensure_service_indexes, list_services, preview_service, publish_service, read_service, restore_service, update_service,
 )
 from media import build_media_router, ensure_media_indexes
-from profiles import ensure_profile_indexes, present_practitioner, read_profile, update_profile, visible_profile
+from profiles import (
+    ensure_profile_indexes,
+    present_practitioner,
+    public_therapist_listing_eligible,
+    read_profile,
+    update_profile,
+    visible_profile,
+)
 from seed import build_launch_seed, build_seed
 from auth import ALG, build_auth, clear_auth_cookies
 from csrf_session import session_gone_response, session_payload_from_cookies
@@ -685,7 +692,17 @@ async def get_state(request: Request):
     out["appointments"] = [present_shield_fields(present_trip(appt), role) for appt in out["appointments"]]
     out["soap"] = [open_tree(note) for note in out["soap"]]
     out["settings"] = shape_settings(out["settings"], role)
-    out["practitioners"] = [present_practitioner(person, role) for person in out["practitioners"] if visible_profile(person, role, sub)]
+    staff_roles = {"owner", "manager", "desk", "practitioner"}
+    loaded_people = out.get("practitioners") or []
+    filtered_people = []
+    for person in loaded_people:
+        if not visible_profile(person, role, sub):
+            continue
+        # Public / client visitors never receive non-bookable staff orphan profiles.
+        if role not in staff_roles and not public_therapist_listing_eligible(person):
+            continue
+        filtered_people.append(present_practitioner(person, role))
+    out["practitioners"] = filtered_people
     if role != "owner":
         out["services"] = [row for row in out["services"] if catalogue_public(row)]
     if role == "owner":

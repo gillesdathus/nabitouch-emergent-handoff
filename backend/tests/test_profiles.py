@@ -9,7 +9,7 @@ import requests
 from motor.motor_asyncio import AsyncIOMotorClient
 from PIL import Image
 
-from profiles import person_booking_block
+from profiles import person_booking_block, profile_visibility, public_therapist_listing_eligible
 
 ADDRESS = {
     "line": "10150 104 St NW, Edmonton, AB",
@@ -52,6 +52,23 @@ def test_published_profile_does_not_bypass_credentials_or_service_assignment():
     approved = {**published, "onboardingStatus": "approved", "activatedAt": past}
     blocked = person_booking_block(approved, service, [])
     assert blocked and ("Association" in blocked or "Credentials missing" in blocked)
+
+
+def test_invited_staff_orphan_is_not_a_public_therapist():
+    orphan = {
+        "id": "p-40244477",
+        "name": "Dathus Gilles",
+        "available": False,
+        "bookable": False,
+        "onboardingStatus": "invited",
+        "profileVisibility": None,
+    }
+    assert profile_visibility(orphan) == "draft"
+    assert public_therapist_listing_eligible(orphan) is False
+    archived = {**orphan, "profileVisibility": "hidden", "archivedReason": "incorrect-practitioner-classification", "listingEligible": False}
+    assert profile_visibility(archived) == "hidden"
+    assert public_therapist_listing_eligible(archived) is False
+    assert person_booking_block(archived, {"slug": "swedish", "enabled": True}, []) == "That practitioner is not available"
 
 
 def test_owner_can_publish_a_profile_without_making_it_bookable_and_a_selected_practitioner_is_checked():

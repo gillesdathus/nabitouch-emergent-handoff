@@ -20,7 +20,8 @@ export function designatedTherapist(practitioners) {
 export function profileVisibility(person) {
   if (!person) return "draft";
   if (["draft", "published", "hidden"].includes(person.profileVisibility)) return person.profileVisibility;
-  if (person.onboardingStatus === "draft" || person.onboardingStatus === "pending") return "draft";
+  if (person.onboardingStatus === "draft" || person.onboardingStatus === "pending" || person.onboardingStatus === "invited") return "draft";
+  if (person.listingEligible === false || person.archivedReason) return "hidden";
   return "published";
 }
 
