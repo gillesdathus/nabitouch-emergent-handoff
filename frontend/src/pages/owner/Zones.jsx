@@ -88,6 +88,8 @@ export default function Zones() {
       travelFeesEnabled: patch.travelFeesEnabled ?? !!coverage.travelFeesEnabled,
       municipalityIds: patch.municipalityIds ?? coverage.municipalityIds ?? [],
       customMunicipalities: patch.customMunicipalities ?? coverage.customMunicipalities ?? [],
+      destinationExceptions: patch.destinationExceptions ?? coverage.destinationExceptions ?? [],
+      verifiedDestinationExceptions: patch.verifiedDestinationExceptions ?? coverage.verifiedDestinationExceptions !== false,
       travelFees: patch.travelFees ?? coverage.travelFees ?? {},
     };
     setCoverageRadius(next.radiusKm);

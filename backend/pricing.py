@@ -1,4 +1,5 @@
 """Server-side booking quote. Mirrors frontend/src/lib/domain.js and ignores client totals."""
+import math
 from datetime import datetime
 from math import asin, cos, radians, sin, sqrt
 from zoneinfo import ZoneInfo
@@ -54,6 +55,94 @@ def zone_for(point, zones, center=None):
 COVERAGE_MODES = ("open", "radius", "zones")
 OPEN_ZONE = {"id": "z-open", "name": "Service area", "fee": 0, "perKm": 0, "enabled": True}
 
+# Narrow P0 allowlist for verified destinations outside the active radius/zone gate.
+# Does not disable global coverage; travel fees and availability still apply.
+VERIFIED_DESTINATION_EXCEPTIONS = (
+    {
+        "id": "strathcona-53337-range-road-215",
+        "mapboxId": "dXJuOm1ieGFkcjpmNzUzNzZiMC03OTVlLTQ3YmMtYTJlOS01ZDA4YmY2Yjg1MTU",
+        "lat": 53.591591,
+        "lng": -113.073364,
+        "radiusKm": 0.5,
+        "line": "53337 Range Road 215, Ardrossan, AB T8E 2B2, Canada",
+        "label": "53337 Range Road 215, Ardrossan (Strathcona County)",
+    },
+)
+
+
+def normalize_destination_exceptions(raw):
+    """Owner-configured destination exceptions (lat/lng and/or Mapbox id)."""
+    rows = []
+    seen = set()
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            lat = float(item["lat"]) if item.get("lat") is not None else None
+            lng = float(item["lng"]) if item.get("lng") is not None else None
+        except (TypeError, ValueError):
+            lat = lng = None
+        mapbox_id = str(item.get("mapboxId") or "").strip()
+        if lat is None and lng is None and not mapbox_id:
+            continue
+        if lat is not None and (not math.isfinite(lat) or not (-90 <= lat <= 90)):
+            continue
+        if lng is not None and (not math.isfinite(lng) or not (-180 <= lng <= 180)):
+            continue
+        try:
+            radius = float(item.get("radiusKm") if item.get("radiusKm") is not None else 0.5)
+        except (TypeError, ValueError):
+            radius = 0.5
+        radius = max(0.05, min(radius, 5.0))
+        key = mapbox_id or f"{lat:.5f},{lng:.5f}"
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "id": str(item.get("id") or key)[:80],
+            "mapboxId": mapbox_id,
+            "lat": lat,
+            "lng": lng,
+            "radiusKm": radius,
+            "line": str(item.get("line") or "")[:200],
+            "label": str(item.get("label") or item.get("line") or "")[:120],
+        })
+        if len(rows) >= 50:
+            break
+    return rows
+
+
+def active_destination_exceptions(settings):
+    """Merge verified allowlist with owner-configured exceptions unless disabled."""
+    cov = (settings or {}).get("serviceCoverage") if isinstance((settings or {}).get("serviceCoverage"), dict) else {}
+    configured = normalize_destination_exceptions(cov.get("destinationExceptions"))
+    if cov.get("verifiedDestinationExceptions") is False:
+        return configured
+    merged = list(VERIFIED_DESTINATION_EXCEPTIONS)
+    seen = {row.get("mapboxId") or row.get("id") for row in merged}
+    for row in configured:
+        key = row.get("mapboxId") or row.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
+
+
+def destination_exception_match(point, settings, mapbox_id=""):
+    """Return the matching destination exception, if any."""
+    if not point or point.get("lat") is None or point.get("lng") is None:
+        return None
+    place_id = str(mapbox_id or "").strip()
+    for row in active_destination_exceptions(settings):
+        if place_id and row.get("mapboxId") and place_id == row["mapboxId"]:
+            return row
+        if row.get("lat") is None or row.get("lng") is None:
+            continue
+        if haversine_km(point, {"lat": row["lat"], "lng": row["lng"]}) <= float(row.get("radiusKm") or 0.5):
+            return row
+    return None
+
 
 def launch_service_coverage():
     """Owner Booking → Service Coverage defaults. Open coverage; travel fees off."""
@@ -63,6 +152,8 @@ def launch_service_coverage():
         "travelFeesEnabled": False,
         "municipalityIds": [],
         "customMunicipalities": [],
+        "destinationExceptions": [],
+        "verifiedDestinationExceptions": True,
         "travelFees": launch_travel_fees(),
     }
 
@@ -83,12 +174,15 @@ def service_coverage(settings):
     else:
         fees_on = False
     travel_fees = normalize_travel_fees(raw.get("travelFees"))
+    verified = True if "verifiedDestinationExceptions" not in raw else bool(raw.get("verifiedDestinationExceptions"))
     return {
         "mode": mode,
         "radiusKm": radius,
         "travelFeesEnabled": fees_on,
         "municipalityIds": normalize_municipality_ids(raw.get("municipalityIds")),
         "customMunicipalities": normalize_custom_municipalities(raw.get("customMunicipalities")),
+        "destinationExceptions": normalize_destination_exceptions(raw.get("destinationExceptions")),
+        "verifiedDestinationExceptions": verified,
         "travelFees": travel_fees,
     }
 
@@ -122,37 +216,50 @@ def _municipality_zone(muni, matched):
     }
 
 
-def assess_coverage(point, zones, settings, place_hint=""):
+def assess_coverage(point, zones, settings, place_hint="", mapbox_id=""):
     """Return (zone, km, eligible) using the owner coverage mode.
 
     open — any geocoded point is eligible (named zone when inside a ring, else open zone).
     radius — eligible within settings.serviceCoverage.radiusKm of the service center.
     zones — eligible inside owner-selected municipalities when configured; otherwise
             inside an enabled custom/radius ring (legacy rings).
+
+    Verified / configured destination exceptions are a narrow allowlist only — they do
+    not change travel-fee policy, practitioner eligibility, or open coverage globally.
     """
     matched, km = zone_for(point, zones, (settings or {}).get("center"))
     cov = service_coverage(settings)
     mode = cov["mode"]
     if mode == "open":
         return (matched or dict(OPEN_ZONE)), km, True
+
+    def _exception_ok():
+        hit = destination_exception_match(point, settings, mapbox_id=mapbox_id)
+        if not hit:
+            return None, km, False
+        zone = matched or dict(OPEN_ZONE)
+        if hit.get("id"):
+            zone = {**zone, "destinationExceptionId": hit.get("id")}
+        return zone, km, True
+
     if mode == "radius":
         eligible = km <= float(cov["radiusKm"] or 0)
-        if not eligible:
-            return None, km, False
-        return (matched or dict(OPEN_ZONE)), km, True
+        if eligible:
+            return (matched or dict(OPEN_ZONE)), km, True
+        return _exception_ok()
     selected = cov.get("municipalityIds") or []
     custom = cov.get("customMunicipalities") or []
     if selected or custom:
         muni = resolve_municipality(point, custom=custom, place_hint=place_hint)
-        if not muni:
-            return None, km, False
-        if muni.get("match") == "custom_radius":
+        if muni and muni.get("match") == "custom_radius":
             return _municipality_zone(muni, matched), km, True
-        if municipality_selected(muni, selected):
+        if muni and municipality_selected(muni, selected):
             return _municipality_zone(muni, matched), km, True
-        return None, km, False
+        return _exception_ok()
     # Legacy rings when the owner has not configured municipality coverage yet.
-    return matched, km, bool(matched)
+    if matched:
+        return matched, km, True
+    return _exception_ok()
 
 
 def _today():

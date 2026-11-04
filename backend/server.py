@@ -80,7 +80,7 @@ from travel_fees import (
     can_manage_pricing, municipality_fee_estimates, quote_address_travel, travel_fee_settings_patch_allowed,
     validate_travel_fees_config,
 )
-from addresses import classify, parse_civic, postal_code
+from addresses import classify, normalize_destination_line, parse_civic, postal_code
 from notifications import (
     CancelDelivery, PermanentDelivery, TransientDelivery, apply_delivery_receipt, clear_notifications,
     enqueue_booking_confirmation, enqueue_operational, enqueue_practitioner_notice, ensure_notifications,
@@ -984,7 +984,8 @@ async def locate_visit(address, zones, settings):
         raise HTTPException(503, str(exc)) from exc
     assessed = classify(hit, line or hit.get("line") or "", address.get("postal") or "", address.get("arrival"))
     zone, km, eligible = assess_coverage(
-        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings,
+        place_hint=hit.get("area") or "", mapbox_id=hit.get("id") or place_id,
     )
     if not eligible or not zone:
         if (settings.get("clinic") or {}).get("enabled"):
@@ -1003,10 +1004,11 @@ async def locate_visit(address, zones, settings):
     )
     fee_km = travel_calc.get("drivingKm") if travel_calc.get("drivingKm") is not None else km
     zone = {**zone, "_travelCalc": travel_calc}
+    stored_line = normalize_destination_line(hit.get("line") or line) or (hit.get("line") or line)
     stored = {
-        "line": hit["line"], "unit": unit, "lat": hit["lat"], "lng": hit["lng"], "zoneId": zone["id"],
+        "line": stored_line, "unit": unit, "lat": hit["lat"], "lng": hit["lng"], "zoneId": zone["id"],
         "notes": str(address.get("notes") or "")[:240],
-        "civic": assessed["civic"], "confidence": assessed["confidence"], "clientConfirmed": True,
+        "civic": {**assessed["civic"], "line": stored_line}, "confidence": assessed["confidence"], "clientConfirmed": True,
         "postalStatus": assessed["postalStatus"], "mapboxId": hit.get("id") or "",
         "arrival": address.get("arrival") or {"lat": hit["lat"], "lng": hit["lng"]},
         "version": 1,
@@ -1018,7 +1020,8 @@ async def locate_visit(address, zones, settings):
 async def _verdict(hit, zones, settings):
     place_hint = hit.get("area") or ""
     zone, km, eligible = assess_coverage(
-        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=place_hint,
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings,
+        place_hint=place_hint, mapbox_id=hit.get("id") or "",
     )
     cov = service_coverage(settings)
     muni = resolve_municipality(
@@ -1063,9 +1066,10 @@ async def _verdict(hit, zones, settings):
         message = "Mobile service is not currently available at that location."
         if (settings.get("clinic") or {}).get("enabled"):
             message += " You can still book an in-clinic visit."
+    display_line = normalize_destination_line(hit.get("line") or "") or hit.get("line") or ""
     out = {
         "eligible": bool(eligible and zone),
-        "line": hit["line"],
+        "line": display_line,
         "area": hit.get("area") or "",
         "lat": hit["lat"],
         "lng": hit["lng"],
@@ -1075,7 +1079,7 @@ async def _verdict(hit, zones, settings):
         "travel": travel,
         "km": round(fee_km, 2) if fee_km is not None else None,
         "provider": hit.get("provider") or "",
-        "civic": parse_civic(hit.get("line") or ""),
+        "civic": parse_civic(display_line),
         "coverageMode": cov["mode"],
         "travelFeesEnabled": travel_fees_enabled(settings),
         "confirmedArrival": False,
@@ -1132,7 +1136,8 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
     except ProviderError as exc:
         raise HTTPException(503, str(exc)) from exc
     zone, km, eligible = assess_coverage(
-        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings, place_hint=hit.get("area") or "",
+        {"lat": hit["lat"], "lng": hit["lng"]}, zones, settings,
+        place_hint=hit.get("area") or "", mapbox_id=hit.get("id") or body.get("mapboxId") or "",
     )
     assessed = classify(hit, body.get("line") or "", body.get("postal") or "", body.get("arrival"))
     if not eligible:
@@ -1141,7 +1146,7 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
     assessed["eligible"] = bool(eligible)
     assessed["lat"] = hit["lat"]
     assessed["lng"] = hit["lng"]
-    assessed["line"] = hit["line"]
+    assessed["line"] = normalize_destination_line(hit.get("line") or "") or hit.get("line") or ""
     assessed["mapboxId"] = hit.get("id") or ""
     assessed["zone"] = {"id": zone["id"], "name": zone["name"]} if zone and eligible else None
     travel_calc = None

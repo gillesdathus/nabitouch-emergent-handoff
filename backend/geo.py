@@ -15,8 +15,11 @@ from urllib.parse import urlencode
 
 import httpx
 
+from addresses import normalize_rural_query
+
 EDMONTON = (-113.4938, 53.5461)
 # Greater Edmonton metro for autocomplete bias only — not an eligibility gate.
+# Includes rural Strathcona County / Ardrossan east of Sherwood Park.
 BBOX = "-114.5,52.9,-112.6,53.9"
 FORWARD = "https://api.mapbox.com/search/geocode/v6/forward"
 REVERSE = "https://api.mapbox.com/search/geocode/v6/reverse"
@@ -39,6 +42,7 @@ LOCAL = [
     {"id": "local-spruce", "line": "400 Calahoo Rd, Spruce Grove, AB", "area": "Spruce Grove", "lat": 53.5452, "lng": -113.9104},
     {"id": "local-leduc", "line": "4950 Gateway Blvd, Leduc, AB", "area": "Leduc", "lat": 53.2594, "lng": -113.5492},
     {"id": "local-wetaskiwin", "line": "4705 50 Ave, Wetaskiwin, AB", "area": "Wetaskiwin", "lat": 52.9694, "lng": -113.3769},
+    {"id": "local-ardrossan-rge-215", "line": "53337 Range Road 215, Ardrossan, AB T8E 2B2, Canada", "area": "Ardrossan", "lat": 53.591591, "lng": -113.073364, "postal": "T8E 2B2"},
 ]
 
 
@@ -178,7 +182,7 @@ class Geocoder:
             raise ProviderError("Address search is unavailable right now. Try again shortly.") from None
 
     async def suggest(self, query, client_key):
-        text = " ".join(str(query or "").split())
+        text = normalize_rural_query(query)
         if len(text) < 3:
             return []
         if not allow(self.bucket, f"suggest:{client_key}", SUGGEST_LIMIT):
@@ -190,7 +194,14 @@ class Geocoder:
             if not sample_catalog():
                 raise ProviderError(MAPBOX_REQUIRED)
             key = _norm(text)
-            hits = [dict(item, provider="local") for item in LOCAL if key in _norm(item["line"]) or key in _norm(item["area"])]
+            # Also match abbreviated rural forms against the normalized sample line.
+            raw_key = _norm(query)
+            hits = [
+                dict(item, provider="local")
+                for item in LOCAL
+                if key in _norm(item["line"]) or raw_key in _norm(item["line"]) or key in _norm(item["area"])
+                or "rge rd 215" in raw_key and "range road 215" in _norm(item["line"])
+            ]
             hits.sort(key=lambda item: item["line"])
             self._store(("suggest", key), hits[:5])
             return hits[:5]
@@ -216,7 +227,7 @@ class Geocoder:
                 raise GeocodeError("That address could not be found. Choose a suggestion or enter the street and city.")
             hit["provider"] = "local"
             return hit
-        text = " ".join(str(line or "").split())
+        text = normalize_rural_query(line)
         if _token() and (place_id or text):
             if persist and not permanent_geocoding():
                 raise ProviderError(STORAGE_REQUIRED)
@@ -242,7 +253,7 @@ class Geocoder:
             return hits[0]
         if sample_catalog():
             local = _local_by_id(place_id) if place_id else None
-            local = local or _local_match(text)
+            local = local or _local_match(text) or _local_match(line)
             if local:
                 local["provider"] = "local"
                 return local
