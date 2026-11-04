@@ -519,10 +519,26 @@ export function publicBio(bio) {
   return String(bio || "").replace(/\s*\(demo persona\)\s*/gi, " ").replace(/\s+([.,])/g, "$1").replace(/\s+/g, " ").trim();
 }
 
+/** Historical / on-the-spot completed treatments are not advance bookings. */
+export const COMPLETED_TREATMENT_SOURCES = ["historical_manual", "on_the_spot"];
+
+export function isCompletedTreatmentSource(source) {
+  return COMPLETED_TREATMENT_SOURCES.includes(String(source || ""));
+}
+
+export function isAdvanceBooking(visit) {
+  if (!visit) return false;
+  if (visit.countsAsAdvanceBooking === false) return false;
+  if (visit.bookingKind === "completed_treatment_record") return false;
+  if (isCompletedTreatmentSource(visit.source)) return false;
+  return true;
+}
+
 export function bookedByWeek(appointments) {
   const buckets = new Map();
   for (const visit of appointments || []) {
     if (!visit?.date || ["cancelled", "no_show"].includes(visit.status)) continue;
+    // Revenue chart includes historical charges; conversion metrics use isAdvanceBooking separately.
     const [year, month, day] = visit.date.split("-").map(Number);
     if (!year || !month || !day) continue;
     const date = new Date(Date.UTC(year, month - 1, day));

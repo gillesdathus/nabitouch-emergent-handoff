@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { CalendarPlus, Mail, Phone, Receipt, UserPlus, UserRound, Users } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, Mail, Phone, Receipt, UserPlus, UserRound, Users } from "lucide-react";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { CreateClientDialog } from "@/components/clients/CreateClientDialog";
 import { EmptyState, SearchField, Segmented } from "@/components/ds";
@@ -16,7 +17,7 @@ import { useDemo } from "@/store/DemoStore";
 const FILTERS = [["all", "All"], ["upcoming", "Upcoming visit"], ["balance", "Balance due"], ["new", "No visits yet"]];
 const insuranceReady = (i) => i.insurer && i.memberId;
 
-function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook, onInvoice }) {
+function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook, onRecord, onInvoice }) {
   const { next, visits, balance } = info;
   return (
     <article className="nb-panel flex min-w-0 flex-col p-4" data-testid={`client-card-${c.id}`}>
@@ -42,6 +43,7 @@ function ClientCard({ c, info, base, canBook, canInvoice, showInsurance, onBook,
       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-sky-50 pt-3">
         <Link to={`${base}/${c.id}`} className="nb-btn-dark h-9 px-3 text-xs" data-testid={`client-card-open-${c.id}`}><UserRound className="h-3.5 w-3.5" />Record</Link>
         {canBook && <button type="button" onClick={() => onBook(c.id)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`client-card-book-${c.id}`}><CalendarPlus className="h-3.5 w-3.5" />Book</button>}
+        {canBook && <button type="button" onClick={() => onRecord(c.id)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`client-card-record-${c.id}`}><ClipboardCheck className="h-3.5 w-3.5" />Record</button>}
         {canInvoice && <button type="button" onClick={() => onInvoice(c.id)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid={`client-card-invoice-${c.id}`}><Receipt className="h-3.5 w-3.5" />Invoice</button>}
         {c.phone && <a href={`tel:${c.phone}`} aria-label={`Call ${c.firstName}`} className="nb-btn-ghost h-9 w-9 px-0" data-testid={`client-card-call-${c.id}`}><Phone className="h-3.5 w-3.5" /></a>}
         {c.email && <a href={`mailto:${c.email}`} aria-label={`Email ${c.firstName}`} className="nb-btn-ghost h-9 w-9 px-0" data-testid={`client-card-email-${c.id}`}><Mail className="h-3.5 w-3.5" /></a>}
@@ -61,6 +63,7 @@ export function ClientDirectory({ role = "owner" }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [book, setBook] = useState(null);
+  const [recordClient, setRecordClient] = useState(null);
   const [invoice, setInvoice] = useState(null);
   const [creating, setCreating] = useState(false);
   const now = edmontonNow();
@@ -97,10 +100,11 @@ export function ClientDirectory({ role = "owner" }) {
       <p className="text-xs text-nb-mute" data-testid="client-count">{list.length} of {state.clients.length} clients</p>
       {list.length ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {list.map((c) => <ClientCard key={c.id} c={c} info={info[c.id]} base={base} canBook={canBook} canInvoice={canInvoice} showInsurance={owner || perm("viewInsuranceStatus")} onBook={setBook} onInvoice={setInvoice} />)}
+          {list.map((c) => <ClientCard key={c.id} c={c} info={info[c.id]} base={base} canBook={canBook} canInvoice={canInvoice} showInsurance={owner || perm("viewInsuranceStatus")} onBook={setBook} onRecord={setRecordClient} onInvoice={setInvoice} />)}
         </div>
       ) : <EmptyState icon={Users} title={state.clients.length ? "No clients match" : "No clients yet"} body={state.clients.length ? "Clear the search or choose another filter." : "Create a client without a booking, or add one during a phone booking."} testid="client-empty" />}
       {book && <NewBookingDialog open clientId={book} onClose={() => setBook(null)} />}
+      {recordClient && <RecordCompletedTreatmentDialog open clientId={recordClient} onClose={() => setRecordClient(null)} />}
       {invoice && <CreateInvoiceDialog open clientId={invoice} onClose={() => setInvoice(null)} />}
       {creating && (
         <CreateClientDialog

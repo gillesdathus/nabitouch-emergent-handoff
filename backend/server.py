@@ -259,6 +259,7 @@ async def lifespan(_app):
     await db.nt_slot_locks.create_index("lockId", unique=True)
     await db.nt_slot_locks.create_index("appointmentId")
     await db.nt_appointments.create_index("idempotencyKey", unique=True, sparse=True)
+    await db.nt_clients.create_index("createIdempotencyKey", unique=True, sparse=True)
     await db.nt_schedules.create_index("practitionerId", unique=True)
     await db.nt_opening_offers.create_index("id", unique=True)
     await db.nt_opening_watches.create_index("clientId")
@@ -713,6 +714,278 @@ async def client_workspace(client_id: str, request: Request):
                        "editProfile": can_edit_profile, "editAddresses": can_edit_addresses,
                        "editInsurance": can_edit_insurance, "correctIdentity": can_correct_identity,
                        "viewHistory": has_role(user, "owner") or bool(perms.get("viewHistory"))}}
+
+
+async def _authorize_completed_treatment(request):
+    """Owner/manager always; desk needs createBooking. Returns (user, perms, can_finance)."""
+    from rbac import has_role
+    user = await require(request, "owner", "desk")
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    perms = await reception_perms() if desk_only else {}
+    if desk_only and not perms.get("createBooking"):
+        raise HTTPException(403, "Not permitted")
+    can_finance = (not desk_only) or bool(perms.get("managePayments"))
+    return user, perms, can_finance
+
+
+@api.post("/treatments/completed")
+async def record_completed_treatment(request: Request, body: dict = Body(...)):
+    """Record a past or on-the-spot completed treatment with no prior booking.
+
+    Does not create booking reminders, slot locks, travel/dispatch events, payment
+    ledger rows, or insurance claims. Reuses the clients collection for new patients.
+    """
+    from historical_treatment import (
+        apply_recorded_payment_status,
+        build_completed_appointment,
+        natural_duplicate_query,
+        resolve_location,
+        resolve_payment_fields,
+        resolve_source,
+        today_iso,
+        validate_service_date,
+        validate_service_time,
+    )
+    from rbac import has_role
+
+    user, perms, can_finance = await _authorize_completed_treatment(request)
+    payload = body if isinstance(body, dict) else {}
+    idem = str(payload.get("idempotencyKey") or "").strip()[:120] or None
+    today = today_iso()
+
+    try:
+        service_date = validate_service_date(payload.get("serviceDate") or payload.get("date"), today=today)
+        service_time = validate_service_time(payload.get("serviceTime") or payload.get("time"))
+        source = resolve_source(payload, service_date, today=today)
+        payment = resolve_payment_fields(payload, can_finance=can_finance)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    practitioner_id = str(payload.get("practitionerId") or "").strip()
+    if not practitioner_id:
+        raise HTTPException(400, "Select the treating practitioner")
+    person = await coll("practitioners").find_one({"id": practitioner_id}, NO_ID)
+    if not person:
+        raise HTTPException(404, "Practitioner not found")
+
+    service_slug = str(payload.get("serviceSlug") or "").strip()
+    if not service_slug:
+        raise HTTPException(400, "Select the treatment type")
+    service = await coll("services").find_one({"slug": service_slug}, NO_ID)
+    if not service:
+        raise HTTPException(404, "Service not found")
+    try:
+        duration = int(payload.get("duration") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Duration must be a whole number of minutes") from exc
+    prices = service.get("prices") or {}
+    if str(duration) not in {str(k) for k in prices.keys()} and duration not in prices:
+        # Allow common durations even if catalogue prices are sparse for historical records.
+        if duration <= 0 or duration > 480:
+            raise HTTPException(400, "Duration must be between 1 and 480 minutes")
+
+    if not bool(payload.get("completed", True)):
+        raise HTTPException(400, "Confirm the treatment is completed before saving")
+
+    # --- Resolve or create client (permanent ids; safe retry via idempotency) ---
+    client = None
+    client_created = False
+    client_id = str(payload.get("clientId") or "").strip()
+    new_client_body = payload.get("newClient") if isinstance(payload.get("newClient"), dict) else None
+
+    if idem:
+        existing_appt = await coll("appointments").find_one(
+            {"idempotencyKey": {"$regex": f":{re.escape(idem)}$"}}, NO_ID
+        )
+        if existing_appt and str(existing_appt.get("idempotencyKey") or "").endswith(f":{idem}"):
+            existing_client = await coll("clients").find_one({"id": existing_appt["clientId"]}, NO_ID)
+            return {
+                "appointment": present_trip(with_settle(existing_appt) if not existing_appt.get("recordedPaymentStatus") else apply_recorded_payment_status(with_settle(existing_appt))),
+                "client": existing_client,
+                "clientCreated": False,
+                "replayed": True,
+            }
+        if new_client_body is not None:
+            prior_client = await coll("clients").find_one({"createIdempotencyKey": f"ht:{idem}"}, NO_ID)
+            if prior_client:
+                client = prior_client
+                client_id = prior_client["id"]
+
+    if client_id and not client:
+        client = await coll("clients").find_one({"id": client_id}, NO_ID)
+        if not client:
+            raise HTTPException(404, "Client not found")
+    elif new_client_body is not None and not client:
+        desk_only = has_role(user, "desk") and not has_role(user, "owner")
+        try:
+            client = build_staff_client(new_client_body, user=user)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        client["createdAt"] = now_iso()
+        if idem:
+            client["createIdempotencyKey"] = f"ht:{idem}"
+        if desk_only:
+            if not (perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking")):
+                client["addresses"] = []
+            if not (perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus")):
+                client["insurance"] = []
+        if client.get("email") and await coll("clients").find_one({"email": client["email"]}, {"_id": 1}):
+            raise HTTPException(409, "A patient with that email already exists")
+        if client.get("insurance"):
+            client["insurance"] = seal_insurance(client["insurance"])
+        try:
+            await coll("clients").insert_one(dict(client))
+        except DuplicateKeyError:
+            if idem:
+                client = await coll("clients").find_one({"createIdempotencyKey": f"ht:{idem}"}, NO_ID)
+                if not client:
+                    raise HTTPException(409, "Client could not be created safely; retry with the same key")
+            else:
+                raise HTTPException(409, "Client could not be created; possible duplicate")
+        client_created = True
+        client_id = client["id"]
+        await add_audit(
+            user.get("name") or "staff",
+            f"Patient created {client['firstName']} {client['lastName']} (completed treatment)",
+            actor_id=user.get("id"),
+        )
+    elif not client:
+        raise HTTPException(400, "Select an existing client or provide new client details")
+
+    settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
+    try:
+        location_type, address = resolve_location(payload, client, settings)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    # Natural duplicate guard (same client/practitioner/date/time/service).
+    dup = await coll("appointments").find_one(
+        natural_duplicate_query(client_id, practitioner_id, service_date, service_time, service_slug),
+        NO_ID,
+    )
+    if dup:
+        raise HTTPException(
+            409,
+            detail={
+                "message": "A completed treatment already exists for this client, practitioner, date, time and service",
+                "appointmentId": dup.get("id"),
+                "clientId": client_id,
+            },
+        )
+
+    if idem:
+        existing = await coll("appointments").find_one({"idempotencyKey": f"{client_id}:{idem}"}, NO_ID)
+        if existing:
+            return {
+                "appointment": apply_recorded_payment_status(with_settle(existing)),
+                "client": {**client, "insurance": open_insurance(client.get("insurance"))} if client.get("insurance") else client,
+                "clientCreated": False,
+                "replayed": True,
+            }
+
+    seq = await db.nt_counters.find_one_and_update(
+        {"id": "booking"}, {"$inc": {"n": 1}}, upsert=True, return_document=ReturnDocument.AFTER,
+    )
+    recorded_at = now_iso()
+    appt = build_completed_appointment(
+        client_id=client_id,
+        practitioner_id=practitioner_id,
+        service=service,
+        duration=duration,
+        service_date=service_date,
+        service_time=service_time,
+        location_type=location_type,
+        address=address,
+        payment=payment,
+        source=source,
+        admin_notes=payload.get("adminNotes") or payload.get("notes"),
+        user=user,
+        settings=settings,
+        ref=f"NT-{1100 + int(seq['n'])}",
+        recorded_at=recorded_at,
+        idempotency_key=idem,
+    )
+    appt = apply_recorded_payment_status(with_settle(appt))
+    try:
+        await coll("appointments").insert_one(dict(appt))
+    except DuplicateKeyError:
+        existing = await coll("appointments").find_one({"idempotencyKey": f"{client_id}:{idem}"}, NO_ID) if idem else None
+        if existing:
+            return {
+                "appointment": apply_recorded_payment_status(with_settle(existing)),
+                "client": {**client, "insurance": open_insurance(client.get("insurance"))} if client.get("insurance") else client,
+                "clientCreated": client_created,
+                "replayed": True,
+            }
+        raise HTTPException(409, "Duplicate completed treatment")
+    await add_audit(
+        user.get("name") or "staff",
+        f"{appt['ref']} recorded completed treatment ({source})",
+        appt["id"],
+        actor_id=user.get("id"),
+    )
+    out_client = dict(client)
+    if out_client.get("insurance"):
+        out_client["insurance"] = open_insurance(out_client["insurance"])
+    return {"appointment": present_trip(appt), "client": out_client, "clientCreated": client_created, "replayed": False}
+
+
+@api.patch("/treatments/completed/{appt_id}")
+async def correct_completed_treatment(appt_id: str, request: Request, body: dict = Body(...)):
+    """Audited correction of a historical/on-the-spot treatment. Never deletes history."""
+    from historical_treatment import (
+        apply_correction_payload,
+        apply_recorded_payment_status,
+        build_correction,
+        today_iso,
+    )
+    from rbac import is_completed_treatment_source
+
+    user, _perms, can_finance = await _authorize_completed_treatment(request)
+    appt = await coll("appointments").find_one({"id": appt_id}, NO_ID)
+    if not appt:
+        raise HTTPException(404, "Treatment not found")
+    if not is_completed_treatment_source(appt.get("source")):
+        raise HTTPException(400, "Only historical or on-the-spot treatments can be corrected here")
+    payload = body if isinstance(body, dict) else {}
+    settings = await coll("settings").find_one({"id": "app"}, NO_ID) or {}
+    try:
+        updated, before, after = apply_correction_payload(
+            appt, payload, settings=settings, can_finance=can_finance, today=today_iso(),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if "serviceSlug" in payload:
+        service = await coll("services").find_one({"slug": updated["serviceSlug"]}, NO_ID)
+        if not service:
+            raise HTTPException(404, "Service not found")
+    if "practitionerId" in payload:
+        person = await coll("practitioners").find_one({"id": updated["practitionerId"]}, NO_ID)
+        if not person:
+            raise HTTPException(404, "Practitioner not found")
+    correction = build_correction(
+        actor=user.get("name") or "staff",
+        actor_id=user.get("id"),
+        before=before,
+        after=after,
+        reason=payload.get("reason") or payload.get("correctionReason"),
+    )
+    corrections = list(updated.get("corrections") or [])
+    corrections.append(correction)
+    updated["corrections"] = corrections
+    updated = apply_recorded_payment_status(with_settle(updated))
+    keep = {
+        k: updated[k] for k in updated
+        if k not in ("_id",)
+    }
+    await coll("appointments").replace_one({"id": appt_id}, keep)
+    await add_audit(
+        user.get("name") or "staff",
+        f"{updated.get('ref')} completed-treatment correction",
+        appt_id,
+        actor_id=user.get("id"),
+    )
+    return {"appointment": present_trip(updated), "correction": correction}
 
 
 @api.get("/state")

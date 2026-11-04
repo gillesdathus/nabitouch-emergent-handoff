@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { CalendarPlus, X } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, X } from "lucide-react";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { RescheduleSheet } from "@/components/RescheduleSheet";
 import { VisualCalendar } from "@/components/ops/VisualCalendar";
 import { PageHeader } from "@/components/ds";
@@ -35,6 +36,7 @@ export default function Schedule() {
   const [note, setNote] = useState("");
   const [move, setMove] = useState(null);
   const [booking, setBooking] = useState(false);
+  const [recordTreatment, setRecordTreatment] = useState(false);
   const [picking, setPicking] = useState(null);
   const block = async () => {
     try {
@@ -61,6 +63,7 @@ export default function Schedule() {
         actions={<>
           <Link to="/owner/availability" className="nb-btn-ghost h-10 px-4 text-sm" data-testid="schedule-link-availability">Hours</Link>
           <Link to="/owner/routes" className="nb-btn-ghost h-10 px-4 text-sm" data-testid="schedule-link-routes">Routes</Link>
+          <button type="button" className="nb-btn-ghost h-10 px-4 text-sm" onClick={() => setRecordTreatment(true)} data-testid="schedule-record-treatment"><ClipboardCheck className="h-4 w-4" />Record completed</button>
           <button type="button" className="nb-btn-primary h-10 px-4 text-sm" onClick={() => setBooking(true)} data-testid="schedule-new-booking"><CalendarPlus className="h-4 w-4" />New booking</button>
         </>}
       />
@@ -72,6 +75,7 @@ export default function Schedule() {
         onConfirm={confirmMove} />
       {openId && <AppointmentSheet apptId={openId} role="owner" onClose={() => setOpenId(null)} />}
       {booking && <NewBookingDialog open onClose={() => setBooking(false)} />}
+      {recordTreatment && <RecordCompletedTreatmentDialog open onClose={() => setRecordTreatment(false)} />}
     </div>
   );
 }

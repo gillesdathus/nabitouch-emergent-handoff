@@ -14,6 +14,12 @@ BOOKING_SOURCE_LABELS = {
     "walk_in": "Walk-in",
     "staff": "Staff",
 }
+# Past / on-the-spot completed treatments — never offered as advance-booking sources.
+COMPLETED_TREATMENT_SOURCES = ("historical_manual", "on_the_spot")
+COMPLETED_TREATMENT_SOURCE_LABELS = {
+    "historical_manual": "Historical (manual)",
+    "on_the_spot": "On the spot",
+}
 
 # Operational owner endpoints also accept an authorized manager.
 OWNER_EQUIVALENT = frozenset({"owner", "manager"})
@@ -105,3 +111,33 @@ def normalize_booking_source(value, *, default="online"):
     aliases = {"walkin": "walk_in", "walk-in": "walk_in", "front_desk": "reception", "desk": "reception"}
     source = aliases.get(source, source)
     return source if source in BOOKING_SOURCES else default
+
+
+def normalize_completed_treatment_source(value):
+    source = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "historical": "historical_manual",
+        "manual": "historical_manual",
+        "manual_historical": "historical_manual",
+        "onthespot": "on_the_spot",
+        "on_the_spot_treatment": "on_the_spot",
+        "walk_in_completed": "on_the_spot",
+    }
+    source = aliases.get(source, source)
+    return source if source in COMPLETED_TREATMENT_SOURCES else None
+
+
+def is_completed_treatment_source(value):
+    return normalize_completed_treatment_source(value) is not None
+
+
+def is_advance_booking_source(value):
+    """True for channels that count toward advance-booking conversion metrics."""
+    if is_completed_treatment_source(value):
+        return False
+    return normalize_booking_source(value, default="") in BOOKING_SOURCES
+
+
+def default_completed_treatment_source(service_date, *, today):
+    day = str(service_date or "")[:10]
+    return "on_the_spot" if day == str(today or "")[:10] else "historical_manual"

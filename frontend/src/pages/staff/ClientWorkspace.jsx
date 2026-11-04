@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, FileText, HeartHandshake, Lock, Mail, MessageSquare, Pencil, Phone, ShieldCheck, Signature } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardCheck, FileText, HeartHandshake, Lock, Mail, MessageSquare, Pencil, Phone, ShieldCheck, Signature } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, Notice, Reveal } from "@/components/tide";
 import { Avatar, Pill, StatusPill } from "@/components/ui-kit";
@@ -14,6 +14,7 @@ import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
 import { hasStaffRole } from "@/lib/staffRoles";
 import { edmontonNow } from "@/components/ops/calendar/time";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { sumInvoices, useInvoices } from "@/lib/useInvoices";
 import { useDemo } from "@/store/DemoStore";
@@ -161,6 +162,7 @@ export default function ClientWorkspace() {
   const { id } = useParams();
   const { idx, user, perm } = useDemo();
   const [book, setBook] = useState(false);
+  const [recordTreatment, setRecordTreatment] = useState(false);
   const [invoice, setInvoice] = useState(false);
   const [editing, setEditing] = useState(false);
   const role = user?.role;
@@ -187,6 +189,7 @@ export default function ClientWorkspace() {
       <Hero c={ws.client} appts={ws.appointments} totals={sumInvoices(invoiceRows)} canMoney={money} actions={<>
         {canEdit && <button type="button" onClick={() => setEditing(true)} className="nb-btn-dark h-9 px-3 text-xs" data-testid="cw-edit-profile"><Pencil className="h-3.5 w-3.5" />Edit profile</button>}
         {(ownerLike || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
+        {(ownerLike || perm("createBooking")) && <button type="button" onClick={() => setRecordTreatment(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-record-treatment"><ClipboardCheck className="h-3.5 w-3.5" />Record completed</button>}
         {money && (ownerLike || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
         {ws.client.phone && <a href={`tel:${ws.client.phone}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-call"><Phone className="h-3.5 w-3.5" />Call</a>}
         {ws.client.email && <a href={`mailto:${ws.client.email}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-email"><Mail className="h-3.5 w-3.5" />Email</a>}
@@ -231,6 +234,14 @@ export default function ClientWorkspace() {
       </Tabs>
       <p className="mt-8 flex items-center gap-1.5 text-[11px] text-nb-mute" data-testid="cw-privacy-note"><Lock className="h-3 w-3 shrink-0" />Clinical notes are not shown in this record. Opening it is logged.</p>
       {book && <NewBookingDialog open clientId={id} onClose={() => setBook(false)} />}
+      {recordTreatment && (
+        <RecordCompletedTreatmentDialog
+          open
+          clientId={id}
+          onClose={() => setRecordTreatment(false)}
+          onSaved={() => { api.clientWorkspace(id).then(setWs).catch(() => {}); }}
+        />
+      )}
       {invoice && <CreateInvoiceDialog open clientId={id} onClose={(created) => { setInvoice(false); if (created?.id) { reload(); setOpenId(created.id); } }} />}
       {editing && (
         <ClientProfileEditor

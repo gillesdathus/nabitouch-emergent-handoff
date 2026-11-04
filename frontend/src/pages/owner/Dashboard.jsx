@@ -2,11 +2,12 @@ import { RetentionNudges } from "@/components/RetentionNudges";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
-import { Activity, BadgeAlert, Bell, CalendarCheck2, CalendarOff, CalendarPlus, CircleDollarSign, Clock3, Plus, Receipt, Sparkles, Tag, UserPlus, Wallet } from "lucide-react";
+import { Activity, BadgeAlert, Bell, CalendarCheck2, CalendarOff, CalendarPlus, CircleDollarSign, ClipboardCheck, Clock3, Plus, Receipt, Sparkles, Tag, UserPlus, Wallet } from "lucide-react";
 import { HubLink } from "@/components/tide";
 import { TurnaroundBoard } from "@/components/session/TurnaroundBoard";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { ClientProfile } from "@/components/ops/Profiles";
 import { EmptyState, KpiCard, PageHeader, Panel, Segmented } from "@/components/ds";
@@ -67,6 +68,7 @@ function ActivityLog({ audit }) {
 function QuickActions({ training, go }) {
   const list = training ? [[go.booking, "New booking", CalendarPlus, "Book into the training sandbox."]] : [
     [go.booking, "Phone booking", CalendarPlus, "Search or create a patient, then book by phone, WhatsApp, SMS, or walk-in."],
+    [go.recordTreatment, "Record completed treatment", ClipboardCheck, "Log a past or on-the-spot visit with no prior booking."],
     [go.invoice, "New invoice", Receipt, "Standalone draft invoice without an appointment."],
     [() => go.nav("/owner/manage?invite=1"), "Add practitioner", UserPlus, "Invitation only. You do not set their password."],
     [() => go.nav("/owner/manage?create=service"), "Create service", Sparkles, "Draft a treatment, then add its photo."],
@@ -109,6 +111,7 @@ export default function Dashboard() {
   const [openId, setOpenId] = useState(null);
   const [clientId, setClientId] = useState(null);
   const [booking, setBooking] = useState(false);
+  const [recordTreatment, setRecordTreatment] = useState(false);
   const [invoice, setInvoice] = useState(false);
   const { rows: invoices } = useInvoices({}, !training, true);
   const money$ = sumInvoices(invoices);
@@ -133,7 +136,7 @@ export default function Dashboard() {
   alerts.all = [...proAlerts, ...alerts.all];
   alerts.credentials = [...proAlerts, ...alerts.credentials];
   const chart = range === "week" ? weeks : visitsToday.map((a) => ({ week: fmtTime(a.time), revenue: a.pricing?.total || 0 }));
-  const go = { booking: () => setBooking(true), invoice: () => setInvoice(true), nav: navigate };
+  const go = { booking: () => setBooking(true), recordTreatment: () => setRecordTreatment(true), invoice: () => setInvoice(true), nav: navigate };
 
   return (
     <div className="min-w-0 space-y-5 sm:space-y-6" data-testid="owner-dashboard">
@@ -209,6 +212,7 @@ export default function Dashboard() {
       {openId && <AppointmentSheet apptId={openId} role="owner" onClose={() => setOpenId(null)} />}
       {clientId && <ClientProfile clientId={clientId} onClose={() => setClientId(null)} />}
       {booking && <NewBookingDialog open onClose={() => setBooking(false)} />}
+      {recordTreatment && <RecordCompletedTreatmentDialog open onClose={() => setRecordTreatment(false)} />}
       {invoice && <CreateInvoiceDialog open onClose={() => setInvoice(false)} />}
     </div>
   );
