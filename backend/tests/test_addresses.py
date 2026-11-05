@@ -70,3 +70,22 @@ def test_confirm_endpoint_keeps_edmonton_direction_and_rejects_a_different_stree
         "mapboxId": "local-downtown", "line": "10150 104 St NW, Edmonton, AB", "clientConfirmed": True,
     }, timeout=20)
     assert missing.json()["postalStatus"] == "missing" and missing.json()["accepted"] is False
+
+
+def test_176a_avenue_civic_suffix_and_postal():
+    line = "6805 176A Avenue NW, Edmonton, AB T5Z 0Y2"
+    parsed = parse_civic(line)
+    assert parsed["number"] == "6805"
+    assert parsed["street"] == "176A"
+    assert parsed["direction"] == "NW"
+    hit = {"line": line, "postal": "T5Z 0Y2", "lat": 53.62, "lng": -113.45, "provider": "mapbox", "matchConfidence": "high"}
+    assessed = classify(hit, line, "T5Z 0Y2")
+    assert assessed["confidence"] == "address"
+    assert assessed["postalStatus"] == "match"
+
+
+def test_geocoder_must_not_substitute_another_street():
+    requested = "6805 176A Avenue NW, Edmonton, AB T5Z 0Y2"
+    hit = {"line": "6805 176 Avenue NW, Edmonton, AB T5Z 0Y2", "postal": "T5Z 0Y2", "lat": 53.62, "lng": -113.45, "provider": "mapbox"}
+    assessed = classify(hit, requested, "T5Z 0Y2")
+    assert assessed["confidence"] == "review"
