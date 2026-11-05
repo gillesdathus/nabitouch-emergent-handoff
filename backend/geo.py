@@ -249,10 +249,10 @@ class Geocoder:
                 "permanent": _permanent_param(persist=persist),
                 "autocomplete": "false",
             }
-            # Mapbox forward geocoding expects address text in q, not a mapbox_id.
-            # Always resolve the selected suggestion's display line when available.
-            # Never silently fall back to a different location if it cannot resolve.
-            params["q"] = text or place_id
+            if place_id and not place_id.startswith("local-"):
+                params["q"] = place_id
+            else:
+                params["q"] = text
             payload = await self.fetch(FORWARD, params)
             hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
             if not hits:
