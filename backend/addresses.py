@@ -217,6 +217,13 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
     requested = parse_civic(normalize_rural_query(requested_line))
     if requested.get("number") and civic.get("number") and requested["number"].casefold() != civic["number"].casefold():
         confidence = "review"
+    # A geocoder can return the correct civic number but a different street.
+    # Never treat that as a verified destination solely because the numbers match.
+    def street_key(value):
+        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+    if requested.get("street") and civic.get("street") and requested.get("type") and civic.get("type"):
+        if street_key(requested["street"]) != street_key(civic["street"]):
+            confidence = "review"
     def city_key(value):
         return " ".join(str(value or "").casefold().replace(".", "").split())
     if requested.get("city") and civic.get("city") and city_key(requested["city"]) != city_key(civic["city"]):
