@@ -186,10 +186,10 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
     civic["postal"] = postal_code(hit.get("postal")) or civic["postal"]
     supplied = postal_code(requested_postal)
     civic_postal = civic.get("postal") or ""
-    precise = bool(civic.get("number") or is_po_box(hit.get("line") or requested_line)) and hit.get("provider") in ("local", "mapbox")
+    precise = bool(civic.get("number") or is_po_box(hit.get("line") or requested_line)) and hit.get("provider") in ("local", "mapbox", "edmonton")
     # PO boxes are precise enough to store as mailing, but never as a service pin.
     if is_po_box(hit.get("line") or requested_line):
-        precise = hit.get("provider") in ("local", "mapbox", "manual") or bool(supplied or civic_postal)
+        precise = hit.get("provider") in ("local", "mapbox", "edmonton", "manual") or bool(supplied or civic_postal)
     confidence = "address" if precise else "approximate"
     raw_postal = str(requested_postal or "").strip()
     if requested_postal and not supplied and raw_postal:
@@ -251,6 +251,26 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
         po_box=po_box,
         purpose="mailing" if po_box else "home",
     )
+    review_reason = ""
+    if confidence == "review":
+        if postal_status == "conflict":
+            review_reason = "postal_conflict"
+        elif postal_status in ("invalid", "missing"):
+            review_reason = f"postal_{postal_status}"
+        elif requested.get("number") and civic.get("number") and requested["number"].casefold() != civic["number"].casefold():
+            review_reason = "civic_number_mismatch"
+        elif requested.get("street") and civic.get("street") and street_key(requested["street"]) != street_key(civic["street"]):
+            review_reason = "street_mismatch"
+        elif discrepancy:
+            review_reason = "arrival_pin"
+        elif hit.get("matchConfidence") in ("low", "medium"):
+            review_reason = "provider_approximate"
+        else:
+            review_reason = "needs_review"
+    elif confidence == "approximate":
+        review_reason = "approximate"
+    elif confidence == "unresolved":
+        review_reason = "unresolved"
     return {
         "civic": civic,
         "confidence": confidence,
@@ -262,4 +282,23 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
         "verificationState": state,
         "poBox": po_box,
         "mailingOnly": po_box,
+        "reviewReason": review_reason,
     }
+
+
+def client_address_message(assessed):
+    """Plain-language copy for booking clients. Never expose raw confidence tokens."""
+    confidence = str((assessed or {}).get("confidence") or "")
+    reason = str((assessed or {}).get("reviewReason") or "")
+    postal = str((assessed or {}).get("postalStatus") or "")
+    if assessed and assessed.get("accepted"):
+        return "Please confirm this is the correct location."
+    if postal == "conflict" or reason == "postal_conflict":
+        return "The postal code does not match this street address. Check the code or request a review."
+    if reason in ("street_mismatch", "civic_number_mismatch"):
+        return "We couldn't find an exact match for that street address. Check the number and street, or request a review."
+    if reason == "provider_approximate" or confidence == "approximate":
+        return "We couldn't find an exact match. Check your address or request a review."
+    if confidence in ("review", "unresolved") or reason:
+        return "This location requires confirmation from NabiTouch before we can finalize your appointment."
+    return "Please confirm this is the correct location."

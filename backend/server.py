@@ -88,7 +88,7 @@ from travel_fees import (
     validate_travel_fees_config,
 )
 from addresses import (
-    classify, normalize_destination_line, parse_civic, postal_code,
+    classify, client_address_message, normalize_destination_line, parse_civic, postal_code,
     requires_manual_travel_approval, verification_state_for, MANUAL_APPROVAL_KM,
 )
 from client_admin import (
@@ -1551,6 +1551,11 @@ async def geo_confirm(request: Request, body: dict = Body(...)):
             eligible=eligible,
             po_box=assessed.get("poBox"),
         )
+    assessed["clientMessage"] = client_address_message(assessed)
+    assessed["canRequestReview"] = bool(
+        not assessed["accepted"]
+        and assessed.get("confidence") in ("review", "approximate", "unresolved")
+    )
     return assessed
 
 
@@ -1666,6 +1671,18 @@ class ContactIn(BaseModel):
     message: str = Field(min_length=8, max_length=1000)
 
 
+class AddressReviewIn(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    email: EmailStr
+    phone: str = Field(default="", max_length=40)
+    line: str = Field(min_length=5, max_length=240)
+    postal: str = Field(default="", max_length=16)
+    notes: str = Field(default="", max_length=1000)
+    mapboxId: str = Field(default="", max_length=240)
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
 CONTACT_HITS = {}
 
 
@@ -1676,11 +1693,63 @@ async def contact(request: Request, body: ContactIn):
     await db.nt_inquiries.insert_one({
         "id": str(uuid.uuid4()),
         "at": now_iso(),
+        "kind": "contact",
         "name": " ".join(body.name.split()),
         "email": str(body.email).lower(),
         "message": " ".join(body.message.split()),
     })
     return {"ok": True}
+
+
+@api.post("/geo/address-review")
+async def geo_address_review(request: Request, body: AddressReviewIn):
+    """Capture a location for staff review. Does not create or confirm an appointment."""
+    if not allow(CONTACT_HITS, f"address-review:{client_key(request)}", 5):
+        raise HTTPException(429, "Too many review requests. Please try again in a minute.")
+    line = normalize_destination_line(body.line) or " ".join(str(body.line or "").split())
+    postal = postal_code(body.postal) or postal_code(line)
+    phone = " ".join(str(body.phone or "").split())[:40]
+    notes = " ".join(str(body.notes or "").split())[:1000]
+    try:
+        lat = float(body.lat) if body.lat is not None else None
+        lng = float(body.lng) if body.lng is not None else None
+    except (TypeError, ValueError):
+        lat = lng = None
+    if lat is not None and not (-90 <= lat <= 90):
+        lat = None
+    if lng is not None and not (-180 <= lng <= 180):
+        lng = None
+    inquiry_id = str(uuid.uuid4())
+    await db.nt_inquiries.insert_one({
+        "id": inquiry_id,
+        "at": now_iso(),
+        "kind": "address_review",
+        "name": " ".join(body.name.split()),
+        "email": str(body.email).lower(),
+        "phone": phone,
+        "message": notes or f"Address review requested for {line}",
+        "address": {
+            "line": line,
+            "postal": postal,
+            "mapboxId": str(body.mapboxId or "")[:240],
+            "lat": lat,
+            "lng": lng,
+            "verificationState": "manual_review",
+        },
+        # Explicitly not a booking — coverage and pricing still require staff action.
+        "createsAppointment": False,
+        "status": "open",
+    })
+    return {
+        "ok": True,
+        "id": inquiry_id,
+        "verificationState": "manual_review",
+        "createsAppointment": False,
+        "message": (
+            "Thanks — this location requires confirmation from NabiTouch before we can "
+            "finalize your appointment. We will review the address and contact you."
+        ),
+    }
 
 
 def km_between(a, b):

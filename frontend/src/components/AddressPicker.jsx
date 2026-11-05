@@ -58,6 +58,10 @@ export function AddressPicker({
   /** Latch: once confirm opens without a postal, keep the postal field until Confirm succeeds. */
   const [askPostal, setAskPostal] = useState(false);
   const [menuBox, setMenuBox] = useState(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewSent, setReviewSent] = useState(false);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewForm, setReviewForm] = useState({ name: "", email: "", phone: "", notes: "" });
   const q = query ?? "";
   const clinic = purpose === "clinic";
   const resolved = Boolean(value?.line);
@@ -66,6 +70,11 @@ export function AddressPicker({
   const showCard = resolved && !editing && !clinic;
   const postalMissing = !String(postal || value?.postal || "").trim();
   const needsPostal = !confirmed && askPostal && postalMissing;
+  const canRequestReview = !clinic && (
+    Boolean(error)
+    || Boolean(value?.needsReview)
+    || (open && q.trim().length >= 5 && matches.length === 0 && !checking)
+  );
 
   useEffect(() => {
     if (value?.line && !editing) {
@@ -131,6 +140,46 @@ export function AddressPicker({
     if (value) onChange(null);
     setVerdict(null);
     setDetailsOpen(false);
+    setReviewOpen(false);
+    setReviewSent(false);
+  };
+
+  const submitAddressReview = async () => {
+    const line = value?.line || q.trim();
+    if (!line || reviewForm.name.trim().length < 2 || !reviewForm.email.trim()) {
+      setError("Add your name and email so NabiTouch can review this location.");
+      return;
+    }
+    setReviewBusy(true);
+    setError("");
+    try {
+      const result = await api.geoAddressReview({
+        name: reviewForm.name.trim(),
+        email: reviewForm.email.trim(),
+        phone: reviewForm.phone.trim(),
+        line,
+        postal: postal || value?.postal || "",
+        notes: reviewForm.notes.trim(),
+        mapboxId: value?.mapboxId || "",
+        lat: value?.lat,
+        lng: value?.lng,
+      });
+      setReviewSent(true);
+      setReviewOpen(false);
+      setError("");
+      onChange(value ? {
+        ...value,
+        clientConfirmed: false,
+        detailsSettled: false,
+        needsReview: true,
+        verificationState: "manual_review",
+        reviewRequestId: result?.id || "",
+      } : null);
+    } catch (err) {
+      setError(apiError(err));
+    } finally {
+      setReviewBusy(false);
+    }
   };
 
   const apply = async (body) => {
@@ -204,10 +253,16 @@ export function AddressPicker({
       const checked = await api.geoConfirm({ line: value.line, mapboxId: value.mapboxId, postal, unit: "", clientConfirmed: true });
       const approximate = checked.confidence && checked.confidence !== "address";
       if (!checked.accepted || approximate) {
-        onChange({ ...value, unit: "", access: "", postal, clientConfirmed: false, detailsSettled: false, confidence: checked.confidence });
-        setError(approximate
-          ? "This result is approximate, so it is not a verified civic address. Correct it or ask Nabitouch to review it before a mobile visit."
-          : "Confirm a complete civic address before a mobile visit can be booked.");
+        onChange({
+          ...value, unit: "", access: "", postal, clientConfirmed: false, detailsSettled: false,
+          confidence: checked.confidence, needsReview: true,
+          verificationState: checked.verificationState || "manual_review",
+        });
+        setError(checked.clientMessage
+          || (approximate
+            ? "We couldn't find an exact match. Check your address or request a review."
+            : "Please confirm this is the correct location."));
+        setReviewOpen(true);
         setEditing(false);
         return;
       }
@@ -457,6 +512,11 @@ export function AddressPicker({
           </label>
         )}
         {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+        {reviewSent && (
+          <p data-testid={`${testid}-review-sent`} className="rounded-2xl bg-sky-50 p-3 text-sm text-sky-900">
+            Thanks — NabiTouch will review this location and contact you. This does not book an appointment yet.
+          </p>
+        )}
         {verdict && <ZoneResult res={verdict} testid={testid} />}
         <div className="flex w-full flex-col gap-2 pt-1 sm:flex-row" data-testid={`${testid}-confirm-actions`}>
           <button type="button" onClick={confirmServiceAddress} disabled={checking || needsPostal} data-testid={`${testid}-confirm`} className="nb-btn-primary h-12 flex-1">
@@ -467,6 +527,17 @@ export function AddressPicker({
             <Pencil className="h-3.5 w-3.5" /> Change Address
           </button>
         </div>
+        {!clinic && !reviewSent && (error || value?.needsReview || reviewOpen) && (
+          <AddressReviewPanel
+            testid={testid}
+            open={reviewOpen}
+            busy={reviewBusy}
+            form={reviewForm}
+            setForm={setReviewForm}
+            onOpen={() => setReviewOpen(true)}
+            onSubmit={submitAddressReview}
+          />
+        )}
       </div>
     );
   }
@@ -504,8 +575,95 @@ export function AddressPicker({
         </button>
       )}
       {error && <p data-testid={`${testid}-error`} className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+      {reviewSent && (
+        <p data-testid={`${testid}-review-sent`} className="rounded-2xl bg-sky-50 p-3 text-sm text-sky-900">
+          Thanks — NabiTouch will review this location and contact you. This does not book an appointment yet.
+        </p>
+      )}
+      {!clinic && !reviewSent && canRequestReview && (
+        <AddressReviewPanel
+          testid={testid}
+          open={reviewOpen}
+          busy={reviewBusy}
+          form={reviewForm}
+          setForm={setReviewForm}
+          onOpen={() => { setReviewOpen(true); setError(error || "We couldn't find an exact match. Check your address or request a review."); }}
+          onSubmit={submitAddressReview}
+        />
+      )}
       {!clinic && verdict && editing && <ZoneResult res={verdict} testid={testid} />}
       {clinic && value?.clientConfirmed && <p data-testid={`${testid}-navigation-ready`} className="text-sm text-teal-800">This clinic address is confirmed for navigation.</p>}
+    </div>
+  );
+}
+
+function AddressReviewPanel({ testid, open, busy, form, setForm, onOpen, onSubmit }) {
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        data-testid={`${testid}-request-review`}
+        className="nb-btn-ghost h-12 w-full text-sm"
+      >
+        Request Address Review
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-3 rounded-2xl border border-sky-100 bg-white p-4" data-testid={`${testid}-review-form`}>
+      <p className="text-sm font-semibold text-nb-ink">Request Address Review</p>
+      <p className="text-sm text-nb-mute">
+        Send this location for NabiTouch to verify. This does not book or charge an appointment.
+      </p>
+      <label className="block">
+        <span className="nb-label">Name</span>
+        <input
+          className="nb-input"
+          value={form.name}
+          data-testid={`${testid}-review-name`}
+          onChange={(e) => setForm((current) => ({ ...current, name: e.target.value }))}
+        />
+      </label>
+      <label className="block">
+        <span className="nb-label">Email</span>
+        <input
+          className="nb-input"
+          type="email"
+          value={form.email}
+          data-testid={`${testid}-review-email`}
+          onChange={(e) => setForm((current) => ({ ...current, email: e.target.value }))}
+        />
+      </label>
+      <label className="block">
+        <span className="nb-label">Phone <span className="font-normal text-nb-mute">(optional)</span></span>
+        <input
+          className="nb-input"
+          value={form.phone}
+          data-testid={`${testid}-review-phone`}
+          onChange={(e) => setForm((current) => ({ ...current, phone: e.target.value }))}
+        />
+      </label>
+      <label className="block">
+        <span className="nb-label">Notes <span className="font-normal text-nb-mute">(optional)</span></span>
+        <input
+          className="nb-input"
+          value={form.notes}
+          data-testid={`${testid}-review-notes`}
+          placeholder="Gate code, landmark, or how to find the entrance"
+          onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))}
+        />
+      </label>
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={busy}
+        data-testid={`${testid}-review-submit`}
+        className="nb-btn-primary h-12 w-full"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        Submit for review
+      </button>
     </div>
   );
 }

@@ -236,6 +236,7 @@ export const api = {
   geoSuggest: (q) => http.get('/geo/suggest', { params: { q } }).then(data),
   geoCheck: (body) => http.post('/geo/check', body).then(data),
   geoConfirm: (body) => http.post('/geo/confirm', body).then(data),
+  geoAddressReview: (body) => http.post('/geo/address-review', body).then(data),
   geoClinicConfirm: (body) => http.post('/geo/clinic-confirm', body).then(data),
   geoMunicipalities: () => http.get('/geo/municipalities').then(data),
   geoMunicipalitySearch: (q) => http.post('/geo/municipality-search', { q }).then(data),
