@@ -8,7 +8,7 @@ import { quote } from "@/lib/domain";
 import { etaCopy } from "@/lib/tracking/providers";
 
 vi.mock("@/lib/api", () => ({
-  api: { geoSuggest: vi.fn(), geoCheck: vi.fn(), geoConfirm: vi.fn() },
+  api: { geoSuggest: vi.fn(), geoCheck: vi.fn(), geoConfirm: vi.fn(), geoAddressReview: vi.fn() },
   apiError: (err) => err?.message || "Address search failed",
 }));
 
@@ -16,6 +16,7 @@ beforeEach(() => {
   api.geoSuggest.mockReset();
   api.geoCheck.mockReset();
   api.geoConfirm.mockReset();
+  api.geoAddressReview.mockReset();
 });
 
 const eligibleCheck = {
@@ -285,17 +286,53 @@ test("GPS coverage uses geoCheck with coordinates only and opens confirm card", 
 
 test("requires an explicit confirm and does not treat an approximate match as verified", async () => {
   api.geoConfirm.mockResolvedValueOnce({
-    accepted: false, confidence: "approximate", line: "10150 104 St NW, Edmonton, AB", postalNormalized: "",
+    accepted: false,
+    confidence: "approximate",
+    line: "10150 104 St NW, Edmonton, AB",
+    postalNormalized: "",
+    clientMessage: "We couldn't find an exact match. Check your address or request a review.",
+    canRequestReview: true,
   });
   const view = mount(<Harness />);
   await pickDowntown(view);
   await act(async () => { (await view.find("address-confirm")).click(); });
-  expect((await view.find("address-error")).textContent).toMatch(/not a verified civic address/);
+  expect((await view.find("address-error")).textContent).toMatch(/couldn't find an exact match|request a review/i);
   expect(view.host.querySelector("[data-testid=address-details-ask]")).toBeNull();
+  expect(await view.find("address-review-form")).toBeTruthy();
 
   api.geoConfirm.mockResolvedValueOnce({ ...acceptedConfirm });
   await act(async () => { (await view.find("address-confirm")).click(); });
   expect(await view.find("address-details-ask")).toBeTruthy();
+  view.cleanup();
+});
+
+test("request address review submits contact details without confirming the visit", async () => {
+  api.geoConfirm.mockResolvedValueOnce({
+    accepted: false,
+    confidence: "review",
+    line: "6805 176A Avenue NW, Edmonton, AB",
+    clientMessage: "This location requires confirmation from NabiTouch before we can finalize your appointment.",
+    canRequestReview: true,
+    verificationState: "manual_review",
+  });
+  api.geoAddressReview.mockResolvedValueOnce({
+    ok: true, id: "inq-1", createsAppointment: false, verificationState: "manual_review",
+  });
+  const view = mount(<Harness />);
+  await pickDowntown(view);
+  await act(async () => { (await view.find("address-confirm")).click(); });
+  expect(await view.find("address-review-form")).toBeTruthy();
+  await act(async () => {
+    type(await view.find("address-review-name"), "Alex Client");
+    type(await view.find("address-review-email"), "alex@example.com");
+  });
+  await act(async () => { (await view.find("address-review-submit")).click(); });
+  expect(api.geoAddressReview).toHaveBeenCalledWith(expect.objectContaining({
+    name: "Alex Client",
+    email: "alex@example.com",
+  }));
+  expect(await view.find("address-review-sent")).toBeTruthy();
+  expect(view.host.querySelector("[data-testid=address-details-ask]")).toBeNull();
   view.cleanup();
 });
 
