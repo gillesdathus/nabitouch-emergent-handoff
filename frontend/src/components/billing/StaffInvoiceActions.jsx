@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  ArrowUpRight, BadgeCheck, Banknote, Coins, Copy, FileCheck2, Landmark, Link2, Loader2, Mail, ShieldCheck,
+  ArrowUpRight, BadgeCheck, Banknote, Coins, Copy, FileCheck2, Landmark, Link2, Loader2, Mail, PencilLine, ShieldCheck, Trash2, Ban, HandCoins,
 } from "lucide-react";
 import { api, apiError } from "@/lib/api";
 import { newKey } from "@/lib/useInvoices";
@@ -10,6 +10,8 @@ import { formatCents } from "@/lib/billing";
 import { payableCents } from "@/components/billing/PayOptions";
 import { EClaimsWorkspace } from "@/components/billing/EClaimsWorkspace";
 import { fmtDate } from "@/lib/domain";
+import { useDemo } from "@/store/DemoStore";
+import { hasStaffRole } from "@/lib/staffRoles";
 
 const METHODS = [
   { id: "insurance", label: "Insurance", Icon: ShieldCheck, hint: "Record coverage and insurer payments" },
@@ -18,19 +20,165 @@ const METHODS = [
   { id: "etransfer", label: "e-Transfer", Icon: Landmark, hint: "Record Interac e-Transfer" },
 ];
 
-export function DraftActions({ invoice, onChange }) {
-  const [busy, setBusy] = useState(false);
+export function DraftActions({ invoice, onChange, canAdmin = false }) {
+  const [busy, setBusy] = useState("");
+  const chargeGst = invoice.chargeGst !== false;
   const issue = async () => {
-    setBusy(true);
+    setBusy("issue");
     try { const v = await api.issueInvoice(invoice.id, newKey("issue")); onChange?.(v); toast.success(`Invoice ${v.number || ""} issued`); }
     catch (e) { toast.error(apiError(e)); }
-    setBusy(false);
+    setBusy("");
+  };
+  const toggleGst = async () => {
+    setBusy("gst");
+    try {
+      const v = await api.patchInvoice(invoice.id, { chargeGst: !chargeGst });
+      onChange?.(v);
+      toast.success(v.chargeGst ? "GST will be charged on this draft" : "GST removed from this draft");
+    } catch (e) { toast.error(apiError(e)); }
+    setBusy("");
+  };
+  const discard = async () => {
+    if (!window.confirm("Discard this draft invoice permanently? This cannot be undone.")) return;
+    setBusy("discard");
+    try {
+      await api.discardInvoice(invoice.id);
+      onChange?.({ ...invoice, state: "discarded", discarded: true });
+      toast.success("Draft discarded");
+    } catch (e) { toast.error(apiError(e)); }
+    setBusy("");
   };
   return (
     <section className="rounded-2xl bg-amber-50 p-4" data-testid="staff-draft-actions">
       <p className="flex items-center gap-2 text-sm font-semibold text-amber-900"><FileCheck2 className="h-4 w-4" />Draft — not yet issued</p>
       <p className="mt-1 text-xs text-amber-900/80">Issuing assigns the invoice number and opens it for payment. The client sees it only after it is issued.</p>
-      <button type="button" onClick={issue} disabled={busy} data-testid="staff-issue-invoice-btn" className="nb-btn-primary mt-3 h-10 text-sm">{busy && <Loader2 className="h-4 w-4 animate-spin" />}Issue invoice</button>
+      <label className="mt-3 flex items-center gap-2 text-sm text-amber-950">
+        <input type="checkbox" className="h-4 w-4 rounded border-amber-300" checked={chargeGst} disabled={Boolean(busy)} onChange={toggleGst} data-testid="staff-draft-charge-gst" />
+        Charge GST{invoice.tax?.cents > 0 ? ` (${invoice.tax.display})` : chargeGst ? "" : " · currently $0.00"}
+        {busy === "gst" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+      </label>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={issue} disabled={Boolean(busy)} data-testid="staff-issue-invoice-btn" className="nb-btn-primary h-10 text-sm">{busy === "issue" && <Loader2 className="h-4 w-4 animate-spin" />}Issue invoice</button>
+        {canAdmin && (
+          <button type="button" onClick={discard} disabled={Boolean(busy)} data-testid="staff-discard-draft-btn" className="nb-btn-ghost h-10 text-sm text-rose-700">
+            {busy === "discard" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}Discard draft
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OwnerInvoiceAdmin({ invoice, onChange }) {
+  const [open, setOpen] = useState("");
+  const [busy, setBusy] = useState("");
+  const [reason, setReason] = useState("");
+  const [adjustDollars, setAdjustDollars] = useState("");
+  const balance = invoice.balance?.cents || 0;
+  const received = invoice.received?.cents || 0;
+  const canVoid = !["draft", "voided"].includes(invoice.state) && received === 0;
+  const canWaive = !["draft", "voided"].includes(invoice.state) && balance > 0;
+
+  const close = () => { setOpen(""); setReason(""); setAdjustDollars(""); };
+  const run = (what, fn) => async () => {
+    setBusy(what);
+    try { await fn(); close(); } catch (e) { toast.error(apiError(e)); }
+    setBusy("");
+  };
+
+  const voidInvoice = run("void", async () => {
+    const why = (reason || "Created in error").trim();
+    if (why.length < 3) throw new Error("Enter a short reason");
+    const v = await api.voidInvoice(invoice.id, { idempotencyKey: newKey("void"), reason: why });
+    onChange?.(v);
+    toast.success("Invoice voided");
+  });
+
+  const waiveInvoice = run("waive", async () => {
+    const why = (reason || "Waived").trim();
+    if (why.length < 3) throw new Error("Enter a short reason");
+    const v = await api.waiveInvoice(invoice.id, { idempotencyKey: newKey("waive"), reason: why });
+    onChange?.(v);
+    toast.success("Outstanding balance waived");
+  });
+
+  const adjustInvoice = run("adjust", async () => {
+    const why = reason.trim();
+    if (why.length < 3) throw new Error("Enter a short reason");
+    const dollars = Number(adjustDollars);
+    if (!Number.isFinite(dollars) || dollars === 0) throw new Error("Enter a non-zero adjustment amount");
+    const v = await api.adjustInvoice(invoice.id, {
+      idempotencyKey: newKey("adj"),
+      netCents: Math.round(dollars * 100),
+      reason: why,
+    });
+    onChange?.(v);
+    toast.success("Invoice adjusted");
+  });
+
+  if (invoice.state === "voided") {
+    return (
+      <section className="rounded-2xl bg-slate-100 p-4" data-testid="staff-owner-admin">
+        <p className="text-sm font-semibold text-slate-700">This invoice is voided</p>
+        <p className="mt-1 text-xs text-nb-mute">No further payments, adjustments, or waivers can be applied.</p>
+      </section>
+    );
+  }
+
+  if (invoice.state === "draft") return null;
+
+  return (
+    <section className="rounded-2xl bg-white p-4 ring-1 ring-sky-100" data-testid="staff-owner-admin">
+      <p className="flex items-center gap-2 text-sm font-semibold text-nb-navy"><PencilLine className="h-4 w-4" />Owner controls</p>
+      <p className="mt-1 text-xs text-nb-mute">Void accidental invoices, waive an outstanding balance, or adjust the total.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {canVoid && (
+          <button type="button" onClick={() => setOpen(open === "void" ? "" : "void")} data-testid="staff-void-open" className="nb-btn-ghost h-10 text-sm">
+            <Ban className="h-4 w-4" />Void
+          </button>
+        )}
+        {canWaive && (
+          <button type="button" onClick={() => setOpen(open === "waive" ? "" : "waive")} data-testid="staff-waive-open" className="nb-btn-ghost h-10 text-sm">
+            <HandCoins className="h-4 w-4" />Waive balance
+          </button>
+        )}
+        <button type="button" onClick={() => setOpen(open === "adjust" ? "" : "adjust")} data-testid="staff-adjust-open" className="nb-btn-ghost h-10 text-sm">
+          <PencilLine className="h-4 w-4" />Adjust
+        </button>
+      </div>
+
+      {open === "void" && (
+        <div className="mt-3 space-y-2 rounded-xl bg-rose-50 p-3" data-testid="staff-void-panel">
+          <p className="text-xs text-rose-900">Voids the invoice so it is no longer collectible. Use this for invoices created by mistake (for example the wrong client). Payments must be refunded first if any were recorded.</p>
+          <input className="nb-input h-10 w-full" placeholder="Reason (e.g. Created for wrong client)" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="staff-void-reason" />
+          <button type="button" onClick={voidInvoice} disabled={Boolean(busy)} data-testid="staff-void-confirm" className="nb-btn-dark h-10 text-sm">
+            {busy === "void" && <Loader2 className="h-4 w-4 animate-spin" />}Confirm void
+          </button>
+        </div>
+      )}
+
+      {open === "waive" && (
+        <div className="mt-3 space-y-2 rounded-xl bg-amber-50 p-3" data-testid="staff-waive-panel">
+          <p className="text-xs text-amber-950">Credits the outstanding {invoice.balance.display} so nothing remains due. The invoice stays on the ledger as waived, not deleted.</p>
+          <input className="nb-input h-10 w-full" placeholder="Reason (e.g. Goodwill / staff error)" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="staff-waive-reason" />
+          <button type="button" onClick={waiveInvoice} disabled={Boolean(busy)} data-testid="staff-waive-confirm" className="nb-btn-dark h-10 text-sm">
+            {busy === "waive" && <Loader2 className="h-4 w-4 animate-spin" />}Waive {invoice.balance.display}
+          </button>
+        </div>
+      )}
+
+      {open === "adjust" && (
+        <div className="mt-3 space-y-2 rounded-xl tint-ice p-3" data-testid="staff-adjust-panel">
+          <p className="text-xs text-nb-mute">Enter a dollar change to the invoice total. Use a negative amount for a credit (e.g. -10.00).</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input type="number" step="0.01" className="nb-input h-10" placeholder="Amount $ (+/−)" value={adjustDollars} onChange={(e) => setAdjustDollars(e.target.value)} data-testid="staff-adjust-amount" />
+            <input className="nb-input h-10" placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="staff-adjust-reason" />
+          </div>
+          <button type="button" onClick={adjustInvoice} disabled={Boolean(busy)} data-testid="staff-adjust-confirm" className="nb-btn-dark h-10 text-sm">
+            {busy === "adjust" && <Loader2 className="h-4 w-4 animate-spin" />}Apply adjustment
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -194,6 +342,8 @@ function StripeLinkPanel({ invoice, emailOn, onLink }) {
 }
 
 export function StaffInvoiceActions({ invoice, onChange, staffLink, patientsLink, emailOn = false }) {
+  const { user } = useDemo();
+  const canAdmin = hasStaffRole(user, "owner");
   const [busy, setBusy] = useState("");
   const [method, setMethod] = useState("stripe");
   const [tip, setTip] = useState({ amount: "", method: "cash", reference: "" });
@@ -205,9 +355,12 @@ export function StaffInvoiceActions({ invoice, onChange, staffLink, patientsLink
     toast.success("Tip recorded for the practitioner");
   });
   const paid = invoice.state === "paid" && invoice.balance.cents === 0;
-  if (invoice.state === "draft") return <DraftActions invoice={invoice} onChange={onChange} />;
+  if (invoice.state === "draft") {
+    return <DraftActions invoice={invoice} onChange={onChange} canAdmin={canAdmin} />;
+  }
   return (
     <section className="space-y-3" data-testid="staff-invoice-actions">
+      {canAdmin && <OwnerInvoiceAdmin invoice={invoice} onChange={onChange} />}
       {invoice.state !== "voided" && invoice.balance.cents > 0 && (
         <div className="space-y-3" data-testid="staff-pay-methods">
           <p className="nb-eyebrow">Collect payment</p>

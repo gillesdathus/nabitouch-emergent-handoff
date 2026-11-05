@@ -86,7 +86,18 @@ export function InvoiceList({ role = "owner", emailOn = false, focusId = null })
           </>
         )}
       </Panel>
-      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn }} onChange={(next) => { replace(next); reload(); }} />
+      <InvoiceDrawer
+        invoice={active}
+        open={Boolean(active)}
+        onOpenChange={(o) => !o && setOpenId(null)}
+        staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"}
+        flags={{ emailOn }}
+        onChange={(next) => {
+          if (next?.discarded) { setOpenId(null); reload(); return; }
+          replace(next);
+          reload();
+        }}
+      />
     </div>
   );
 }

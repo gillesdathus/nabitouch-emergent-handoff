@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("sonner", () => ({ toast: h.toast }));
+vi.mock("@/store/DemoStore", () => ({ useDemo: () => ({ user: { role: "owner", roles: ["owner"] } }) }));
 vi.mock("@/lib/api", () => ({
   api: {
     invoiceCheckout: h.checkout,
@@ -19,6 +20,11 @@ vi.mock("@/lib/api", () => ({
     releaseInvoice: vi.fn(),
     recordTip: vi.fn(),
     issueInvoice: vi.fn(),
+    patchInvoice: vi.fn(),
+    discardInvoice: vi.fn(),
+    voidInvoice: vi.fn(),
+    waiveInvoice: vi.fn(),
+    adjustInvoice: vi.fn(),
     invoiceEclaims: vi.fn(async () => ({
       policies: [],
       fields: [],
@@ -124,5 +130,14 @@ test("cash and e-Transfer use distinct record panels", async () => {
   expect(view.host.querySelector('[data-testid="staff-manual-payment-cash"]')).toBeTruthy();
   await act(async () => view.host.querySelector('[data-testid="staff-pay-method-etransfer"]').click());
   expect(view.host.querySelector('[data-testid="staff-manual-payment-etransfer"]')).toBeTruthy();
+  view.unmount();
+});
+
+test("owner can open void, waive, and adjust controls", async () => {
+  const view = await render();
+  expect(view.host.querySelector('[data-testid="staff-owner-admin"]')).toBeTruthy();
+  expect(view.host.querySelector('[data-testid="staff-void-open"]')).toBeTruthy();
+  expect(view.host.querySelector('[data-testid="staff-waive-open"]')).toBeTruthy();
+  expect(view.host.querySelector('[data-testid="staff-adjust-open"]')).toBeTruthy();
   view.unmount();
 });

@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api";
 export function CreateInvoiceDialog({ open, onClose, clientId }) {
   const { state, idx, api, run } = useDemo();
   const first = state.services[0];
+  const gstRate = Number(idx?.settings?.gst ?? 0.05);
   const [f, setF] = useState({
     clientId: clientId || "",
     practitionerId: "",
@@ -17,11 +18,17 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
     discount: "",
     notes: "",
     query: "",
+    chargeGst: true,
   });
   const [hits, setHits] = useState([]);
   const [err, setErr] = useState("");
   const service = idx.services[f.serviceSlug];
   const unit = Number(service?.prices?.[f.duration] || service?.prices?.[String(f.duration)] || 0);
+  const lineNet = unit * (Number(f.quantity) || 1);
+  const discount = f.discount ? Number(f.discount) : 0;
+  const net = Math.max(0, lineNet - discount);
+  const tax = f.chargeGst ? Math.round(net * gstRate * 100) / 100 : 0;
+  const total = net + tax;
 
   useEffect(() => {
     if (!open || f.query.trim().length < 2) { setHits([]); return undefined; }
@@ -41,6 +48,7 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
         serviceDate: f.serviceDate,
         notes: f.notes,
         discount: f.discount ? Number(f.discount) : 0,
+        chargeGst: f.chargeGst,
         idempotencyKey: `manual-${f.clientId}-${f.serviceDate}-${f.serviceSlug}-${Date.now()}`,
         lines: [{
           serviceSlug: f.serviceSlug,
@@ -75,9 +83,17 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
           <label><span className="nb-label">Service date</span><input type="date" className="nb-input" value={f.serviceDate} onChange={(e) => setF({ ...f, serviceDate: e.target.value })} data-testid="inv-date-input" /></label>
           <label className="sm:col-span-2"><span className="nb-label">Practitioner (optional)</span><select className="nb-input" value={f.practitionerId} onChange={(e) => setF({ ...f, practitionerId: e.target.value })} data-testid="inv-pract-select"><option value="">Unassigned</option>{state.practitioners.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
           <label><span className="nb-label">Discount ($)</span><input className="nb-input" value={f.discount} onChange={(e) => setF({ ...f, discount: e.target.value })} data-testid="inv-discount-input" /></label>
+          <label className="flex items-end gap-2 pb-2 sm:col-span-1">
+            <input type="checkbox" id="inv-charge-gst" className="h-4 w-4 rounded border-sky-200" checked={f.chargeGst} onChange={(e) => setF({ ...f, chargeGst: e.target.checked })} data-testid="inv-charge-gst" />
+            <span className="text-sm font-medium text-nb-ink">Charge GST ({Math.round(gstRate * 100)}%)</span>
+          </label>
           <label className="sm:col-span-2"><span className="nb-label">Notes</span><textarea className="nb-input min-h-[72px]" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} data-testid="inv-notes-input" /></label>
         </div>
-        <p className="text-sm text-nb-mute">Line total before tax: ${(unit * (Number(f.quantity) || 1)).toFixed(2)}. Catalogue price is snapshotted on the draft.</p>
+        <p className="text-sm text-nb-mute" data-testid="inv-total-preview">
+          Subtotal ${net.toFixed(2)}
+          {f.chargeGst ? ` · GST $${tax.toFixed(2)}` : " · GST not charged"}
+          {" · "}Total ${total.toFixed(2)}. Catalogue price is snapshotted on the draft.
+        </p>
         {err && <p className="text-sm text-rose-700" data-testid="inv-error">{err}</p>}
         <button type="button" disabled={!f.clientId || !f.serviceSlug} onClick={save} className="nb-btn-primary w-full" data-testid="inv-save-btn">Create draft invoice</button>
       </DialogContent>
