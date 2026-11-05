@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from addresses import normalize_rural_query
+from addresses import normalize_rural_query, postal_code, postal_fsa, prefer_requested_civic_casing
 from edmonton_geo import (
     ID_PREFIX as EDMONTON_ID_PREFIX,
     civic_suggestion_compatible,
@@ -194,9 +194,30 @@ class Geocoder:
         if not looks_like_edmonton_civic(query):
             return []
         try:
-            return await edmonton_find(query, limit=5)
+            hits = await edmonton_find(query, limit=5)
         except Exception:
             return []
+        return [
+            {**item, "line": prefer_requested_civic_casing(item.get("line") or "", query)}
+            for item in hits
+        ]
+
+    async def _finalize_edmonton_hit(self, hit, requested_line=""):
+        """Preserve client street casing and attach a nearby FSA hint when City GIS omits postcodes."""
+        if not hit:
+            return hit
+        out = dict(hit)
+        out["line"] = prefer_requested_civic_casing(out.get("line") or "", requested_line) or out.get("line") or ""
+        if postal_code(out.get("postal")) or not _token():
+            return out
+        try:
+            nearby = await self.reverse(out["lat"], out["lng"], persist=False)
+        except (GeocodeError, ProviderError, RateLimit, Exception):
+            return out
+        fsa = postal_fsa(nearby.get("postal") or nearby.get("line") or "")
+        if fsa:
+            out["postalFsa"] = fsa
+        return out
 
     async def suggest(self, query, client_key):
         text = normalize_rural_query(query)
@@ -279,6 +300,7 @@ class Geocoder:
                 return cached
             hit = await edmonton_resolve(line=text, place_id=place_id)
             if hit:
+                hit = await self._finalize_edmonton_hit(hit, text)
                 if persist:
                     self._store(("resolve", place_id), hit)
                 return hit
@@ -307,6 +329,7 @@ class Geocoder:
             if not hits and looks_like_edmonton_civic(text):
                 hit = await edmonton_resolve(line=text, place_id="")
                 if hit:
+                    hit = await self._finalize_edmonton_hit(hit, text)
                     if persist:
                         self._store(("resolve", place_id or _norm(text)), hit)
                     return hit
@@ -324,13 +347,13 @@ class Geocoder:
             if looks_like_edmonton_civic(text):
                 hit = await edmonton_resolve(line=text, place_id=place_id if place_id.startswith(EDMONTON_ID_PREFIX) else "")
                 if hit:
-                    return hit
+                    return await self._finalize_edmonton_hit(hit, text)
         if not _token():
             # Still allow City of Edmonton civic resolves without Mapbox for ephemeral checks.
             if looks_like_edmonton_civic(text) or place_id.startswith(EDMONTON_ID_PREFIX):
                 hit = await edmonton_resolve(line=text, place_id=place_id if place_id.startswith(EDMONTON_ID_PREFIX) else "")
                 if hit:
-                    return hit
+                    return await self._finalize_edmonton_hit(hit, text)
             raise ProviderError(MAPBOX_REQUIRED)
         # Device coordinates alone are only acceptable for ephemeral coverage checks.
         if not persist and point and point.get("lat") is not None and point.get("lng") is not None:

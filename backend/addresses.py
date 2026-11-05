@@ -97,6 +97,56 @@ def postal_code(value):
     return f"{match.group(1)} {match.group(2)}"
 
 
+def postal_fsa(value):
+    code = postal_code(value)
+    if code:
+        return code[:3]
+    # Nearby reverse hints may only carry the forward sortation area.
+    text = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    if len(text) >= 3 and text[0].isalpha() and text[1].isdigit() and text[2].isalpha():
+        return text[:3]
+    return ""
+
+
+def postal_field_is_clean(value):
+    """True when a dedicated postal field is empty or only a Canadian postal code.
+
+    Address lines may embed a postal among city/province text — use postal_code()
+    for those. The booking postal input must not accept surrounding junk.
+    """
+    raw = " ".join(str(value or "").split())
+    if not raw:
+        return True
+    code = postal_code(raw)
+    if not code:
+        return False
+    compact_raw = re.sub(r"[^A-Z0-9]", "", raw.upper())
+    compact_code = re.sub(r"[^A-Z0-9]", "", code)
+    return compact_raw == compact_code
+
+
+def prefer_requested_civic_casing(hit_line, requested_line):
+    """Keep the client's alphanumeric street casing (176A) when the geocoder lowercases it."""
+    hit_text = " ".join(str(hit_line or "").split())
+    req_text = " ".join(str(requested_line or "").split())
+    if not hit_text or not req_text:
+        return hit_text
+    hit = parse_civic(hit_text)
+    req = parse_civic(normalize_rural_query(req_text))
+    if not (hit.get("number") and req.get("number") and hit["number"].casefold() == req["number"].casefold()):
+        return hit_text
+    if not (hit.get("street") and req.get("street")):
+        return hit_text
+    if re.sub(r"[^a-z0-9]", "", hit["street"].casefold()) != re.sub(r"[^a-z0-9]", "", req["street"].casefold()):
+        return hit_text
+    # Rebuild the street head from the client's casing; keep locality from the geocoder.
+    street_type = req.get("type") or hit.get("type") or ""
+    direction = req.get("direction") or hit.get("direction") or ""
+    head = " ".join(part for part in (req["number"], req["street"], street_type, direction) if part)
+    tail = hit_text.split(",", 1)[1].strip() if "," in hit_text else ""
+    return f"{head}, {tail}" if tail else head
+
+
 def normalize_rural_query(line):
     """Expand common Alberta rural abbreviations for geocoding and display."""
     text = " ".join(str(line or "").split())
@@ -192,7 +242,14 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
         precise = hit.get("provider") in ("local", "mapbox", "edmonton", "manual") or bool(supplied or civic_postal)
     confidence = "address" if precise else "approximate"
     raw_postal = str(requested_postal or "").strip()
-    if requested_postal and not supplied and raw_postal:
+    line_postal = postal_code(requested_line)
+    fsa_hint = postal_fsa(hit.get("postalFsa") or "")
+    if requested_postal and raw_postal and not postal_field_is_clean(raw_postal):
+        # Dedicated postal field with surrounding junk (e.g. "junk T5J 2R4").
+        confidence = "review"
+        postal_status = "invalid"
+        supplied = ""
+    elif requested_postal and not supplied and raw_postal:
         # Genuinely malformed postal text.
         confidence = "review"
         postal_status = "invalid"
@@ -206,7 +263,16 @@ def classify(hit, requested_line, requested_postal, arrival=None, *, service_reg
         confidence = "review"
         postal_status = "missing"
     elif supplied and not civic_postal:
-        postal_status = "supplied"
+        # City GIS often omits postcodes. Prefer consistency with the typed line
+        # postal and, when available, a nearby FSA hint from reverse geocoding.
+        if line_postal and line_postal != supplied:
+            confidence = "review"
+            postal_status = "conflict"
+        elif fsa_hint and postal_fsa(supplied) != fsa_hint:
+            confidence = "review"
+            postal_status = "conflict"
+        else:
+            postal_status = "supplied"
     else:
         postal_status = "match"
     # Outside the Alberta mobile region: keep the address valid; flag service use for review.

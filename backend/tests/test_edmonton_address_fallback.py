@@ -4,7 +4,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from addresses import classify, client_address_message, parse_civic
+from addresses import (
+    classify,
+    client_address_message,
+    parse_civic,
+    prefer_requested_civic_casing,
+    postal_field_is_clean,
+)
 from edmonton_geo import (
     civic_suggestion_compatible,
     looks_like_edmonton_civic,
@@ -63,6 +69,35 @@ def test_edmonton_provider_classifies_with_supplied_postal():
     assert assessed["postalStatus"] == "supplied"
     assert assessed["civic"]["number"] == "6805"
     assert assessed["civic"]["street"].casefold() == "176a"
+
+
+def test_edmonton_fsa_hint_rejects_wrong_sector_postal():
+    hit = {**CRYSTALLINA_HIT, "postalFsa": "T5Z"}
+    ok = classify(hit, "6805 176A Avenue NW, Edmonton", "T5Z 0Y2")
+    assert ok["confidence"] == "address" and ok["postalStatus"] == "supplied"
+    bad = classify(hit, "6805 176A Avenue NW, Edmonton", "T5S 1A1")
+    assert bad["confidence"] == "review" and bad["postalStatus"] == "conflict"
+
+
+def test_line_postal_conflicts_when_geocoder_omits_postcode():
+    assessed = classify(CRYSTALLINA_HIT, CRYSTALLINA, "T5S 1A1")
+    assert assessed["confidence"] == "review"
+    assert assessed["postalStatus"] == "conflict"
+
+
+def test_junk_postal_field_is_invalid():
+    assert postal_field_is_clean("T5J 2R4") is True
+    assert postal_field_is_clean("junk T5J 2R4") is False
+    hit = {"line": "10150 104 St NW, Edmonton, AB", "postal": "T5J 2R4", "lat": 53.54, "lng": -113.49, "provider": "mapbox"}
+    assessed = classify(hit, hit["line"], "junk T5J 2R4")
+    assert assessed["confidence"] == "review" and assessed["postalStatus"] == "invalid"
+
+
+def test_prefer_requested_176a_casing():
+    assert prefer_requested_civic_casing(
+        "6805 176a Avenue NW, Edmonton",
+        "6805 176A Avenue NW, Edmonton, AB T5Z 0Y2",
+    ).startswith("6805 176A Avenue NW")
 
 
 def test_street_substitution_still_requires_review():
