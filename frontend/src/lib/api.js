@@ -150,6 +150,7 @@ export const api = {
   recordCompletedTreatment: (body) => http.post('/treatments/completed', body).then(data),
   correctCompletedTreatment: (id, body) => http.patch(`/treatments/completed/${id}`, body).then(data),
   createInvoice: (body) => http.post('/invoices', body).then(data),
+  invoiceWelcomeEligibility: (clientId, serviceSlug) => http.get('/invoices/welcome-eligibility', { params: { clientId, serviceSlug } }).then(data),
   patchInvoice: (id, body) => http.patch(`/invoices/${id}`, body).then(data),
   discardInvoice: (id) => http.delete(`/invoices/${id}`).then(data),
   voidInvoice: (id, body) => http.post(`/invoices/${id}/void`, body).then(data),
