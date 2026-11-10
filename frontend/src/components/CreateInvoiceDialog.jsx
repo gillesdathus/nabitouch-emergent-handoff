@@ -15,11 +15,14 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
     duration: Number(Object.keys(first?.prices || { 60: 0 })[0] || 60),
     quantity: 1,
     discount: "",
+    discountMode: "manual",
     notes: "",
     query: "",
   });
   const [hits, setHits] = useState([]);
   const [err, setErr] = useState("");
+  const [welcome, setWelcome] = useState(null);
+  const [checkingWelcome, setCheckingWelcome] = useState(false);
   const service = idx.services[f.serviceSlug];
   const unit = Number(service?.prices?.[f.duration] || service?.prices?.[String(f.duration)] || 0);
 
@@ -32,6 +35,27 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
     return () => { live = false; clearTimeout(handle); };
   }, [api, f.query, open]);
 
+  useEffect(() => {
+    if (!open || !f.clientId || !f.serviceSlug) {
+      setWelcome(null);
+      return undefined;
+    }
+    let active = true;
+    setCheckingWelcome(true);
+    setWelcome(null);
+    api.invoiceWelcomeEligibility(f.clientId, f.serviceSlug)
+      .then((result) => { if (active) setWelcome(result); })
+      .catch(() => { if (active) setWelcome({ eligible: false, reason: "Unable to verify first-booking eligibility." }); })
+      .finally(() => { if (active) setCheckingWelcome(false); });
+    return () => { active = false; };
+  }, [api, open, f.clientId, f.serviceSlug]);
+
+  const subtotal = unit * (Number(f.quantity) || 1);
+  const welcomeAmount = welcome?.eligible
+    ? Math.min(subtotal * Number(welcome.percentage || 0) / 100,
+        welcome.maxDiscount == null ? subtotal : Number(welcome.maxDiscount))
+    : 0;
+
   const save = async () => {
     setErr("");
     try {
@@ -40,7 +64,8 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
         practitionerId: f.practitionerId || null,
         serviceDate: f.serviceDate,
         notes: f.notes,
-        discount: f.discount ? Number(f.discount) : 0,
+        discountMode: f.discountMode,
+        discount: f.discountMode === "manual" && f.discount ? Number(f.discount) : 0,
         idempotencyKey: `manual-${f.clientId}-${f.serviceDate}-${f.serviceSlug}-${Date.now()}`,
         lines: [{
           serviceSlug: f.serviceSlug,
@@ -74,12 +99,25 @@ export function CreateInvoiceDialog({ open, onClose, clientId }) {
           <label><span className="nb-label">Quantity</span><input type="number" min="1" className="nb-input" value={f.quantity} onChange={(e) => setF({ ...f, quantity: e.target.value })} data-testid="inv-qty-input" /></label>
           <label><span className="nb-label">Service date</span><input type="date" className="nb-input" value={f.serviceDate} onChange={(e) => setF({ ...f, serviceDate: e.target.value })} data-testid="inv-date-input" /></label>
           <label className="sm:col-span-2"><span className="nb-label">Practitioner (optional)</span><select className="nb-input" value={f.practitionerId} onChange={(e) => setF({ ...f, practitionerId: e.target.value })} data-testid="inv-pract-select"><option value="">Unassigned</option>{state.practitioners.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
-          <label><span className="nb-label">Discount ($)</span><input className="nb-input" value={f.discount} onChange={(e) => setF({ ...f, discount: e.target.value })} data-testid="inv-discount-input" /></label>
+          <div className="sm:col-span-2 rounded-xl border border-nb-line p-3">
+            <p className="nb-label">Discounts &amp; promotions</p>
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input type="radio" name="invoice-discount-mode" checked={f.discountMode === "manual"} onChange={() => setF({ ...f, discountMode: "manual" })} />
+              Manual amount
+            </label>
+            {f.discountMode === "manual" && <input type="number" min="0" step="0.01" className="nb-input mt-2" value={f.discount} onChange={(e) => setF({ ...f, discount: e.target.value })} data-testid="inv-discount-input" aria-label="Manual discount in dollars" />}
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input type="radio" name="invoice-discount-mode" checked={f.discountMode === "welcome20"} disabled={!welcome?.eligible || checkingWelcome} onChange={() => setF({ ...f, discountMode: "welcome20", discount: "" })} data-testid="inv-welcome20-option" />
+              First Booking — WELCOME20 (20%, maximum $40)
+            </label>
+            <p className="mt-1 text-xs text-nb-mute" data-testid="inv-welcome-status">{checkingWelcome ? "Checking eligibility…" : welcome?.reason || "Select a client to check eligibility."}</p>
+            {f.discountMode === "welcome20" && welcome?.eligible && <p className="mt-2 text-sm" data-testid="inv-welcome-preview">Discount: −${welcomeAmount.toFixed(2)} · Subtotal after discount: ${(subtotal - welcomeAmount).toFixed(2)} before tax</p>}
+          </div>
           <label className="sm:col-span-2"><span className="nb-label">Notes</span><textarea className="nb-input min-h-[72px]" value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} data-testid="inv-notes-input" /></label>
         </div>
         <p className="text-sm text-nb-mute">Line total before tax: ${(unit * (Number(f.quantity) || 1)).toFixed(2)}. Catalogue price is snapshotted on the draft.</p>
         {err && <p className="text-sm text-rose-700" data-testid="inv-error">{err}</p>}
-        <button type="button" disabled={!f.clientId || !f.serviceSlug} onClick={save} className="nb-btn-primary w-full" data-testid="inv-save-btn">Create draft invoice</button>
+        <button type="button" disabled={!f.clientId || !f.serviceSlug || (f.discountMode === "welcome20" && (!welcome?.eligible || checkingWelcome))} onClick={save} className="nb-btn-primary w-full" data-testid="inv-save-btn">Create draft invoice</button>
       </DialogContent>
     </Dialog>
   );
