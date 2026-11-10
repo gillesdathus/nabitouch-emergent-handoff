@@ -146,6 +146,7 @@ export const api = {
   searchClients: (q) => http.get('/clients/search', { params: { q } }).then(data),
   createClient: (body) => http.post('/clients', body).then(data),
   createInvoice: (body) => http.post('/invoices', body).then(data),
+  invoiceWelcomeEligibility: (clientId, serviceSlug) => http.get('/invoices/welcome-eligibility', { params: { clientId, serviceSlug } }).then(data),
   patchStaff: (id, body) => http.patch(`/auth/staff/${id}`, body).then(data),
   resendStaffInvite: (id) => http.post(`/auth/staff/invites/${id}/resend`, {}).then(data),
   revokeStaffInvite: (id) => http.post(`/auth/staff/invites/${id}/revoke`, {}).then(data),
