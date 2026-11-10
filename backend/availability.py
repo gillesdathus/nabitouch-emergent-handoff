@@ -1229,6 +1229,72 @@ def build_schedule_router(db, coll, add_audit, require, user_from, locate_visit,
         saved = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "credentialAttestations": 1})
         return {"credentialAttestations": (saved or {}).get("credentialAttestations") or {}}
 
+    @router.post("/practitioners/{practitioner_id}/credential-booking-override")
+    async def set_credential_booking_override(practitioner_id: str, request: Request, payload: dict = Body(...)):
+        """Temporary booking waiver for one required credential kind. Does not alter credential records."""
+        from onboarding import DEFAULT_CREDENTIAL_OVERRIDE_HOURS, OVERRIDEABLE_BOOKING_KINDS
+        user = await require(request, "owner")
+        kind = payload.get("kind")
+        if kind not in OVERRIDEABLE_BOOKING_KINDS:
+            raise HTTPException(400, "Choose a temporary booking override kind (cpr)")
+        if payload.get("confirm") is not True:
+            raise HTTPException(400, "Confirm the temporary credential booking override")
+        try:
+            hours = int(payload.get("hours") if payload.get("hours") is not None else DEFAULT_CREDENTIAL_OVERRIDE_HOURS)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Override hours must be a whole number")
+        if hours < 1 or hours > 72:
+            raise HTTPException(400, "Override hours must be between 1 and 72")
+        note = " ".join(str(payload.get("note") or "").split())[:300]
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
+        created = datetime.now(timezone.utc)
+        expires = created + timedelta(hours=hours)
+        row = {
+            "kind": kind,
+            "createdAt": created.isoformat(),
+            "expiresAt": expires.isoformat(),
+            "hours": hours,
+            "by": user["name"],
+            "byId": user.get("id"),
+            "note": note,
+            "reason": "temporary-booking-recovery",
+        }
+        await coll("practitioners").update_one(
+            {"id": practitioner_id},
+            {"$set": {f"credentialBookingOverrides.{kind}": row}},
+        )
+        await add_audit(
+            user["name"],
+            f"Temporary {kind} booking override for {practitioner_id} until {expires.isoformat()} ({hours}h)",
+            None,
+        )
+        saved = await coll("practitioners").find_one(
+            {"id": practitioner_id}, {"_id": 0, "credentialBookingOverrides": 1}
+        )
+        return {
+            "credentialBookingOverrides": (saved or {}).get("credentialBookingOverrides") or {},
+            "override": row,
+        }
+
+    @router.delete("/practitioners/{practitioner_id}/credential-booking-override/{kind}")
+    async def revoke_credential_booking_override(practitioner_id: str, kind: str, request: Request):
+        from onboarding import OVERRIDEABLE_BOOKING_KINDS
+        user = await require(request, "owner")
+        if kind not in OVERRIDEABLE_BOOKING_KINDS:
+            raise HTTPException(400, "Choose a temporary booking override kind (cpr)")
+        if not await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0, "id": 1}):
+            raise HTTPException(404, "Practitioner not found")
+        await coll("practitioners").update_one(
+            {"id": practitioner_id},
+            {"$unset": {f"credentialBookingOverrides.{kind}": ""}},
+        )
+        await add_audit(user["name"], f"Temporary {kind} booking override removed for {practitioner_id}", None)
+        saved = await coll("practitioners").find_one(
+            {"id": practitioner_id}, {"_id": 0, "credentialBookingOverrides": 1}
+        )
+        return {"credentialBookingOverrides": (saved or {}).get("credentialBookingOverrides") or {}}
+
     @router.post("/schedules/{practitioner_id}/approve")
     async def approve(practitioner_id: str, request: Request):
         """Approve weekly hours and open new bookings by default. Owner can pause later."""

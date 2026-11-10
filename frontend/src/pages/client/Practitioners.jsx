@@ -3,12 +3,12 @@ import { ArrowRight } from "lucide-react";
 import { CatalogueImage } from "@/components/ui-kit";
 import { EmptyState, PageHeader, Reveal } from "@/components/tide";
 import { useDemo } from "@/store/DemoStore";
-import { practitionerSlug, profileVisibility, publicBio } from "@/lib/domain";
+import { practitionerSlug, publicBio, publiclyBookable } from "@/lib/domain";
 
 export default function Practitioners() {
   const { state, idx } = useDemo();
   const people = [...state.practitioners]
-    .filter((person) => profileVisibility(person) === "published")
+    .filter((person) => publiclyBookable(person))
     .sort((a, b) => (a.displayOrder ?? 100) - (b.displayOrder ?? 100) || a.name.localeCompare(b.name));
   return (
     <div className="mx-auto max-w-6xl px-5 pt-6" data-testid="practitioners-page">

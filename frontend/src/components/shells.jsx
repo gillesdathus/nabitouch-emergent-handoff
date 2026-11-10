@@ -69,7 +69,7 @@ const OWNER_MORE_GROUPS = [
     title: "Business settings",
     items: [
       { to: "/owner/zones", label: "Zones & settings" },
-      { to: "/owner/permissions", label: "Reception access" },
+      { to: "/owner/permissions", label: "Staff & access" },
       { to: "/owner/patients/invitations", label: "Patients · Invitations" },
       { to: "/owner/legacy", label: "Legacy clients" },
       { to: "/owner/clients/duplicates", label: "Potential duplicates" },

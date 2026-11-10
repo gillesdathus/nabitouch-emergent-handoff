@@ -4,6 +4,7 @@ import { ArrowLeft, CalendarClock } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader, Panel } from "@/components/ds";
 import { CompletenessCard, CredentialPanel, StatusChips } from "@/components/practitioner/ProfileParts";
+import ProfessionalExperience from "@/components/practitioner/ProfessionalExperience";
 import { PhotoEditor, ProfileFields } from "@/pages/practitioner/Profile";
 import { practitionerStatus } from "@/lib/practitionerStatus";
 import { useDemo } from "@/store/DemoStore";
@@ -49,6 +50,7 @@ export default function PractitionerProfile({ self = false }) {
         <Tabs defaultValue="profile" className="min-w-0">
           <TabsList className="mb-4 h-11 max-w-full justify-start overflow-x-auto rounded-full bg-white p-1 ring-1 ring-sky-100 no-scrollbar" data-testid="pr-tabs">
             <TabsTrigger value="profile" className={TAB} data-testid="pr-tab-profile">Public profile</TabsTrigger>
+            {owner && <TabsTrigger value="experience" className={TAB} data-testid="pr-tab-experience">Professional Experience</TabsTrigger>}
             <TabsTrigger value="credentials" className={TAB} data-testid="pr-tab-credentials">Licence & insurance</TabsTrigger>
             <TabsTrigger value="hours" className={TAB} data-testid="pr-tab-hours">Hours</TabsTrigger>
           </TabsList>
@@ -64,6 +66,11 @@ export default function PractitionerProfile({ self = false }) {
               )}
             </Panel>
           </TabsContent>
+          {owner && (
+            <TabsContent value="experience">
+              <ProfessionalExperience person={person} onSaved={changed} />
+            </TabsContent>
+          )}
           <TabsContent value="credentials">{loaded && <CredentialPanel person={person} status={status} credentials={credentials} owner={owner} onChanged={changed} />}</TabsContent>
           <TabsContent value="hours">
             <Panel title="Weekly hours" testid="pr-hours">

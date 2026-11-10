@@ -332,6 +332,8 @@ def build_seed():
                  "receptionPerms": {"viewLocations": True, "viewEta": True, "viewAddresses": True, "assign": True,
                                     "createBooking": True, "viewInsuranceStatus": True, "viewInsuranceDocs": False,
                                     "managePayments": True, "viewHistory": True, "clinical": False, "manageAvailability": False,
+                                    "editClientProfile": True, "editClientAddresses": True, "editClientInsurance": True,
+                                    "correctClientIdentity": False,
                                     "eclaimsView": True, "eclaimsSubmit": True, "eclaimsReconcile": True,
                                     "eclaimsViewSensitive": False, "eclaimsManage": False},
                  "clinic": {"enabled": False, "address": "", "mobileEnabled": True, "name": "Nabitouch"},

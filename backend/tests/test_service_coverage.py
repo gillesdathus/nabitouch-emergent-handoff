@@ -1,5 +1,8 @@
 """Open service coverage: municipality is not an eligibility gate."""
-from pricing import OPEN_ZONE, assess_coverage, launch_service_coverage, quote, service_coverage, zone_travel
+from pricing import (
+    OPEN_ZONE, VERIFIED_DESTINATION_EXCEPTIONS, assess_coverage, launch_service_coverage,
+    quote, service_coverage, zone_travel,
+)
 
 CENTER = {"lat": 53.5461, "lng": -113.4938}
 ZONES = [
@@ -15,7 +18,10 @@ SAMPLES = {
     "sherwood": {"lat": 53.5413, "lng": -113.2958},
     "leduc": {"lat": 53.2594, "lng": -113.5492},          # outside 25 km rings
     "wetaskiwin": {"lat": 52.9694, "lng": -113.3769},     # outside listed municipalities
+    "ardrossan": {"lat": 53.591591, "lng": -113.073364},  # rural Range Road — ~28 km
 }
+
+ARDROSSAN_MAPBOX = VERIFIED_DESTINATION_EXCEPTIONS[0]["mapboxId"]
 
 
 def test_launch_defaults_are_open_without_travel_fees():
@@ -51,12 +57,61 @@ def test_zones_mode_still_rejects_outside_rings():
 
 
 def test_radius_mode_uses_configured_radius():
-    tight = {"center": CENTER, "serviceCoverage": {"mode": "radius", "radiusKm": 20}}
+    tight = {"center": CENTER, "serviceCoverage": {"mode": "radius", "radiusKm": 20, "verifiedDestinationExceptions": False}}
     _, _, spruce_ok = assess_coverage(SAMPLES["spruce"], ZONES, tight)
     assert spruce_ok is False
     wide = {"center": CENTER, "serviceCoverage": {"mode": "radius", "radiusKm": 40}}
     zone, _, spruce_ok = assess_coverage(SAMPLES["spruce"], ZONES, wide)
     assert spruce_ok is True and zone is not None
+
+
+def test_verified_ardrossan_exception_under_radius_mode():
+    """Production radius (~25 km) rejects Ardrossan unless the verified exception applies."""
+    settings = {
+        "center": CENTER,
+        "serviceCoverage": {"mode": "radius", "radiusKm": 25, "verifiedDestinationExceptions": True},
+    }
+    zone, km, ok = assess_coverage(
+        SAMPLES["ardrossan"], ZONES, settings, mapbox_id=ARDROSSAN_MAPBOX,
+    )
+    assert km > 25
+    assert ok is True and zone is not None
+    assert zone.get("destinationExceptionId") == "strathcona-53337-range-road-215"
+
+    denied = {
+        "center": CENTER,
+        "serviceCoverage": {"mode": "radius", "radiusKm": 25, "verifiedDestinationExceptions": False},
+    }
+    _, _, blocked = assess_coverage(SAMPLES["ardrossan"], ZONES, denied, mapbox_id=ARDROSSAN_MAPBOX)
+    assert blocked is False
+
+    # Unrelated far address still rejected — exception is not a global bypass.
+    _, _, spruce_ok = assess_coverage(SAMPLES["spruce"], ZONES, settings)
+    assert spruce_ok is False
+
+
+def test_owner_destination_exception_is_configurable():
+    settings = {
+        "center": CENTER,
+        "serviceCoverage": {
+            "mode": "radius",
+            "radiusKm": 25,
+            "verifiedDestinationExceptions": False,
+            "destinationExceptions": [{
+                "id": "custom-spruce",
+                "lat": SAMPLES["spruce"]["lat"],
+                "lng": SAMPLES["spruce"]["lng"],
+                "radiusKm": 1,
+                "line": "400 Calahoo Rd, Spruce Grove, AB",
+            }],
+        },
+    }
+    zone, _, ok = assess_coverage(SAMPLES["spruce"], ZONES, settings)
+    assert ok is True and zone is not None
+    _, _, edmonton_ok = assess_coverage(SAMPLES["edmonton"], ZONES, settings)
+    assert edmonton_ok is True
+    _, _, leduc_ok = assess_coverage(SAMPLES["leduc"], ZONES, settings)
+    assert leduc_ok is False
 
 
 def test_travel_fees_disabled_by_default_in_quotes():

@@ -95,11 +95,17 @@ def clear_auth_cookies(resp: Response):
 
 def public(u):
     from staff_identity import staff_session_fields
+    from staff_positions import position_labels
     roles = normalize_roles(u.get("roles"), u.get("role"))
     body = {k: u.get(k) for k in ("id", "email", "name", "role", "subject", "preferredWorkspace", "status")}
     body["roles"] = roles
     body["role"] = u.get("role") or primary_role(roles)
     body.update(staff_session_fields({**u, "roles": roles, "role": body["role"]}))
+    positions = list(u.get("positions") or [])
+    custom_title = u.get("customPositionTitle") or ""
+    body["positions"] = positions
+    body["customPositionTitle"] = custom_title
+    body["positionLabels"] = position_labels(positions, custom_title)
     perms = u.get("staffPerms") if isinstance(u.get("staffPerms"), dict) else {}
     body["staffPerms"] = {"managePricing": bool(perms.get("managePricing"))}
     if is_sysadmin(u):
@@ -230,6 +236,8 @@ class InviteIn(BaseModel):
     phone: Optional[str] = None
     practitionerId: Optional[str] = None
     preferredWorkspace: Optional[str] = None
+    positions: Optional[list] = None
+    customPositionTitle: Optional[str] = None
 
 
 class WorkspaceIn(BaseModel):
@@ -243,6 +251,8 @@ class StaffRolesIn(BaseModel):
     practitionerId: Optional[str] = None
     operationalDesignation: Optional[str] = None
     managePricing: Optional[bool] = None
+    positions: Optional[list] = None
+    customPositionTitle: Optional[str] = None
 
 
 class InviteAccept(BaseModel):
@@ -951,18 +961,35 @@ def build_auth(db, coll, add_audit):
             {"$or": [{"role": {"$in": list(STAFF_ROLES)}}, {"roles": {"$in": list(STAFF_ROLES)}}]},
             {"_id": 0, "password_hash": 0},
         ).to_list(200)
+        out = []
         for row in rows:
-            row["roles"] = normalize_roles(row.get("roles"), row.get("role"))
-        return rows
+            out.append(await present(row, coll))
+        return out
+
+    @r.get("/staff/role-history")
+    async def staff_role_history(request: Request, limit: int = 40):
+        await require(request, "owner")
+        capped = max(1, min(int(limit or 40), 100))
+        rows = await db.nt_staff_role_history.find({}, {"_id": 0}).sort("at", -1).to_list(capped)
+        return {"history": rows}
 
     @r.post("/staff")
     async def create_staff(request: Request, body: StaffIn):
+        from staff_identity import normalize_designation
+        from staff_positions import require_practitioner_link, validate_role_assignment
         owner = await require(request, "owner")
-        roles = normalize_roles(body.roles, body.role)
-        if not roles or any(role not in STAFF_ROLES for role in roles):
-            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
-        if "owner" in roles and not has_strict_role(owner, "owner"):
-            raise HTTPException(403, "Only an owner can grant the owner role")
+        decision = validate_role_assignment(
+            actor=owner,
+            target={"id": None, "status": "active"},
+            requested_roles=normalize_roles(body.roles, body.role),
+            previous_roles=[],
+            active_owner_count=await _count_active_owners(),
+        )
+        roles = decision["roles"]
+        if decision["sensitive"]:
+            row = await _session_row(owner)
+            if await mfa_enforcement() and not (row and row.get("mfaAt")):
+                raise HTTPException(403, "Confirm your authenticator before changing privileged roles")
         email = body.email.lower()
         if "practitioner" in roles:
             from onboarding import acceptable_login
@@ -970,36 +997,75 @@ def build_auth(db, coll, add_audit):
                 raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
         if await users.find_one({"email": email}):
             raise HTTPException(409, "Email already in use")
-        from staff_identity import normalize_designation
         if "practitioner" in roles:
+            require_practitioner_link(roles, body.practitionerId, allow_create=True)
             subject = await _link_practitioner_subject(
                 coll, db, roles=roles, practitioner_id=body.practitionerId, name=body.name, email=email,
             )
         else:
-            if body.practitionerId:
-                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            require_practitioner_link(roles, body.practitionerId)
             subject = None
-        primary = primary_role(roles)
+        primary = decision["primary"]
         preferred = "practitioner" if primary == "practitioner" else ("desk" if primary == "desk" else "owner")
         designation = normalize_designation(None, roles, primary)
         u = {"id": str(uuid.uuid4()), "email": email, "password_hash": hash_pw(body.password), "name": body.name, "role": primary,
              "roles": roles, "subject": subject, "preferredWorkspace": preferred, "status": "active",
-             "operationalDesignation": designation,
+             "operationalDesignation": designation, "positions": [], "customPositionTitle": "",
              "createdAt": datetime.now(timezone.utc).isoformat()}
         await users.insert_one(dict(u))
         await add_audit(owner["name"], f"Staff account created: {body.name} ({','.join(roles)})")
+        await _record_role_history(
+            actor=owner,
+            target=u,
+            before_roles=[],
+            after_roles=roles,
+            before_positions=[],
+            after_positions=[],
+            note="staff account created",
+        )
         return await present(u, coll)
 
-    async def _issue_invite(owner, *, email, name, roles, phone, practitioner_id, preferred):
+    async def _count_active_owners(exclude_user_id=None):
+        query = {
+            "$and": [
+                {"$or": [{"role": "owner"}, {"roles": "owner"}]},
+                {"$or": [{"status": {"$in": ["active", "invited"]}}, {"status": {"$exists": False}}, {"status": None}]},
+            ]
+        }
+        if exclude_user_id:
+            query["$and"].append({"id": {"$ne": exclude_user_id}})
+        return await users.count_documents(query)
+
+    async def _record_role_history(*, actor, target, before_roles, after_roles, before_positions, after_positions, note):
+        row = {
+            "id": "srh-" + uuid.uuid4().hex[:12],
+            "at": datetime.now(timezone.utc).isoformat(),
+            "actorId": actor.get("id"),
+            "actorName": actor.get("name") or actor.get("email"),
+            "targetId": (target or {}).get("id"),
+            "targetEmail": (target or {}).get("email"),
+            "targetName": (target or {}).get("name"),
+            "beforeRoles": list(before_roles or []),
+            "afterRoles": list(after_roles or []),
+            "beforePositions": list(before_positions or []),
+            "afterPositions": list(after_positions or []),
+            "note": note,
+        }
+        await db.nt_staff_role_history.insert_one(dict(row))
+        row.pop("_id", None)
+        return row
+
+    async def _issue_invite(owner, *, email, name, roles, phone, practitioner_id, preferred, positions=None, custom_title=""):
         from staff_identity import normalize_designation
+        from staff_positions import require_practitioner_link
         if "practitioner" in roles:
+            require_practitioner_link(roles, practitioner_id, allow_create=True)
             subject = await _link_practitioner_subject(
                 coll, db, roles=roles, practitioner_id=practitioner_id, name=name, email=email,
                 phone=phone or "", onboarding_status="invited",
             )
         else:
-            if practitioner_id:
-                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            require_practitioner_link(roles, practitioner_id)
             subject = None
         now = datetime.now(timezone.utc)
         raw = secrets.token_urlsafe(32)
@@ -1014,6 +1080,8 @@ def build_auth(db, coll, add_audit):
             "id": user_id, "email": email, "password_hash": hash_pw(secret), "name": name, "role": primary,
             "roles": roles, "subject": subject, "preferredWorkspace": preferred_ws, "status": "invited",
             "operationalDesignation": designation,
+            "positions": list(positions or []),
+            "customPositionTitle": custom_title or "",
             "createdAt": now.isoformat(), "invitePending": True,
         })
         invite = {
@@ -1024,7 +1092,19 @@ def build_auth(db, coll, add_audit):
         }
         await db.nt_staff_invites.insert_one(invite)
         await add_audit(owner["name"], f"Staff invitation created: {name} ({','.join(roles)})")
-        result = {"invited": True, "delivery": "not_sent", "role": primary, "roles": roles, "email": email, "inviteId": invite["id"]}
+        await _record_role_history(
+            actor=owner,
+            target={"id": user_id, "email": email, "name": name},
+            before_roles=[],
+            after_roles=roles,
+            before_positions=[],
+            after_positions=list(positions or []),
+            note="invitation created",
+        )
+        result = {
+            "invited": True, "delivery": "not_sent", "role": primary, "roles": roles, "email": email,
+            "inviteId": invite["id"], "positions": list(positions or []), "customPositionTitle": custom_title or "",
+        }
         if preview_local_reset():
             result["delivery"] = "preview_link"
             result["previewInviteToken"] = raw
@@ -1041,12 +1121,20 @@ def build_auth(db, coll, add_audit):
 
     @r.post("/staff/invite")
     async def invite_staff(request: Request, body: InviteIn):
+        from staff_positions import normalize_positions, validate_role_assignment
         owner = await require(request, "owner")
-        roles = normalize_roles(body.roles, body.role)
-        if not roles or any(role not in STAFF_ROLES for role in roles):
-            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
-        if "owner" in roles and not has_strict_role(owner, "owner"):
-            raise HTTPException(403, "Only an owner can grant the owner role")
+        decision = validate_role_assignment(
+            actor=owner,
+            target={"id": None, "status": "invited"},
+            requested_roles=normalize_roles(body.roles, body.role),
+            previous_roles=[],
+            active_owner_count=await _count_active_owners(),
+        )
+        roles = decision["roles"]
+        if decision["sensitive"]:
+            row = await _session_row(owner)
+            if await mfa_enforcement() and not (row and row.get("mfaAt")):
+                raise HTTPException(403, "Confirm your authenticator before changing privileged roles")
         email = body.email.lower()
         if "practitioner" in roles:
             from onboarding import acceptable_login
@@ -1054,9 +1142,11 @@ def build_auth(db, coll, add_audit):
                 raise HTTPException(400, "Use a practitioner email that is separate from the owner account")
         if await users.find_one({"email": email}):
             raise HTTPException(409, "Email already in use")
+        positions, custom_title = normalize_positions(body.positions, custom_title=body.customPositionTitle)
         return await _issue_invite(
             owner, email=email, name=body.name, roles=roles, phone=body.phone,
             practitioner_id=body.practitionerId, preferred=body.preferredWorkspace,
+            positions=positions, custom_title=custom_title,
         )
 
     @r.post("/staff/invites/{invite_id}/resend")
@@ -1128,19 +1218,30 @@ def build_auth(db, coll, add_audit):
 
     @r.patch("/staff/{user_id}")
     async def patch_staff(user_id: str, request: Request, body: StaffRolesIn):
+        from staff_identity import normalize_designation
+        from staff_positions import normalize_positions, require_practitioner_link, validate_role_assignment
         owner = await require(request, "owner")
         account = await users.find_one({"id": user_id})
         if not account:
             raise HTTPException(404, "Staff account not found")
-        roles = normalize_roles(body.roles, account.get("role"))
-        if not roles or any(role not in STAFF_ROLES for role in roles):
-            raise HTTPException(400, "Choose owner, manager, practitioner, or reception roles")
-        if "owner" in roles and not has_strict_role(owner, "owner"):
-            raise HTTPException(403, "Only an owner can grant the owner role")
         if is_sysadmin(account) and "owner" not in effective_roles(owner):
             raise HTTPException(403, "Protected system administrator accounts require an owner")
-        from staff_identity import normalize_designation
-        primary = primary_role(roles)
+        before_roles = normalize_roles(account.get("roles"), account.get("role"))
+        before_positions = list(account.get("positions") or [])
+        owner_count = await _count_active_owners()
+        decision = validate_role_assignment(
+            actor=owner,
+            target=account,
+            requested_roles=body.roles,
+            previous_roles=before_roles,
+            active_owner_count=owner_count,
+        )
+        roles = decision["roles"]
+        if decision["sensitive"]:
+            row = await _session_row(owner)
+            if await mfa_enforcement() and not (row and row.get("mfaAt")):
+                raise HTTPException(403, "Confirm your authenticator before changing privileged roles")
+        primary = decision["primary"]
         patch = {"roles": roles, "role": primary}
         patch["operationalDesignation"] = normalize_designation(
             body.operationalDesignation, roles, primary,
@@ -1148,21 +1249,29 @@ def build_auth(db, coll, add_audit):
         if body.preferredWorkspace:
             patch["preferredWorkspace"] = body.preferredWorkspace
         if body.status in ("active", "suspended"):
+            # Suspending the last active owner is refused.
+            if body.status == "suspended" and "owner" in before_roles and owner_count <= 1:
+                raise HTTPException(409, "Keep at least one active owner account")
             patch["status"] = body.status
             if body.status == "suspended":
                 await sessions.update_many({"userId": user_id, "revoked": False}, {"$set": {"revoked": True, "revokedReason": "suspended"}})
         if "practitioner" not in roles:
-            if body.practitionerId:
-                raise HTTPException(400, "Administrative accounts cannot link a therapist profile")
+            require_practitioner_link(roles, body.practitionerId)
             patch["subject"] = None
-        elif body.practitionerId is not None:
-            if body.practitionerId:
+        else:
+            desired = body.practitionerId if body.practitionerId is not None else account.get("subject")
+            linked = require_practitioner_link(roles, desired, account.get("subject"))
+            if body.practitionerId is not None or not account.get("subject"):
                 patch["subject"] = await _link_practitioner_subject(
-                    coll, db, roles=roles, practitioner_id=body.practitionerId,
+                    coll, db, roles=roles, practitioner_id=linked,
                     name=account.get("name") or "Practitioner", email=account.get("email") or "",
                 )
             else:
-                patch["subject"] = None
+                patch["subject"] = account.get("subject")
+        if body.positions is not None:
+            positions, custom_title = normalize_positions(body.positions, custom_title=body.customPositionTitle)
+            patch["positions"] = positions
+            patch["customPositionTitle"] = custom_title
         if body.managePricing is not None:
             prior_perms = dict(account.get("staffPerms") or {})
             prior_perms["managePricing"] = bool(body.managePricing)
@@ -1171,7 +1280,18 @@ def build_auth(db, coll, add_audit):
         note = f"Staff roles updated: {account.get('email')} → {','.join(roles)}"
         if body.managePricing is not None:
             note += f" · managePricing={'granted' if body.managePricing else 'revoked'}"
+        if body.positions is not None:
+            note += f" · positions={','.join(patch.get('positions') or []) or 'none'}"
         await add_audit(owner["name"], note)
+        await _record_role_history(
+            actor=owner,
+            target=account,
+            before_roles=before_roles,
+            after_roles=roles,
+            before_positions=before_positions,
+            after_positions=patch.get("positions", before_positions),
+            note=note,
+        )
         updated = await users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
         return await present(updated, coll)
 

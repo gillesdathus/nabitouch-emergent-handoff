@@ -141,6 +141,81 @@ def test_assignment_blocks_after_grace_until_four_credentials_exist():
     assert expired and "missing or expired" in expired
 
 
+def test_verified_cpr_without_expiry_satisfies_assignment_gate():
+    past = TODAY - timedelta(days=CREDENTIAL_GRACE_DAYS + 1)
+    approved = {
+        **PERSON,
+        "onboardingStatus": "approved",
+        "activatedAt": past.isoformat() + "T12:00:00+00:00",
+    }
+    three = [
+        _credential("association", "2027-01-01"),
+        _credential("liability", "2027-01-01"),
+        _credential("municipal", "2027-01-01"),
+    ]
+    assert "CPR" in (assignment_credential_problem(approved, three, TODAY) or "")
+    cpr_blank = _credential("cpr", "", "CPR-NO-EXPIRY-1")
+    cpr_blank["expiresOn"] = None
+    assert assignment_credential_problem(approved, three + [cpr_blank], TODAY) is None
+    cpr_empty = _credential("cpr", "", "CPR-NO-EXPIRY-2")
+    assert assignment_credential_problem(approved, three + [cpr_empty], TODAY) is None
+    # Other kinds still require a real future expiry.
+    bad_assoc = _credential("association", "", "ASSOC-NO-EXP")
+    bad_assoc["expiresOn"] = None
+    assert assignment_credential_problem(
+        approved,
+        [bad_assoc, _credential("liability", "2027-01-01"), _credential("municipal", "2027-01-01"), cpr_blank],
+        TODAY,
+    )
+
+
+def test_temporary_cpr_booking_override_waives_only_cpr_and_expires():
+    from datetime import datetime, timezone
+
+    from onboarding import active_credential_booking_override
+
+    past = TODAY - timedelta(days=CREDENTIAL_GRACE_DAYS + 1)
+    now = datetime(2026, 10, 13, 15, 0, tzinfo=timezone.utc)
+    expires = now + timedelta(hours=48)
+    approved = {
+        **PERSON,
+        "onboardingStatus": "approved",
+        "activatedAt": past.isoformat() + "T12:00:00+00:00",
+        "credentialBookingOverrides": {
+            "cpr": {
+                "expiresAt": expires.isoformat(),
+                "createdAt": now.isoformat(),
+                "by": "Owner",
+                "note": "owner-confirmed CPR on file",
+            }
+        },
+    }
+    three = [
+        _credential("association", "2027-01-01"),
+        _credential("liability", "2027-01-01"),
+        _credential("municipal", "2027-01-01"),
+    ]
+    assert assignment_credential_problem(approved, three, TODAY, now=now) is None
+    assert active_credential_booking_override(approved, "cpr", now=now)
+    assert not active_credential_booking_override(approved, "cpr", now=expires + timedelta(seconds=1))
+    assert "CPR" in assignment_credential_problem(approved, three, TODAY, now=expires + timedelta(seconds=1))
+    # Override never invents verification for gaps / other kinds.
+    assert "Association" in assignment_credential_problem(
+        {**approved, "credentialBookingOverrides": {"cpr": approved["credentialBookingOverrides"]["cpr"]}},
+        [],
+        TODAY,
+        now=now,
+    )
+    found = gaps(
+        person=approved,
+        login_email="nabitu.kahindo@nabitouch.com",
+        mfa_enrolled=True,
+        credentials=three,
+        schedule={**SCHEDULE, "weekly": [{"weekday": 1, "start": "10:00", "end": "14:00"}], "status": "approved", "acceptingBookings": True},
+    )
+    assert any(row["id"] == "cpr" for row in found)
+
+
 def test_approved_gaps_show_grace_deadline():
     approved = {
         **PERSON,

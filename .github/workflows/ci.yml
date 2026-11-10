@@ -67,9 +67,14 @@ jobs:
       - name: Remove disposable CI services
         if: always()
         run: docker compose -f deploy/qa/compose.yml down -v
-  frontend:
+  frontend-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Heavy jsdom booking suites leak across files; keep each shard small.
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: frontend
@@ -84,8 +89,28 @@ jobs:
         run: npm install --global yarn@1.22.22 --ignore-scripts
       - name: Frozen dependency installation
         run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
-      - name: Vitest
-        run: yarn test
+      - name: Vitest shard ${{ matrix.shard }}/4
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: yarn test --pool=forks --maxWorkers=1 --shard=${{ matrix.shard }}/4
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: frontend-test
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.19.0'
+      - name: Install declared Yarn version
+        run: npm install --global yarn@1.22.22 --ignore-scripts
+      - name: Frozen dependency installation
+        run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
       - name: Build with safe example origin
         env:
           REACT_APP_BACKEND_URL: https://example.com

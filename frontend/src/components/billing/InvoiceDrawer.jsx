@@ -23,7 +23,7 @@ function Lines({ invoice }) {
         {invoice.lines.map((line, i) => (
           <li key={i} className="flex justify-between gap-3 text-sm"><span className="text-nb-ink">{line.description}{line.quantity > 1 ? ` × ${line.quantity}` : ""}</span><span className="nb-num">{formatCents(line.netCents)}</span></li>
         ))}
-        <li className="flex justify-between gap-3 text-sm text-nb-mute"><span>GST</span><span className="nb-num">{invoice.tax.display}</span></li>
+        <li className="flex justify-between gap-3 text-sm text-nb-mute"><span>{invoice.chargeGst === false ? "GST (not charged)" : "GST"}</span><span className="nb-num">{invoice.tax.display}</span></li>
       </ul>
     </section>
   );

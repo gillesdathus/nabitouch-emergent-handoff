@@ -6,11 +6,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rbac import (  # noqa: E402
     BOOKING_SOURCES,
+    COMPLETED_TREATMENT_SOURCES,
+    default_completed_treatment_source,
     effective_roles,
     has_role,
     has_strict_role,
+    is_advance_booking_source,
+    is_completed_treatment_source,
     is_sysadmin,
     normalize_booking_source,
+    normalize_completed_treatment_source,
     normalize_roles,
     primary_role,
     workspaces_for,
@@ -60,3 +65,18 @@ def test_booking_sources_normalize():
     assert normalize_booking_source("walk-in") == "walk_in"
     assert normalize_booking_source("front_desk") == "reception"
     assert normalize_booking_source("unknown", default="phone") == "phone"
+
+
+def test_completed_treatment_sources_are_not_advance_booking():
+    assert set(COMPLETED_TREATMENT_SOURCES) == {"historical_manual", "on_the_spot"}
+    assert normalize_completed_treatment_source("historical") == "historical_manual"
+    assert normalize_completed_treatment_source("on-the-spot") == "on_the_spot"
+    assert normalize_completed_treatment_source("phone") is None
+    assert is_completed_treatment_source("historical_manual")
+    assert not is_completed_treatment_source("walk_in")
+    assert is_advance_booking_source("online")
+    assert is_advance_booking_source("phone")
+    assert not is_advance_booking_source("historical_manual")
+    assert not is_advance_booking_source("on_the_spot")
+    assert default_completed_treatment_source("2026-11-03", today="2026-11-04") == "historical_manual"
+    assert default_completed_treatment_source("2026-11-04", today="2026-11-04") == "on_the_spot"

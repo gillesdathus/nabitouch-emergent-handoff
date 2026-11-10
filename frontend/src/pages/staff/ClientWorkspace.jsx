@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, FileText, HeartHandshake, Lock, Mail, MessageSquare, Phone, ShieldCheck, Signature } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardCheck, FileText, HeartHandshake, Lock, Mail, MessageSquare, Pencil, Phone, ShieldCheck, Signature } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, Notice, Reveal } from "@/components/tide";
 import { Avatar, Pill, StatusPill } from "@/components/ui-kit";
 import { InvoiceStatePill } from "@/components/billing/InvoiceBits";
 import { InvoiceDrawer } from "@/components/billing/InvoiceDrawer";
 import { Conversation } from "@/components/Conversation";
+import { ClientProfileEditor } from "@/components/clients/ClientProfileEditor";
 import { api, apiError } from "@/lib/api";
 import { formatCents } from "@/lib/billing";
 import { OPEN, fmtDate, fmtTime } from "@/lib/domain";
+import { hasStaffRole } from "@/lib/staffRoles";
 import { edmontonNow } from "@/components/ops/calendar/time";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { sumInvoices, useInvoices } from "@/lib/useInvoices";
 import { useDemo } from "@/store/DemoStore";
@@ -159,28 +162,35 @@ export default function ClientWorkspace() {
   const { id } = useParams();
   const { idx, user, perm } = useDemo();
   const [book, setBook] = useState(false);
+  const [recordTreatment, setRecordTreatment] = useState(false);
   const [invoice, setInvoice] = useState(false);
+  const [editing, setEditing] = useState(false);
   const role = user?.role;
+  const ownerLike = hasStaffRole(user, "owner");
   const [thread, setThread] = useState(null);
   const [ws, setWs] = useState(null);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState(null);
   useEffect(() => { api.clientWorkspace(id).then(setWs).catch((e) => setError(apiError(e))); }, [id]);
   const money = ws?.access?.invoices;
+  const canEdit = ws?.access?.editProfile || ws?.access?.editAddresses || ws?.access?.editInsurance || ws?.access?.correctIdentity;
   const { rows, replace, reload } = useInvoices({ clientId: id }, Boolean(money));
   if (error) return <div className="mx-auto max-w-3xl py-6"><Notice testid="cw-error">{error}</Notice></div>;
   if (!ws) return <div className="mx-auto max-w-6xl space-y-3 py-2"><div className="h-36 rounded-3xl nb-skeleton" /><div className="h-48 rounded-3xl nb-skeleton" /></div>;
   const invoiceRows = money ? rows : [];
   const active = (invoiceRows || []).find((r) => r.id === openId);
-  const tabs = [["overview", "Visits"], money && ["invoices", "Invoices"], ws.access.insurance && ["insurance", "Insurance"], ["consents", "Consents"], ws.access.threads && ["messages", "Messages"], ws.access.plans && ["plans", "Care plans"]].filter(Boolean);
+  const tabs = [["overview", "Visits"], ["profile", "Profile"], money && ["invoices", "Invoices"], ws.access.insurance && ["insurance", "Insurance"], ["consents", "Consents"], ws.access.threads && ["messages", "Messages"], ws.access.plans && ["plans", "Care plans"]].filter(Boolean);
+  const addresses = ws.client.addresses || [];
   return (
     <div className="mx-auto max-w-6xl min-w-0" data-testid="client-workspace">
-      <Link to={role === "owner" ? "/owner/clients" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
+      <Link to={ownerLike ? "/owner/clients" : "/desk/clients"} data-testid="cw-back" className="mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-sm font-medium text-nb-mute hover:text-nb-ink">
         <ArrowLeft className="h-4 w-4" />Clients
       </Link>
       <Hero c={ws.client} appts={ws.appointments} totals={sumInvoices(invoiceRows)} canMoney={money} actions={<>
-        {(role === "owner" || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-dark h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
-        {money && (role === "owner" || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
+        {canEdit && <button type="button" onClick={() => setEditing(true)} className="nb-btn-dark h-9 px-3 text-xs" data-testid="cw-edit-profile"><Pencil className="h-3.5 w-3.5" />Edit profile</button>}
+        {(ownerLike || perm("createBooking")) && <button type="button" onClick={() => setBook(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-book"><CalendarDays className="h-3.5 w-3.5" />Book visit</button>}
+        {(ownerLike || perm("createBooking")) && <button type="button" onClick={() => setRecordTreatment(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-record-treatment"><ClipboardCheck className="h-3.5 w-3.5" />Record completed</button>}
+        {money && (ownerLike || perm("managePayments")) && <button type="button" onClick={() => setInvoice(true)} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-new-invoice"><FileText className="h-3.5 w-3.5" />New invoice</button>}
         {ws.client.phone && <a href={`tel:${ws.client.phone}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-call"><Phone className="h-3.5 w-3.5" />Call</a>}
         {ws.client.email && <a href={`mailto:${ws.client.email}`} className="nb-btn-ghost h-9 px-3 text-xs" data-testid="cw-email"><Mail className="h-3.5 w-3.5" />Email</a>}
       </>} />
@@ -188,6 +198,34 @@ export default function ClientWorkspace() {
       <Tabs defaultValue="overview" className="mt-4">
         <ScrollTabs tabs={tabs} />
         <TabsContent value="overview" className="mt-3"><Visits appts={ws.appointments} idx={idx} /></TabsContent>
+        <TabsContent value="profile" className="mt-3" data-testid="cw-profile">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="nb-card space-y-1 p-4 text-sm">
+              <p className="nb-eyebrow">Personal</p>
+              <p><b>{ws.client.firstName} {ws.client.lastName}</b>{ws.client.preferredName ? ` · “${ws.client.preferredName}”` : ""}</p>
+              <p className="text-nb-mute">DOB {ws.client.dob || "—"} · {ws.client.language || "English"}</p>
+              <p className="text-nb-mute">Emergency: {ws.client.emergencyContact || "—"}</p>
+            </div>
+            <div className="nb-card space-y-1 p-4 text-sm">
+              <p className="nb-eyebrow">Contact</p>
+              <p>{ws.client.phone || "No phone"}{ws.client.altPhone ? ` · alt ${ws.client.altPhone}` : ""}</p>
+              <p className="break-all text-nb-mute">{ws.client.email || "No email"}</p>
+              <p className="text-nb-mute">Prefers {ws.client.contactMethod || "Text"}</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2" data-testid="cw-addresses">
+            <p className="nb-eyebrow">Saved addresses</p>
+            {addresses.map((a) => (
+              <div key={a.id || a.line} className="nb-card p-3.5 text-sm" data-testid={`cw-address-${a.id}`}>
+                <p className="font-semibold">{a.label || a.purpose || "Address"}{a.isDefault ? " · Default" : ""}</p>
+                <p className="break-words text-nb-mute">{a.unit ? `Unit ${a.unit}, ` : ""}{a.line}</p>
+                <p className="mt-1 text-[11px] text-nb-mute">{a.verificationState || (a.clientConfirmed ? "verified" : "needs_confirmation")}{a.purpose === "mailing" || a.poBox ? " · mailing" : ""}</p>
+              </div>
+            ))}
+            {!addresses.length && <EmptyState compact icon={CalendarDays} title="No saved addresses" testid="cw-addresses-empty" />}
+            {canEdit && <button type="button" className="nb-btn-ghost h-9 px-3 text-xs" onClick={() => setEditing(true)} data-testid="cw-edit-from-profile">Edit profile</button>}
+          </div>
+        </TabsContent>
         {money && <TabsContent value="invoices" className="mt-3"><Invoices rows={invoiceRows} onOpen={setOpenId} /></TabsContent>}
         {ws.access.insurance && <TabsContent value="insurance" className="mt-3"><Insurance c={ws.client} /></TabsContent>}
         <TabsContent value="consents" className="mt-3"><Consents rows={ws.consents} /></TabsContent>
@@ -196,8 +234,24 @@ export default function ClientWorkspace() {
       </Tabs>
       <p className="mt-8 flex items-center gap-1.5 text-[11px] text-nb-mute" data-testid="cw-privacy-note"><Lock className="h-3 w-3 shrink-0" />Clinical notes are not shown in this record. Opening it is logged.</p>
       {book && <NewBookingDialog open clientId={id} onClose={() => setBook(false)} />}
+      {recordTreatment && (
+        <RecordCompletedTreatmentDialog
+          open
+          clientId={id}
+          onClose={() => setRecordTreatment(false)}
+          onSaved={() => { api.clientWorkspace(id).then(setWs).catch(() => {}); }}
+        />
+      )}
       {invoice && <CreateInvoiceDialog open clientId={id} onClose={(created) => { setInvoice(false); if (created?.id) { reload(); setOpenId(created.id); } }} />}
-      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={role === "owner" ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
+      {editing && (
+        <ClientProfileEditor
+          client={ws.client}
+          access={ws.access}
+          onClose={() => setEditing(false)}
+          onSaved={(next) => { setWs(next); setEditing(false); }}
+        />
+      )}
+      <InvoiceDrawer invoice={active} open={Boolean(active)} onOpenChange={(o) => !o && setOpenId(null)} staffLink={ownerLike ? "/owner/payments" : "/desk/verify"} flags={{ emailOn: idx?.settings?.invoiceEmailEnabled === true }} onChange={replace} />
     </div>
   );
 }

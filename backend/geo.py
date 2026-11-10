@@ -15,8 +15,18 @@ from urllib.parse import urlencode
 
 import httpx
 
+from addresses import normalize_rural_query, postal_code, postal_fsa, prefer_requested_civic_casing
+from edmonton_geo import (
+    ID_PREFIX as EDMONTON_ID_PREFIX,
+    civic_suggestion_compatible,
+    find_candidates as edmonton_find,
+    looks_like_edmonton_civic,
+    resolve_place as edmonton_resolve,
+)
+
 EDMONTON = (-113.4938, 53.5461)
 # Greater Edmonton metro for autocomplete bias only — not an eligibility gate.
+# Includes rural Strathcona County / Ardrossan east of Sherwood Park.
 BBOX = "-114.5,52.9,-112.6,53.9"
 FORWARD = "https://api.mapbox.com/search/geocode/v6/forward"
 REVERSE = "https://api.mapbox.com/search/geocode/v6/reverse"
@@ -39,6 +49,9 @@ LOCAL = [
     {"id": "local-spruce", "line": "400 Calahoo Rd, Spruce Grove, AB", "area": "Spruce Grove", "lat": 53.5452, "lng": -113.9104},
     {"id": "local-leduc", "line": "4950 Gateway Blvd, Leduc, AB", "area": "Leduc", "lat": 53.2594, "lng": -113.5492},
     {"id": "local-wetaskiwin", "line": "4705 50 Ave, Wetaskiwin, AB", "area": "Wetaskiwin", "lat": 52.9694, "lng": -113.3769},
+    {"id": "local-ardrossan-rge-215", "line": "53337 Range Road 215, Ardrossan, AB T8E 2B2, Canada", "area": "Ardrossan", "lat": 53.591591, "lng": -113.073364, "postal": "T8E 2B2"},
+    # New Crystallina Nera East civic — present in City of Edmonton GIS; often missing from Mapbox.
+    {"id": "local-crystallina-176a", "line": "6805 176A Avenue NW, Edmonton, AB T5Z 0Y2, Canada", "area": "Crystallina Nera East", "lat": 53.639658, "lng": -113.444838, "postal": "T5Z 0Y2"},
 ]
 
 
@@ -177,8 +190,37 @@ class Geocoder:
         except (httpx.HTTPError, ValueError) as exc:
             raise ProviderError("Address search is unavailable right now. Try again shortly.") from None
 
+    async def _edmonton_suggest(self, query):
+        if not looks_like_edmonton_civic(query):
+            return []
+        try:
+            hits = await edmonton_find(query, limit=5)
+        except Exception:
+            return []
+        return [
+            {**item, "line": prefer_requested_civic_casing(item.get("line") or "", query)}
+            for item in hits
+        ]
+
+    async def _finalize_edmonton_hit(self, hit, requested_line=""):
+        """Preserve client street casing and attach a nearby FSA hint when City GIS omits postcodes."""
+        if not hit:
+            return hit
+        out = dict(hit)
+        out["line"] = prefer_requested_civic_casing(out.get("line") or "", requested_line) or out.get("line") or ""
+        if postal_code(out.get("postal")) or not _token():
+            return out
+        try:
+            nearby = await self.reverse(out["lat"], out["lng"], persist=False)
+        except (GeocodeError, ProviderError, RateLimit, Exception):
+            return out
+        fsa = postal_fsa(nearby.get("postal") or nearby.get("line") or "")
+        if fsa:
+            out["postalFsa"] = fsa
+        return out
+
     async def suggest(self, query, client_key):
-        text = " ".join(str(query or "").split())
+        text = normalize_rural_query(query)
         if len(text) < 3:
             return []
         if not allow(self.bucket, f"suggest:{client_key}", SUGGEST_LIMIT):
@@ -190,7 +232,16 @@ class Geocoder:
             if not sample_catalog():
                 raise ProviderError(MAPBOX_REQUIRED)
             key = _norm(text)
-            hits = [dict(item, provider="local") for item in LOCAL if key in _norm(item["line"]) or key in _norm(item["area"])]
+            # Also match abbreviated rural forms against the normalized sample line.
+            raw_key = _norm(query)
+            hits = [
+                dict(item, provider="local")
+                for item in LOCAL
+                if key in _norm(item["line"]) or raw_key in _norm(item["line"]) or key in _norm(item["area"])
+                or "rge rd 215" in raw_key and "range road 215" in _norm(item["line"])
+                or "176a" in raw_key and "176a" in _norm(item["line"])
+            ]
+            hits = [item for item in hits if civic_suggestion_compatible(text, item["line"])]
             hits.sort(key=lambda item: item["line"])
             self._store(("suggest", key), hits[:5])
             return hits[:5]
@@ -200,14 +251,39 @@ class Geocoder:
             "permanent": _permanent_param(persist=False),
         })
         hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
-        self._store(("suggest", _norm(text)), hits)
-        return hits
+        # A tight Edmonton bbox can hide otherwise valid addresses near its edge.
+        # Retry without the bbox before telling a client there are no matches.
+        if not hits:
+            payload = await self.fetch(FORWARD, {
+                "q": text, "access_token": _token(), "country": "ca", "types": "address", "limit": 5,
+                "proximity": f"{EDMONTON[0]},{EDMONTON[1]}", "autocomplete": "true",
+                "permanent": _permanent_param(persist=False),
+            })
+            hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
+        # Drop Mapbox near-misses that change the typed house number (e.g. Winfield "176a…").
+        hits = [item for item in hits if civic_suggestion_compatible(text, item.get("line") or "")]
+        # New Edmonton construction is often missing from Mapbox — fall back to City GIS.
+        if not hits:
+            hits = await self._edmonton_suggest(text)
+        elif looks_like_edmonton_civic(text):
+            # Prefer precise City of Edmonton PointAddress rows when Mapbox only has weak substitutes.
+            city_hits = await self._edmonton_suggest(text)
+            if city_hits:
+                seen = {(_norm(item.get("line")), item.get("id")) for item in hits}
+                for item in city_hits:
+                    key = (_norm(item.get("line")), item.get("id"))
+                    if key not in seen:
+                        hits.insert(0, item)
+                        seen.add(key)
+        self._store(("suggest", _norm(text)), hits[:5])
+        return hits[:5]
 
     async def resolve(self, line="", mapbox_id="", point=None, *, persist=True):
         """Return coordinates for zone/fee decisions. Client coordinates lose when a place resolves.
 
         persist=True (default): requires MAPBOX_PERMANENT_GEOCODING and sends permanent=true.
         persist=False: temporary geocode for coverage checks (not cached).
+        City of Edmonton PointAddress falls back does not require Mapbox storage permission.
         """
         place_id = str(mapbox_id or "")
         if place_id.startswith("local-") and sample_catalog():
@@ -216,7 +292,19 @@ class Geocoder:
                 raise GeocodeError("That address could not be found. Choose a suggestion or enter the street and city.")
             hit["provider"] = "local"
             return hit
-        text = " ".join(str(line or "").split())
+        text = normalize_rural_query(line)
+        # Explicit City of Edmonton suggestion ids resolve without Mapbox storage permission.
+        if place_id.startswith(EDMONTON_ID_PREFIX):
+            cached = self._cached(("resolve", place_id)) if persist else None
+            if cached:
+                return cached
+            hit = await edmonton_resolve(line=text, place_id=place_id)
+            if hit:
+                hit = await self._finalize_edmonton_hit(hit, text)
+                if persist:
+                    self._store(("resolve", place_id), hit)
+                return hit
+            raise GeocodeError("We couldn't find that address. Check the street and city, or pick a suggestion.")
         if _token() and (place_id or text):
             if persist and not permanent_geocoding():
                 raise ProviderError(STORAGE_REQUIRED)
@@ -229,12 +317,22 @@ class Geocoder:
                 "permanent": _permanent_param(persist=persist),
                 "autocomplete": "false",
             }
-            if place_id and not place_id.startswith("local-"):
+            if place_id and not place_id.startswith("local-") and not place_id.startswith(EDMONTON_ID_PREFIX):
                 params["q"] = place_id
             else:
                 params["q"] = text
             payload = await self.fetch(FORWARD, params)
             hits = [item for item in (_feature(feature) for feature in payload.get("features") or []) if item]
+            if hits and text and not civic_suggestion_compatible(text, hits[0].get("line") or ""):
+                hits = []
+            # Mapbox often lags new Edmonton construction — fall back to City GIS PointAddress.
+            if not hits and looks_like_edmonton_civic(text):
+                hit = await edmonton_resolve(line=text, place_id="")
+                if hit:
+                    hit = await self._finalize_edmonton_hit(hit, text)
+                    if persist:
+                        self._store(("resolve", place_id or _norm(text)), hit)
+                    return hit
             if not hits:
                 raise GeocodeError("We couldn't find that address. Check the street and city, or pick a suggestion.")
             if persist:
@@ -242,11 +340,20 @@ class Geocoder:
             return hits[0]
         if sample_catalog():
             local = _local_by_id(place_id) if place_id else None
-            local = local or _local_match(text)
+            local = local or _local_match(text) or _local_match(line)
             if local:
                 local["provider"] = "local"
                 return local
+            if looks_like_edmonton_civic(text):
+                hit = await edmonton_resolve(line=text, place_id=place_id if place_id.startswith(EDMONTON_ID_PREFIX) else "")
+                if hit:
+                    return await self._finalize_edmonton_hit(hit, text)
         if not _token():
+            # Still allow City of Edmonton civic resolves without Mapbox for ephemeral checks.
+            if looks_like_edmonton_civic(text) or place_id.startswith(EDMONTON_ID_PREFIX):
+                hit = await edmonton_resolve(line=text, place_id=place_id if place_id.startswith(EDMONTON_ID_PREFIX) else "")
+                if hit:
+                    return await self._finalize_edmonton_hit(hit, text)
             raise ProviderError(MAPBOX_REQUIRED)
         # Device coordinates alone are only acceptable for ephemeral coverage checks.
         if not persist and point and point.get("lat") is not None and point.get("lng") is not None:

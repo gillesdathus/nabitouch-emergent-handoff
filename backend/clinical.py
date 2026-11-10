@@ -264,21 +264,28 @@ def build_clinical_router(db, coll, add_audit, user_from):
         from onboarding import acceptable_identifier, expiry_date
         if not acceptable_identifier(body.get("identifier")):
             raise HTTPException(400, "Enter the real registration or policy number. A placeholder is not accepted.")
-        if expiry_date(body.get("expiresOn")) is None:
+        kind = body["kind"]
+        expires_text = str(body.get("expiresOn") or "").strip()
+        # CPR / First Aid certificates may have no printed expiry; other kinds still require one.
+        if kind == "cpr" and not expires_text:
+            expires_on = None
+        elif expiry_date(expires_text) is None:
             raise HTTPException(400, "Enter the expiry date")
+        else:
+            expires_on = _clip(expires_text, 10)
         effective = body.get("effectiveOn")
         if effective and expiry_date(effective) is None:
             raise HTTPException(400, "Enter a valid effective date")
         row = {
             "id": "cred-" + uuid.uuid4().hex[:12],
             "practitionerId": practitioner_id,
-            "kind": body["kind"],
+            "kind": kind,
             "identifier": _clip(body.get("identifier"), 80),
             "issuingAuthority": _clip(body.get("issuingAuthority"), 120),
             "province": _clip(body.get("province"), 40),
             "provider": _clip(body.get("provider"), 120),
             "effectiveOn": _clip(effective, 10) if effective else None,
-            "expiresOn": _clip(body.get("expiresOn"), 10),
+            "expiresOn": expires_on,
             "documentNote": _clip(body.get("documentNote"), 200),
             "status": "uploaded",
             "verifiedAt": None,
@@ -297,8 +304,11 @@ def build_clinical_router(db, coll, add_audit, user_from):
         if not has_strict_role(user, "owner"):
             raise HTTPException(403, "Only the owner verifies a credential")
         await step_up(user)
-        from onboarding import acceptable_identifier
-        existing = await db.nt_credentials.find_one({"id": credential_id}, {"_id": 0, "identifier": 1})
+        from onboarding import OVERRIDEABLE_BOOKING_KINDS, acceptable_identifier
+        existing = await db.nt_credentials.find_one(
+            {"id": credential_id},
+            {"_id": 0, "identifier": 1, "kind": 1, "practitionerId": 1},
+        )
         if not existing:
             raise HTTPException(404, "Credential not found")
         if not acceptable_identifier(existing.get("identifier")):
@@ -309,7 +319,27 @@ def build_clinical_router(db, coll, add_audit, user_from):
         )
         if not updated:
             raise HTTPException(404, "Credential not found")
-        return {"verified": True}
+        kind = existing.get("kind")
+        practitioner_id = existing.get("practitionerId")
+        cleared_override = False
+        if kind in OVERRIDEABLE_BOOKING_KINDS and practitioner_id:
+            from datetime import date as _date
+            from onboarding import _current
+            verified_row = await db.nt_credentials.find_one({"id": credential_id}, {"_id": 0})
+            # Only clear the temporary waiver when the verified record actually satisfies the booking gate.
+            if verified_row and _current([verified_row], kind, _date.today()):
+                result = await coll("practitioners").update_one(
+                    {"id": practitioner_id, f"credentialBookingOverrides.{kind}": {"$exists": True}},
+                    {"$unset": {f"credentialBookingOverrides.{kind}": ""}},
+                )
+                if result.modified_count:
+                    cleared_override = True
+                    await add_audit(
+                        user.get("name") or "owner",
+                        f"Temporary {kind} booking override cleared for {practitioner_id} after credential verify",
+                        None,
+                    )
+        return {"verified": True, "overrideCleared": cleared_override}
 
     @r.get("/credentials/reminders")
     async def credential_reminders(request: Request):

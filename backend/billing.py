@@ -152,6 +152,7 @@ def public_invoice(invoice, ledger, claims=None):
         "version": invoice["version"],
         "origin": invoice.get("origin"),
         "countsAsRevenue": bool(invoice.get("countsAsRevenue", True)),
+        "chargeGst": bool(invoice.get("chargeGst", True)),
         "lines": invoice.get("lines") or [],
         "tax": money_view(invoice.get("taxCents") or 0),
         "total": money_view(invoice["totalCents"]),
@@ -527,6 +528,53 @@ def build_billing_router(db, coll, add_audit, user_from):
         await add_audit(user.get("name") or "staff", f"{stored.get('number') or stored['id']} {line['type']} {money_view(line['amountCents'])['display']}", stored.get("appointmentId"))
         return stored
 
+    async def welcome_invoice_status(client, service_slug=""):
+        """Read-only eligibility for a standalone manual invoice; booking and billing share claims."""
+        from pricing import identity_keys, promo_eligible
+        from offers_visibility import HISTORY_PROJECTION, matched_client_ids
+
+        offer = await db.nt_promotions.find_one({"id": "promo-welcome"}, {"_id": 0})
+        if not offer:
+            return {"eligible": False, "reason": "The first-booking offer is not configured.", "percentage": 0, "maxDiscount": 0}
+        person = {"id": client.get("id"), "email": client.get("email"), "phone": client.get("phone")}
+        ids = await matched_client_ids(db, person)
+        history = await coll("appointments").find(
+            {"clientId": {"$in": ids}}, HISTORY_PROJECTION,
+        ).to_list(500) if ids else []
+        claimed = bool(await db.nt_welcome_claims.find_one(
+            {"key": {"$in": identity_keys(person)}}, {"_id": 1}
+        ))
+        # Manual invoice eligibility does not depend on online-profile completeness.
+        audience = {**person, "_welcomeHistory": history, "_profileComplete": True}
+        available = bool(promo_eligible(offer, audience, service_slug)) and not claimed
+        return {
+            "eligible": available,
+            "reason": ("Available for this client's first eligible treatment." if available else
+                       "WELCOME20 is unavailable, already claimed, or the client has a qualifying booking."),
+            "percentage": float(offer.get("value") or 0),
+            "maxDiscount": offer.get("maxDiscount"),
+            "promotionId": offer["id"],
+            "code": offer.get("code"),
+        }
+
+    async def release_invoice_welcome(invoice):
+        """Free WELCOME20 identity claims when a draft is discarded or an unpaid invoice is voided."""
+        if not invoice:
+            return
+        if invoice.get("promotionCode") != "WELCOME20" and invoice.get("promotionId") != "promo-welcome":
+            return
+        await db.nt_welcome_claims.delete_many({"token": invoice["id"]})
+
+    @r.get("/invoices/welcome-eligibility")
+    async def invoice_welcome_eligibility(request: Request, clientId: str = "", serviceSlug: str = ""):
+        user = await actor(request)
+        if not (has_role(user, "owner") or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to view invoice promotions")
+        client = await coll("clients").find_one({"id": clientId}, {"_id": 0}) if clientId else None
+        if not client:
+            raise HTTPException(404, "Client not found")
+        return await welcome_invoice_status(client, serviceSlug)
+
     @r.post("/invoices")
     async def create_manual_invoice(request: Request):
         """Standalone invoice. Does not require an appointment and does not imply treatment completion."""
@@ -538,6 +586,15 @@ def build_billing_router(db, coll, add_audit, user_from):
         client = await coll("clients").find_one({"id": client_id}, {"_id": 0}) if client_id else None
         if not client:
             raise HTTPException(400, "Choose a patient for this invoice")
+        # Return existing drafts before eligibility revalidation: safe retry after reservation.
+        request_key = body.get("idempotencyKey")
+        if request_key:
+            prior = await db.nt_invoices.find_one(
+                {"idempotencyKey": request_key, "origin": "manual"}, {"_id": 0})
+            if prior:
+                if prior.get("clientId") != client_id:
+                    raise HTTPException(409, "Invoice request key belongs to another client")
+                return await view_for(user, prior)
         practitioner_id = str(body.get("practitionerId") or "").strip() or None
         practitioner = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0}) if practitioner_id else None
         service_date = str(body.get("serviceDate") or now().date().isoformat())
@@ -566,15 +623,49 @@ def build_billing_router(db, coll, add_audit, user_from):
             })
         if not rows:
             raise HTTPException(400, "Add at least one service line")
-        discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        discount_mode = str(body.get("discountMode") or "manual")
+        if discount_mode not in ("manual", "welcome20"):
+            raise HTTPException(400, "Unknown invoice discount mode")
+        promo_claim_token = None
+        promo_claim_keys = []
+        if discount_mode == "welcome20":
+            if body.get("discount") or body.get("discountCents"):
+                raise HTTPException(400, "WELCOME20 cannot be stacked with a manual discount")
+            if len(rows) != 1 or not rows[0].get("serviceSlug"):
+                raise HTTPException(400, "WELCOME20 requires one eligible treatment service")
+            eligibility = await welcome_invoice_status(client, rows[0]["serviceSlug"])
+            if not eligibility["eligible"]:
+                raise HTTPException(409, eligibility["reason"])
+            from pricing import identity_keys
+            base_cents = sum(row["netCents"] for row in rows)
+            percentage = Decimal(str(eligibility["percentage"]))
+            discount = int((Decimal(base_cents) * percentage / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            if eligibility["maxDiscount"] is not None:
+                discount = min(discount, to_cents(eligibility["maxDiscount"]))
+            discount = min(discount, base_cents)
+            if discount <= 0:
+                raise HTTPException(409, "WELCOME20 does not apply to this service price")
+            promo_claim_keys = identity_keys(client)
+            if not promo_claim_keys:
+                raise HTTPException(409, "Client identity is required for this promotion")
+        else:
+            discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        if discount > sum(row["netCents"] for row in rows):
+            raise HTTPException(400, "Discount cannot exceed eligible service charges")
         if discount:
-            rows.append({"description": str(body.get("discountLabel") or "Discount"), "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
+            rows.append({"description": "WELCOME20 - First booking" if discount_mode == "welcome20" else str(body.get("discountLabel") or "Discount"),
+                         "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
         net = sum(int(row["netCents"]) for row in rows)
+        charge_gst = True if body.get("chargeGst") is None else bool(body.get("chargeGst"))
         gst_rate = Decimal(str((await settings()).get("gst") or 0.05))
-        tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if net > 0 else 0
+        tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if charge_gst and net > 0 else 0
         total = net + tax
         if total < 0:
             raise HTTPException(400, "Invoice total cannot be negative")
+        if not charge_gst:
+            for row in rows:
+                if row.get("taxCode") == "taxable":
+                    row["taxCode"] = "exempt"
         invoice = {
             "id": "inv-" + uuid.uuid4().hex[:12], "number": None, "appointmentId": None, "clientId": client_id,
             "practitionerId": practitioner_id,
@@ -582,7 +673,10 @@ def build_billing_router(db, coll, add_audit, user_from):
             "practitionerName": (practitioner or {}).get("name") or "",
             "service": rows[0]["description"], "duration": rows[0].get("duration"), "serviceDate": service_date,
             "issueDate": None, "dueDate": None, "currency": "CAD", "state": "draft", "version": 1,
-            "origin": "manual", "countsAsRevenue": True, "notes": notes,
+            "origin": "manual", "countsAsRevenue": True, "chargeGst": charge_gst, "notes": notes,
+            "promotionId": "promo-welcome" if discount_mode == "welcome20" else None,
+            "promotionCode": "WELCOME20" if discount_mode == "welcome20" else None,
+            "discountCents": discount,
             "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
             "createdAt": now_iso(), "idempotencyKey": body.get("idempotencyKey"),
         }
@@ -590,8 +684,25 @@ def build_billing_router(db, coll, add_audit, user_from):
             existing = await db.nt_invoices.find_one({"idempotencyKey": body["idempotencyKey"], "origin": "manual"}, {"_id": 0})
             if existing:
                 return await view_for(user, existing)
-        await db.nt_invoices.insert_one(dict(invoice))
-        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}", None)
+        if discount_mode == "welcome20":
+            # Same unique-key claim collection used by the online booking workflow.
+            promo_claim_token = invoice["id"]
+            inserted_keys = []
+            try:
+                for key in promo_claim_keys:
+                    await db.nt_welcome_claims.insert_one({"key": key, "token": promo_claim_token, "at": now_iso()})
+                    inserted_keys.append(key)
+            except DuplicateKeyError:
+                await db.nt_welcome_claims.delete_many({"key": {"$in": inserted_keys}, "token": promo_claim_token})
+                raise HTTPException(409, "WELCOME20 was already reserved or redeemed for this client")
+        try:
+            await db.nt_invoices.insert_one(dict(invoice))
+        except Exception:
+            if promo_claim_token:
+                await db.nt_welcome_claims.delete_many({"token": promo_claim_token})
+            raise
+        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}" +
+                        (" WELCOME20" if discount_mode == "welcome20" else ""), None)
         return await view_for(user, invoice)
 
     @r.post("/invoices/from-appointment/{aid}")
@@ -620,7 +731,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             "service": (service or {}).get("name") or appt.get("serviceSlug"),
             "duration": appt.get("duration"), "serviceDate": appt.get("date"), "issueDate": None, "dueDate": None,
             "currency": "CAD", "state": "draft", "version": 1, "origin": "appointment", "countsAsRevenue": True,
-            "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
+            "chargeGst": tax > 0, "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
             "createdAt": now_iso(), "idempotencyKey": (body or {}).get("idempotencyKey"),
         }
         try:
@@ -863,10 +974,67 @@ def build_billing_router(db, coll, add_audit, user_from):
         await notify_client(saved, f"{method}:" + str(body.get("idempotencyKey")))
         return await view_for(user, saved)
 
+    @r.patch("/invoices/{iid}")
+    async def patch_draft_invoice(iid: str, request: Request):
+        """Edit a draft before issue — notes and whether GST is charged."""
+        user = await actor(request)
+        body = await _body(request) or {}
+        invoice = await load(iid)
+        if not await can_manage_invoice(user, invoice):
+            raise HTTPException(403, "Not permitted to edit this invoice")
+        if invoice["state"] != "draft":
+            raise HTTPException(409, "Only draft invoices can be edited. Void or adjust an issued invoice instead.")
+        updates = {}
+        if "notes" in body:
+            updates["notes"] = str(body.get("notes") or "").strip()[:500]
+        if "chargeGst" in body:
+            charge_gst = bool(body.get("chargeGst"))
+            lines = [dict(row) for row in (invoice.get("lines") or [])]
+            net = sum(int(row.get("netCents") or 0) for row in lines)
+            gst_rate = Decimal(str((await settings()).get("gst") or 0.05))
+            tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if charge_gst and net > 0 else 0
+            for row in lines:
+                code = row.get("taxCode")
+                if charge_gst and code == "exempt":
+                    row["taxCode"] = "taxable"
+                elif not charge_gst and code == "taxable":
+                    row["taxCode"] = "exempt"
+            updates.update({"chargeGst": charge_gst, "taxCents": tax, "totalCents": net + tax, "lines": lines})
+        if not updates:
+            return await view_for(user, invoice)
+        updates["version"] = int(invoice["version"]) + 1
+        saved = await db.nt_invoices.find_one_and_update(
+            {"id": iid, "state": "draft", "version": invoice["version"]},
+            {"$set": updates},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not saved:
+            raise HTTPException(409, "Invoice changed. Refresh and try again.")
+        await add_audit(user.get("name") or "staff", f"Draft invoice {iid} updated", saved.get("appointmentId"))
+        return await view_for(user, {k: v for k, v in saved.items() if k != "_id"})
+
+    @r.delete("/invoices/{iid}")
+    async def discard_draft_invoice(iid: str, request: Request):
+        """Permanently discard a draft created in error. Issued invoices must be voided."""
+        user = await actor(request)
+        if not has_role(user, "owner"):
+            raise HTTPException(403, "Only the owner can discard a draft invoice")
+        invoice = await load(iid)
+        if invoice["state"] != "draft":
+            raise HTTPException(409, "Only draft invoices can be discarded. Void an issued invoice instead.")
+        ledger = await ledger_for(iid)
+        if any(line.get("type") not in ("issue",) and line.get("amountCents") for line in ledger):
+            raise HTTPException(409, "This draft already has ledger activity and cannot be discarded")
+        await db.nt_ledger.delete_many({"invoiceId": iid})
+        await db.nt_invoices.delete_one({"id": iid, "state": "draft"})
+        await release_invoice_welcome(invoice)
+        await add_audit(user.get("name") or "staff", f"Discarded draft invoice {iid}", invoice.get("appointmentId"))
+        return {"ok": True, "id": iid, "discarded": True}
+
     @r.post("/invoices/{iid}/adjustments")
     async def adjust(iid: str, request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_role(user, "owner"):
             raise HTTPException(403, "Only the owner can adjust an invoice")
         body = await _body(request)
         invoice = await load(iid)
@@ -898,7 +1066,7 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.post("/invoices/{iid}/refunds")
     async def refund(iid: str, request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_role(user, "owner"):
             raise HTTPException(403, "Only the owner can refund")
         settings = await coll("settings").find_one({"id": "app"}, {"_id": 0}) or {}
         if settings.get("requireMfaForPrivileged") or settings.get("mfaEnforcePrivileged"):
@@ -961,10 +1129,12 @@ def build_billing_router(db, coll, add_audit, user_from):
     @r.post("/invoices/{iid}/void")
     async def void(iid: str, request: Request):
         user = await actor(request)
-        if user["role"] != "owner":
+        if not has_role(user, "owner"):
             raise HTTPException(403, "Only the owner can void an invoice")
         body = await _body(request)
         invoice = await load(iid)
+        if invoice["state"] == "voided":
+            return await view_for(user, invoice)
 
         def build(current, lines):
             received, _balance, _state, _overdue = project(current, lines)
@@ -973,8 +1143,45 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"type": "void", "method": None, "amountCents": 0, "reference": (body.get("reason") or "void")[:160]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await release_invoice_welcome(invoice)
         await sync_payment_due(saved)
         return await view_for(user, saved)
+
+    @r.post("/invoices/{iid}/waive")
+    async def waive(iid: str, request: Request):
+        """Forgive the outstanding balance with a credit. Prefer void for invoices created in error."""
+        user = await actor(request)
+        if not has_role(user, "owner"):
+            raise HTTPException(403, "Only the owner can waive an invoice")
+        body = await _body(request) or {}
+        invoice = await load(iid)
+        if invoice["state"] in ("draft", "voided"):
+            raise HTTPException(409, "Issue the invoice before waiving it, or discard the draft")
+        reason = (body.get("reason") or "Waived").strip()
+        if len(reason) < 3:
+            raise HTTPException(400, "A reason is required")
+        lines = await ledger_for(iid)
+        _received, balance, _state, _overdue = project(invoice, lines)
+        if balance <= 0:
+            raise HTTPException(409, "Nothing left to waive on this invoice")
+        delta = -balance
+
+        def build(current, ledger_lines):
+            received, bal, _st, _od = project(current, ledger_lines)
+            if bal <= 0:
+                raise HTTPException(409, "Nothing left to waive on this invoice")
+            return {"type": "credit", "method": "adjustment", "amountCents": bal, "reference": reason[:160]}
+
+        saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await db.nt_invoices.update_one(
+            {"id": iid},
+            {"$inc": {"totalCents": delta}, "$push": {"lines": {"description": reason[:120], "quantity": 1, "netCents": delta, "taxCode": "adjustment"}}},
+        )
+        saved = await load(iid)
+        received, balance, state, _overdue = project(saved, await ledger_for(iid))
+        await db.nt_invoices.update_one({"id": iid}, {"$set": {"state": state, "balanceCents": balance, "receivedCents": received}})
+        await sync_payment_due(await load(iid))
+        return await view_for(user, await load(iid))
 
     async def can_claim(user, appt):
         if user["role"] in ("owner",) or allowed(user, appt, "claim"):

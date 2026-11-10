@@ -20,7 +20,8 @@ export function designatedTherapist(practitioners) {
 export function profileVisibility(person) {
   if (!person) return "draft";
   if (["draft", "published", "hidden"].includes(person.profileVisibility)) return person.profileVisibility;
-  if (person.onboardingStatus === "draft" || person.onboardingStatus === "pending") return "draft";
+  if (person.onboardingStatus === "draft" || person.onboardingStatus === "pending" || person.onboardingStatus === "invited") return "draft";
+  if (person.listingEligible === false || person.archivedReason) return "hidden";
   return "published";
 }
 
@@ -209,6 +210,10 @@ export const RECEPTION_PERMS = [
   ['viewLocations', 'View live practitioner locations'], ['viewEta', 'View ETAs'], ['viewAddresses', 'View appointment addresses'],
   ['assign', 'Assign / reassign practitioners'], ['createBooking', 'Create or reschedule bookings'], ['viewInsuranceStatus', 'View insurance verification status'],
   ['viewInsuranceDocs', 'View insurance documents'], ['managePayments', 'Manage payment statuses'], ['viewHistory', 'Access operational history'],
+  ['editClientProfile', 'Edit client contact and preference details'],
+  ['editClientAddresses', 'Add and edit client saved addresses'],
+  ['editClientInsurance', 'Edit client insurance details'],
+  ['correctClientIdentity', 'Correct legal name and date of birth (with verification)'],
   ['clinical', 'Access clinical information (restricted by default)'],
 ];
 
@@ -514,10 +519,26 @@ export function publicBio(bio) {
   return String(bio || "").replace(/\s*\(demo persona\)\s*/gi, " ").replace(/\s+([.,])/g, "$1").replace(/\s+/g, " ").trim();
 }
 
+/** Historical / on-the-spot completed treatments are not advance bookings. */
+export const COMPLETED_TREATMENT_SOURCES = ["historical_manual", "on_the_spot"];
+
+export function isCompletedTreatmentSource(source) {
+  return COMPLETED_TREATMENT_SOURCES.includes(String(source || ""));
+}
+
+export function isAdvanceBooking(visit) {
+  if (!visit) return false;
+  if (visit.countsAsAdvanceBooking === false) return false;
+  if (visit.bookingKind === "completed_treatment_record") return false;
+  if (isCompletedTreatmentSource(visit.source)) return false;
+  return true;
+}
+
 export function bookedByWeek(appointments) {
   const buckets = new Map();
   for (const visit of appointments || []) {
     if (!visit?.date || ["cancelled", "no_show"].includes(visit.status)) continue;
+    // Revenue chart includes historical charges; conversion metrics use isAdvanceBooking separately.
     const [year, month, day] = visit.date.split("-").map(Number);
     if (!year || !month || !day) continue;
     const date = new Date(Date.UTC(year, month - 1, day));

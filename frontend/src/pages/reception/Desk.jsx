@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Headphones, Plus, LogIn, LogOut } from "lucide-react";
+import { ClipboardCheck, Headphones, Plus, LogIn, LogOut } from "lucide-react";
 import { AppointmentSheet } from "@/components/AppointmentSheet";
 import { NewBookingDialog } from "@/components/NewBookingDialog";
+import { RecordCompletedTreatmentDialog } from "@/components/treatments/RecordCompletedTreatmentDialog";
 import { Avatar, StatusPill, PayPill, SectionHead } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { todayISO, addDays, fmtDate, fmtTime, staffActor } from "@/lib/domain";
@@ -12,12 +13,22 @@ export default function Desk() {
   const [day, setDay] = useState(todayISO());
   const [sel, setSel] = useState(null);
   const [nb, setNb] = useState(false);
+  const [recordTreatment, setRecordTreatment] = useState(false);
   const days = Array.from({ length: 7 }, (_, i) => addDays(todayISO(), i - 1));
   const list = state.appointments.filter((a) => a.date === day).sort((a, b) => a.time.localeCompare(b.time));
   const unassigned = state.appointments.filter((a) => a.status === "requested");
   return (
     <div className="space-y-6" data-testid="desk-schedule">
-      <SectionHead eyebrow="Front desk" title="Schedule" action={perm("createBooking") && <button onClick={() => setNb(true)} data-testid="desk-new-booking-btn" className="nb-btn-primary h-10 text-sm"><Plus className="h-4 w-4" />Phone booking</button>} />
+      <SectionHead
+        eyebrow="Front desk"
+        title="Schedule"
+        action={perm("createBooking") && (
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setRecordTreatment(true)} data-testid="desk-record-treatment-btn" className="nb-btn-ghost h-10 text-sm"><ClipboardCheck className="h-4 w-4" />Record completed</button>
+            <button type="button" onClick={() => setNb(true)} data-testid="desk-new-booking-btn" className="nb-btn-primary h-10 text-sm"><Plus className="h-4 w-4" />Phone booking</button>
+          </div>
+        )}
+      />
       <Link to="/desk/team/requests" className="nb-card flex items-center gap-3 p-4 text-sm hover:border-nb-sky" data-testid="desk-team-assist">
         <Headphones className="h-5 w-5 shrink-0 text-nb-blue" />
         <span className="flex-1"><span className="font-semibold">Pending assistance</span><span className="block text-xs text-nb-mute">Team Connect requests and client coordination</span></span>
@@ -41,6 +52,7 @@ export default function Desk() {
       </div>
       {sel && <AppointmentSheet apptId={sel} role="desk" onClose={() => setSel(null)} />}
       {nb && <NewBookingDialog open onClose={() => setNb(false)} />}
+      {recordTreatment && <RecordCompletedTreatmentDialog open onClose={() => setRecordTreatment(false)} />}
     </div>
   );
 }

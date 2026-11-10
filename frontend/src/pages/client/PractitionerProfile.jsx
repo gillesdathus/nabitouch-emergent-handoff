@@ -5,6 +5,13 @@ import { CatalogueImage, Avatar } from "@/components/ui-kit";
 import { useDemo } from "@/store/DemoStore";
 import { practitionerSlug, publicBio, publiclyBookable, profileVisibility } from "@/lib/domain";
 
+function formatCount(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return number.toLocaleString("en-CA");
+}
+
 export default function PractitionerProfile() {
   const { slug } = useParams();
   const { state, idx, patchDraft, user } = useDemo();
@@ -29,6 +36,9 @@ export default function PractitionerProfile() {
   }
   const services = (person.specialties || []).map((item) => idx.services[item]).filter(Boolean);
   const quals = (person.qualifications || []).slice(0, 6);
+  const career = formatCount(person.careerCompletedTreatments ?? person.historicalCompletedTreatments ?? person.historicalTreatmentCount);
+  const offered = formatCount(person.treatmentsOffered ?? services.length) || String(services.length);
+  const years = formatCount(person.yearsOfExperience);
   const book = () => {
     patchDraft({ practitionerId: person.id, step: 0 });
     nav("/book");
@@ -63,10 +73,21 @@ export default function PractitionerProfile() {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2 rounded-3xl bg-white p-3 text-center shadow-sm ring-1 ring-sky-100 sm:p-4">
-        <div><p className="nb-num text-xl font-semibold sm:text-2xl">{services.length}</p><p className="text-[10px] text-nb-mute sm:text-[11px]">Treatments</p></div>
-        <div><p className="nb-num text-xl font-semibold sm:text-2xl">{quals.length || "—"}</p><p className="text-[10px] text-nb-mute sm:text-[11px]">Credentials</p></div>
-        <div><p className="text-sm font-semibold sm:text-base">{publiclyBookable(person) ? "Open" : "Closed"}</p><p className="text-[10px] text-nb-mute sm:text-[11px]">Booking</p></div>
+      <div className={`mt-4 grid gap-2 rounded-3xl bg-white p-3 text-center shadow-sm ring-1 ring-sky-100 sm:p-4 ${years ? "grid-cols-3" : "grid-cols-2"}`}>
+        <div data-testid="profile-career-treatments">
+          <p className="nb-num text-xl font-semibold sm:text-2xl" data-testid="profile-treatment-count">{career || "—"}</p>
+          <p className="text-[10px] text-nb-mute sm:text-[11px]">Career Treatments Completed</p>
+        </div>
+        <div data-testid="profile-treatments-offered">
+          <p className="nb-num text-xl font-semibold sm:text-2xl">{offered}</p>
+          <p className="text-[10px] text-nb-mute sm:text-[11px]">Treatments Offered</p>
+        </div>
+        {years && (
+          <div data-testid="profile-years-experience">
+            <p className="nb-num text-xl font-semibold sm:text-2xl">{years}</p>
+            <p className="text-[10px] text-nb-mute sm:text-[11px]">Years of Experience</p>
+          </div>
+        )}
       </div>
 
       <section className="mt-6">
