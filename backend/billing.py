@@ -527,6 +527,45 @@ def build_billing_router(db, coll, add_audit, user_from):
         await add_audit(user.get("name") or "staff", f"{stored.get('number') or stored['id']} {line['type']} {money_view(line['amountCents'])['display']}", stored.get("appointmentId"))
         return stored
 
+    async def welcome_invoice_status(client, service_slug=""):
+        """Read-only eligibility for a standalone manual invoice; booking and billing share claims."""
+        from pricing import identity_keys, promo_eligible, welcome_history_blocks
+        from offers_visibility import HISTORY_PROJECTION, matched_client_ids
+
+        offer = await db.nt_promotions.find_one({"id": "promo-welcome"}, {"_id": 0})
+        if not offer:
+            return {"eligible": False, "reason": "The first-booking offer is not configured.", "percentage": 0, "maxDiscount": 0}
+        person = {"id": client.get("id"), "email": client.get("email"), "phone": client.get("phone")}
+        ids = await matched_client_ids(db, person)
+        history = await coll("appointments").find(
+            {"clientId": {"$in": ids}}, HISTORY_PROJECTION,
+        ).to_list(500) if ids else []
+        claimed = bool(await db.nt_welcome_claims.find_one(
+            {"key": {"$in": identity_keys(person)}}, {"_id": 1}
+        ))
+        # Manual invoice eligibility does not depend on online-profile completeness.
+        audience = {**person, "_welcomeHistory": history, "_profileComplete": True}
+        available = bool(promo_eligible(offer, audience, service_slug)) and not claimed
+        return {
+            "eligible": available,
+            "reason": ("Available for this client's first eligible treatment." if available else
+                       "WELCOME20 is unavailable, already claimed, or the client has a qualifying booking."),
+            "percentage": float(offer.get("value") or 0),
+            "maxDiscount": offer.get("maxDiscount"),
+            "promotionId": offer["id"],
+            "code": offer.get("code"),
+        }
+
+    @r.get("/invoices/welcome-eligibility")
+    async def invoice_welcome_eligibility(request: Request, clientId: str = "", serviceSlug: str = ""):
+        user = await actor(request)
+        if not (has_role(user, "owner") or await desk_can(user, "managePayments")):
+            raise HTTPException(403, "Not permitted to view invoice promotions")
+        client = await coll("clients").find_one({"id": clientId}, {"_id": 0}) if clientId else None
+        if not client:
+            raise HTTPException(404, "Client not found")
+        return await welcome_invoice_status(client, serviceSlug)
+
     @r.post("/invoices")
     async def create_manual_invoice(request: Request):
         """Standalone invoice. Does not require an appointment and does not imply treatment completion."""
@@ -566,9 +605,38 @@ def build_billing_router(db, coll, add_audit, user_from):
             })
         if not rows:
             raise HTTPException(400, "Add at least one service line")
-        discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        discount_mode = str(body.get("discountMode") or "manual")
+        if discount_mode not in ("manual", "welcome20"):
+            raise HTTPException(400, "Unknown invoice discount mode")
+        promo_claim_token = None
+        promo_claim_keys = []
+        if discount_mode == "welcome20":
+            if body.get("discount") or body.get("discountCents"):
+                raise HTTPException(400, "WELCOME20 cannot be stacked with a manual discount")
+            if len(rows) != 1 or not rows[0].get("serviceSlug"):
+                raise HTTPException(400, "WELCOME20 requires one eligible treatment service")
+            eligibility = await welcome_invoice_status(client, rows[0]["serviceSlug"])
+            if not eligibility["eligible"]:
+                raise HTTPException(409, eligibility["reason"])
+            from pricing import identity_keys
+            base_cents = sum(row["netCents"] for row in rows)
+            percentage = Decimal(str(eligibility["percentage"]))
+            discount = int((Decimal(base_cents) * percentage / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            if eligibility["maxDiscount"] is not None:
+                discount = min(discount, to_cents(eligibility["maxDiscount"]))
+            discount = min(discount, base_cents)
+            if discount <= 0:
+                raise HTTPException(409, "WELCOME20 does not apply to this service price")
+            promo_claim_keys = identity_keys(client)
+            if not promo_claim_keys:
+                raise HTTPException(409, "Client identity is required for this promotion")
+        else:
+            discount = max(0, int(body.get("discountCents") or to_cents(body.get("discount") or 0)))
+        if discount > sum(row["netCents"] for row in rows):
+            raise HTTPException(400, "Discount cannot exceed eligible service charges")
         if discount:
-            rows.append({"description": str(body.get("discountLabel") or "Discount"), "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
+            rows.append({"description": "WELCOME20 - First booking" if discount_mode == "welcome20" else str(body.get("discountLabel") or "Discount"),
+                         "quantity": 1, "netCents": -discount, "taxCode": "taxable"})
         net = sum(int(row["netCents"]) for row in rows)
         gst_rate = Decimal(str((await settings()).get("gst") or 0.05))
         tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) if net > 0 else 0
@@ -583,6 +651,9 @@ def build_billing_router(db, coll, add_audit, user_from):
             "service": rows[0]["description"], "duration": rows[0].get("duration"), "serviceDate": service_date,
             "issueDate": None, "dueDate": None, "currency": "CAD", "state": "draft", "version": 1,
             "origin": "manual", "countsAsRevenue": True, "notes": notes,
+            "promotionId": "promo-welcome" if discount_mode == "welcome20" else None,
+            "promotionCode": "WELCOME20" if discount_mode == "welcome20" else None,
+            "discountCents": discount,
             "lines": rows, "taxCents": tax, "totalCents": total, "expectedInsuranceCents": 0,
             "createdAt": now_iso(), "idempotencyKey": body.get("idempotencyKey"),
         }
@@ -590,8 +661,25 @@ def build_billing_router(db, coll, add_audit, user_from):
             existing = await db.nt_invoices.find_one({"idempotencyKey": body["idempotencyKey"], "origin": "manual"}, {"_id": 0})
             if existing:
                 return await view_for(user, existing)
-        await db.nt_invoices.insert_one(dict(invoice))
-        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}", None)
+        if discount_mode == "welcome20":
+            # Same unique-key claim collection used by the online booking workflow.
+            promo_claim_token = invoice["id"]
+            inserted_keys = []
+            try:
+                for key in promo_claim_keys:
+                    await db.nt_welcome_claims.insert_one({"key": key, "token": promo_claim_token, "at": now_iso()})
+                    inserted_keys.append(key)
+            except DuplicateKeyError:
+                await db.nt_welcome_claims.delete_many({"key": {"$in": inserted_keys}, "token": promo_claim_token})
+                raise HTTPException(409, "WELCOME20 was already reserved or redeemed for this client")
+        try:
+            await db.nt_invoices.insert_one(dict(invoice))
+        except Exception:
+            if promo_claim_token:
+                await db.nt_welcome_claims.delete_many({"token": promo_claim_token})
+            raise
+        await add_audit(user.get("name") or "staff", f"Manual draft invoice {invoice['id']}" +
+                        (" WELCOME20" if discount_mode == "welcome20" else ""), None)
         return await view_for(user, invoice)
 
     @r.post("/invoices/from-appointment/{aid}")
