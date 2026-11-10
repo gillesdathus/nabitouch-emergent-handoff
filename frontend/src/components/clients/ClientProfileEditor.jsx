@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, MapPin, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import { AddressPicker } from "@/components/AddressPicker";
 import { api, apiError } from "@/lib/api";
 import { staffActor } from "@/lib/domain";
@@ -114,6 +115,12 @@ export function ClientProfileEditor({ client, access, onSaved, onClose }) {
     setOk("");
     setSaving(true);
     try {
+      // If the workspace never included addresses (stripped), do not overwrite the book with [].
+      if ("addresses" in patch && client.addresses === undefined) {
+        setErr("Saved addresses are unavailable for your session. Reload the client record before editing addresses.");
+        setSaving(false);
+        return;
+      }
       const body = {
         ...patch,
         _audit: `Administrative profile update for ${client.firstName} ${client.lastName}`,
@@ -122,10 +129,19 @@ export function ClientProfileEditor({ client, access, onSaved, onClose }) {
       if (identityChanged && (patch.firstName != null || patch.lastName != null || patch.dob != null)) {
         body._identityCorrection = { method: identity.method, reason: identity.reason };
       }
-      await run(() => api.patch("clients", client.id, body), "Client profile saved");
+      await run(() => api.patch("clients", client.id, body), null);
+      const workspace = await api.clientWorkspace(client.id);
+      if ("addresses" in patch) {
+        const expectedIds = new Set((patch.addresses || []).map((row) => row.id).filter(Boolean));
+        const saved = workspace?.client?.addresses || [];
+        if (expectedIds.size && !saved.some((row) => expectedIds.has(row.id) || String(row.line || "").trim())) {
+          throw new Error("Address changes did not persist. Reload the client and try again.");
+        }
+      }
       await refresh?.();
       setOk("Saved");
-      onSaved?.(await api.clientWorkspace(client.id));
+      toast.success("Client profile saved");
+      onSaved?.(workspace);
     } catch (error) {
       setErr(apiError(error));
     } finally {
@@ -170,21 +186,26 @@ export function ClientProfileEditor({ client, access, onSaved, onClose }) {
   };
 
   const addAddress = () => {
-    if (!addrPick?.line) return;
+    if (!addrPick?.line || addrPick.clientConfirmed !== true) {
+      setErr("Confirm the service address before adding it to the client record.");
+      return;
+    }
     const row = {
       ...addrPick,
       id: `ad-${Date.now()}`,
       label: addrMeta.label || "Home",
       purpose: addrMeta.purpose || "home",
       unit: addrMeta.unit || addrPick.unit || "",
-      access: addrMeta.access || "",
+      access: addrMeta.access || addrPick.access || "",
       isDefault: form.addresses.length === 0,
-      verificationState: addrPick.verificationState || (addrPick.clientConfirmed ? "verified" : "needs_confirmation"),
+      verificationState: addrPick.verificationState || "verified",
     };
     setForm((prev) => ({ ...prev, addresses: [...prev.addresses, row] }));
     setAddrPick(null);
     setAddrQuery("");
     setAddrMeta({ label: "Home", purpose: "home", unit: "", access: "" });
+    setErr("");
+    setOk("");
   };
 
   const tabs = SECTIONS.filter(([id]) => {
@@ -313,7 +334,7 @@ export function ClientProfileEditor({ client, access, onSaved, onClose }) {
                   <Field label="Unit / apt"><input className="nb-input" value={addrMeta.unit} onChange={(e) => setAddrMeta((x) => ({ ...x, unit: e.target.value }))} data-testid="cpe-unit" /></Field>
                   <Field label="Access instructions"><input className="nb-input" value={addrMeta.access} onChange={(e) => setAddrMeta((x) => ({ ...x, access: e.target.value }))} data-testid="cpe-access" /></Field>
                 </div>
-                <button type="button" disabled={!addrPick?.line} onClick={addAddress} className="nb-btn-ghost h-10 w-full text-sm" data-testid="cpe-add-address">
+                <button type="button" disabled={!addrPick?.line || addrPick.clientConfirmed !== true} onClick={addAddress} className="nb-btn-ghost h-10 w-full text-sm" data-testid="cpe-add-address">
                   <Plus className="h-4 w-4" />Add to saved addresses
                 </button>
                 <p className="text-[11px] text-nb-mute">Removing an address from this book does not erase completed appointment history.</p>

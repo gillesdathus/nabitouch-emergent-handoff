@@ -530,7 +530,7 @@ def build_billing_router(db, coll, add_audit, user_from):
 
     async def welcome_invoice_status(client, service_slug=""):
         """Read-only eligibility for a standalone manual invoice; booking and billing share claims."""
-        from pricing import identity_keys, promo_eligible, welcome_history_blocks
+        from pricing import identity_keys, promo_eligible
         from offers_visibility import HISTORY_PROJECTION, matched_client_ids
 
         offer = await db.nt_promotions.find_one({"id": "promo-welcome"}, {"_id": 0})
@@ -556,6 +556,14 @@ def build_billing_router(db, coll, add_audit, user_from):
             "promotionId": offer["id"],
             "code": offer.get("code"),
         }
+
+    async def release_invoice_welcome(invoice):
+        """Free WELCOME20 identity claims when a draft is discarded or an unpaid invoice is voided."""
+        if not invoice:
+            return
+        if invoice.get("promotionCode") != "WELCOME20" and invoice.get("promotionId") != "promo-welcome":
+            return
+        await db.nt_welcome_claims.delete_many({"token": invoice["id"]})
 
     @r.get("/invoices/welcome-eligibility")
     async def invoice_welcome_eligibility(request: Request, clientId: str = "", serviceSlug: str = ""):
@@ -1019,6 +1027,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             raise HTTPException(409, "This draft already has ledger activity and cannot be discarded")
         await db.nt_ledger.delete_many({"invoiceId": iid})
         await db.nt_invoices.delete_one({"id": iid, "state": "draft"})
+        await release_invoice_welcome(invoice)
         await add_audit(user.get("name") or "staff", f"Discarded draft invoice {iid}", invoice.get("appointmentId"))
         return {"ok": True, "id": iid, "discarded": True}
 
@@ -1134,6 +1143,7 @@ def build_billing_router(db, coll, add_audit, user_from):
             return {"type": "void", "method": None, "amountCents": 0, "reference": (body.get("reason") or "void")[:160]}
 
         saved = await mutate(invoice, user, body.get("idempotencyKey"), build)
+        await release_invoice_welcome(invoice)
         await sync_payment_due(saved)
         return await view_for(user, saved)
 

@@ -9,6 +9,24 @@ const api = {
   })),
   createClient: vi.fn(async (body) => ({ id: "c-new", ...body })),
   book: vi.fn(async () => ({ id: "a-1" })),
+  clientWorkspace: vi.fn(async (id) => ({
+    client: {
+      id,
+      firstName: "Amy",
+      lastName: "Nguyen",
+      phone: "7805550101",
+      addresses: [{
+        id: "ad-amy",
+        line: "10150 104 St NW, Edmonton, AB",
+        clientConfirmed: true,
+        confidence: "address",
+        lat: 53.54,
+        lng: -113.49,
+        mapboxId: "mbx-amy",
+        isDefault: true,
+      }],
+    },
+  })),
 };
 
 const preClient = {
@@ -17,7 +35,15 @@ const preClient = {
   lastName: "Lee",
   phone: "7805550199",
   email: "pat@example.com",
-  addresses: [{ line: "10150 104 St NW", clientConfirmed: true }],
+  addresses: [{
+    id: "ad-pre",
+    line: "10150 104 St NW",
+    clientConfirmed: true,
+    confidence: "address",
+    lat: 53.54,
+    lng: -113.49,
+    mapboxId: "mbx-pre",
+  }],
 };
 
 vi.mock("@/store/DemoStore", () => ({
@@ -99,6 +125,7 @@ beforeEach(() => {
   api.searchClients.mockClear();
   api.createClient.mockClear();
   api.book.mockClear();
+  api.clientWorkspace.mockClear();
   vi.useFakeTimers();
 });
 
@@ -168,4 +195,58 @@ test("mobile-friendly selected card stays compact and no permanent registration 
   expect(q("nb-client-create")).toBeFalsy();
   expect(q("nb-client-input")).toBeFalsy();
   expect(host.textContent).not.toContain("Or create a patient");
+});
+
+test("search selection hydrates saved addresses for mobile booking", async () => {
+  mount();
+  await type("nb-client-input", "Amy");
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  await click("nb-client-hit-c-amy");
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(api.clientWorkspace).toHaveBeenCalledWith("c-amy");
+  await select("nb-location-select", "home");
+  expect(q("nb-address-line")?.textContent).toMatch(/10150 104 St NW/);
+  expect(q("nb-address-unconfirmed")).toBeFalsy();
+});
+
+test("unconfirmed saved address blocks mobile booking", async () => {
+  const unconfirmed = {
+    ...preClient,
+    id: "c-open",
+    addresses: [{ id: "ad-open", line: "10150 104 St NW", clientConfirmed: false }],
+  };
+  // Remount store is fixed; override selected client by mounting with known id after patching idx via hydrate skip.
+  api.clientWorkspace.mockResolvedValueOnce({ client: unconfirmed });
+  mount({ clientId: "c-open" });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await select("nb-location-select", "home");
+  expect(q("nb-address-unconfirmed")?.textContent).toMatch(/not been confirmed|cannot be used|no saved address/i);
+  expect(q("nb-save-btn")?.disabled).toBe(true);
+});
+
+test("mobile booking posts confirmed address id and schema", async () => {
+  mount({ clientId: "c-pre" });
+  await select("nb-location-select", "home");
+  const timeSelect = q("nb-time-select");
+  // Inject a selectable open time into the empty fixture list.
+  await act(async () => {
+    const option = document.createElement("option");
+    option.value = "10:00";
+    option.textContent = "10:00 AM";
+    timeSelect.appendChild(option);
+    timeSelect.value = "10:00";
+    timeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(q("nb-save-btn")?.disabled).toBe(false);
+  await click("nb-save-btn");
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(api.book).toHaveBeenCalled();
+  const payload = api.book.mock.calls[0][0];
+  expect(payload.appointment.addressId).toBe("ad-pre");
+  expect(payload.appointment.address).toEqual(expect.objectContaining({
+    id: "ad-pre",
+    line: "10150 104 St NW",
+    clientConfirmed: true,
+    mapboxId: "mbx-pre",
+  }));
 });

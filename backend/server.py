@@ -92,7 +92,8 @@ from addresses import (
     requires_manual_travel_approval, verification_state_for, MANUAL_APPROVAL_KM,
 )
 from client_admin import (
-    build_staff_client, merge_client_patch, profile_change_audit,
+    build_staff_client, desk_can_read_client_addresses, desk_can_write_client_addresses,
+    merge_client_patch, profile_change_audit,
     RECEPTION_CORRECT_IDENTITY, RECEPTION_EDIT_ADDRESSES, RECEPTION_EDIT_INSURANCE,
     RECEPTION_EDIT_PROFILE,
 )
@@ -589,7 +590,15 @@ async def search_clients(request: Request, q: str = "", limit: int = 20):
     if len(needle) < 2:
         return {"clients": [], "duplicates": []}
     limit = max(1, min(int(limit or 20), 50))
-    rows = await coll("clients").find({}, {"_id": 0, "id": 1, "firstName": 1, "lastName": 1, "email": 1, "phone": 1, "preferredName": 1}).to_list(2000)
+    desk_only = has_role(user, "desk") and not has_role(user, "owner")
+    perms = await reception_perms() if desk_only else {}
+    include_addresses = (not desk_only) or desk_can_read_client_addresses(perms)
+    projection = {
+        "_id": 0, "id": 1, "firstName": 1, "lastName": 1, "email": 1, "phone": 1, "preferredName": 1,
+    }
+    if include_addresses:
+        projection["addresses"] = 1
+    rows = await coll("clients").find({}, projection).to_list(2000)
     hits = []
     for row in rows:
         blob = " ".join(str(row.get(k) or "") for k in ("firstName", "lastName", "preferredName", "email", "phone")).lower()
@@ -629,7 +638,7 @@ async def create_client(request: Request, body: dict = Body(...)):
     client["createdAt"] = now_iso()
     if desk_only:
         # Reception may only attach addresses / insurance when those permissions are granted.
-        if not (perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking")):
+        if not desk_can_write_client_addresses(perms):
             client["addresses"] = []
         if not (perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus")):
             client["insurance"] = []
@@ -680,8 +689,11 @@ async def client_workspace(client_id: str, request: Request):
     appts = [present_trip(a) for a in appts]
     if desk_only:
         appts = [hide_practitioner_home(a) for a in appts]
+        # Appointment stop privacy stays on viewAddresses; the client address book
+        # must remain readable whenever reception can book or edit addresses.
         if not perms.get("viewAddresses"):
             appts = [without_keys(a, {"address"}) for a in appts]
+        if not desk_can_read_client_addresses(perms):
             client = without_keys(client, {"addresses"})
         if not perms.get("viewInsuranceStatus"):
             client = without_keys(client, {"insurance"})
@@ -703,7 +715,7 @@ async def client_workspace(client_id: str, request: Request):
     if has_role(user, "owner") or bool(perms.get("managePayments") or perms.get("viewInsuranceStatus")):
         invoices = await db.nt_invoices.find({"clientId": client_id}, {"_id": 0, "id": 1, "number": 1, "state": 1, "totalCents": 1, "serviceDate": 1, "origin": 1}).sort("serviceDate", -1).to_list(50)
     can_edit_profile = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_PROFILE) or perms.get("createBooking"))
-    can_edit_addresses = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking"))
+    can_edit_addresses = has_role(user, "owner") or desk_can_write_client_addresses(perms)
     can_edit_insurance = has_role(user, "owner") or bool(perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus"))
     can_correct_identity = has_role(user, "owner") or bool(perms.get(RECEPTION_CORRECT_IDENTITY))
     await add_audit(user.get("name") or "staff", f"Opened client record {client.get('firstName', '')} {client.get('lastName', '')}".strip())
@@ -713,7 +725,8 @@ async def client_workspace(client_id: str, request: Request):
                        "insurance": has_role(user, "owner") or bool(perms.get("viewInsuranceStatus")),
                        "editProfile": can_edit_profile, "editAddresses": can_edit_addresses,
                        "editInsurance": can_edit_insurance, "correctIdentity": can_correct_identity,
-                       "viewHistory": has_role(user, "owner") or bool(perms.get("viewHistory"))}}
+                       "viewHistory": has_role(user, "owner") or bool(perms.get("viewHistory")),
+                       "viewAddresses": has_role(user, "owner") or desk_can_read_client_addresses(perms)}}
 
 
 async def _authorize_completed_treatment(request):
@@ -825,7 +838,7 @@ async def record_completed_treatment(request: Request, body: dict = Body(...)):
         if idem:
             client["createIdempotencyKey"] = f"ht:{idem}"
         if desk_only:
-            if not (perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking")):
+            if not desk_can_write_client_addresses(perms):
                 client["addresses"] = []
             if not (perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus")):
                 client["insurance"] = []
@@ -1042,6 +1055,7 @@ async def get_state(request: Request):
         out["appointments"] = [hide_practitioner_home(appt) for appt in out["appointments"]]
         if not perms.get("viewAddresses"):
             out["appointments"] = [without_keys(a, {"address"}) for a in out["appointments"]]
+        if not desk_can_read_client_addresses(perms):
             out["clients"] = [without_keys(c, {"addresses"}) for c in out["clients"]]
         if not perms.get("viewInsuranceStatus"):
             out["clients"] = [without_keys(c, {"insurance"}) for c in out["clients"]]

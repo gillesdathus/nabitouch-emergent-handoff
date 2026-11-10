@@ -46,3 +46,18 @@ def test_identity_claim_keys_cover_client_email_and_phone():
     assert "client:c-first" in keys
     assert "email:first@example.com" in keys
     assert any(key.startswith("phone:") for key in keys)
+
+
+def test_welcome20_tax_applies_after_capped_discount():
+    """GST is calculated on the discounted net, and $40 caps a 20% cut on $250."""
+    offer = launch_welcome_offer()
+    base_cents = 25000
+    discount = int((Decimal(base_cents) * Decimal(str(offer["value"])) / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    discount = min(discount, int(offer["maxDiscount"] * 100))
+    assert discount == 4000
+    net = base_cents - discount
+    gst_rate = Decimal("0.05")
+    tax = int((Decimal(net) * gst_rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    assert tax == 1050
+    assert net + tax == 22050
+

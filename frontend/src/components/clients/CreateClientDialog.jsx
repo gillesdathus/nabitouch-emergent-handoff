@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AddressPicker } from "@/components/AddressPicker";
 import { api, apiError } from "@/lib/api";
@@ -17,6 +18,22 @@ const empty = {
   emergencyContact: "",
 };
 
+function buildAddressPayload(addr, { addrLabel, unit, access }) {
+  if (addr?.clientConfirmed !== true || !String(addr?.line || "").trim()) {
+    return null;
+  }
+  return {
+    ...addr,
+    id: `ad-${Date.now()}`,
+    label: addrLabel,
+    purpose: addrLabel === "Mailing" ? "mailing" : "home",
+    unit: unit || addr.unit || "",
+    access: access || addr.access || "",
+    isDefault: true,
+    verificationState: addr.verificationState || "verified",
+  };
+}
+
 export function CreateClientDialog({ open, onClose, onCreated }) {
   const { refresh } = useDemo();
   const [form, setForm] = useState(empty);
@@ -32,25 +49,37 @@ export function CreateClientDialog({ open, onClose, onCreated }) {
 
   const save = async () => {
     setErr("");
+    const startedAddress = Boolean(addrQuery.trim()) || Boolean(addr?.line);
+    const addressRow = buildAddressPayload(addr, { addrLabel, unit, access });
+    if (startedAddress && !addressRow) {
+      setErr("Confirm the service address before saving, or clear the address search.");
+      return;
+    }
     setSaving(true);
     try {
-      const addresses = addr?.line
-        ? [{
-            ...addr,
-            id: `ad-${Date.now()}`,
-            label: addrLabel,
-            purpose: addrLabel === "Mailing" ? "mailing" : "home",
-            unit,
-            access,
-            isDefault: true,
-          }]
-        : [];
+      const addresses = addressRow ? [addressRow] : [];
       const created = await api.createClient({ ...form, addresses });
+      if (addresses.length) {
+        const persisted = (created?.addresses || []).find((row) => String(row.line || "").trim());
+        if (!persisted) {
+          throw new Error("Client was created but the address did not persist. Open the profile and add it again.");
+        }
+        // Confirm the detail API returns the same saved address before success UI.
+        const workspace = await api.clientWorkspace(created.id);
+        const reloaded = (workspace?.client?.addresses || []).find((row) => row.id === persisted.id)
+          || (workspace?.client?.addresses || []).find((row) => String(row.line || "").trim());
+        if (!reloaded?.line) {
+          throw new Error("Address save could not be confirmed. Open the client profile and verify before booking.");
+        }
+      }
       await refresh?.();
+      toast.success(addresses.length ? "Client created with saved address" : "Client created");
       onCreated?.(created);
       setForm(empty);
       setAddr(null);
       setAddrQuery("");
+      setUnit("");
+      setAccess("");
       onClose?.();
     } catch (error) {
       setErr(apiError(error));

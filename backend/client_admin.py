@@ -194,6 +194,25 @@ def dedupe_insurance(rows):
     return out
 
 
+def desk_can_read_client_addresses(perms):
+    """True when reception may see saved client addresses for booking / profile work.
+
+    Matches the write allowlist for addresses. Appointment-stop privacy still uses
+    viewAddresses separately — this only covers the client's address book.
+    """
+    perms = perms or {}
+    return bool(
+        perms.get(RECEPTION_EDIT_ADDRESSES)
+        or perms.get("viewAddresses")
+        or perms.get("createBooking")
+    )
+
+
+def desk_can_write_client_addresses(perms):
+    """True when reception may attach or edit saved client addresses."""
+    return desk_can_read_client_addresses(perms)
+
+
 def staff_allowed_fields(role, perms, payload_keys):
     """Return the subset of payload keys this staff member may change."""
     keys = set(payload_keys)
@@ -204,7 +223,7 @@ def staff_allowed_fields(role, perms, payload_keys):
     allowed = set()
     if perms.get(RECEPTION_EDIT_PROFILE) or perms.get("createBooking"):
         allowed |= CONTACT_FIELDS
-    if perms.get(RECEPTION_EDIT_ADDRESSES) or perms.get("viewAddresses") or perms.get("createBooking"):
+    if desk_can_write_client_addresses(perms):
         allowed |= ADDRESS_FIELDS
     if perms.get(RECEPTION_EDIT_INSURANCE) or perms.get("viewInsuranceStatus"):
         allowed |= INSURANCE_FIELDS

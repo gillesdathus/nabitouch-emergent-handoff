@@ -85,7 +85,10 @@ jobs:
       - name: Frozen dependency installation
         run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
       - name: Vitest
-        run: yarn test
+        env:
+          # Full suite previously OOM'd the default ~2GB Node heap on ubuntu-24.04.
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: yarn test --pool=forks --maxWorkers=2
       - name: Build with safe example origin
         env:
           REACT_APP_BACKEND_URL: https://example.com

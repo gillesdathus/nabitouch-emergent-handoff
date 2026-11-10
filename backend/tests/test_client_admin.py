@@ -17,6 +17,8 @@ from addresses import (
 from client_admin import (
     build_staff_client,
     dedupe_insurance,
+    desk_can_read_client_addresses,
+    desk_can_write_client_addresses,
     merge_client_patch,
     normalize_addresses,
     staff_allowed_fields,
@@ -95,6 +97,13 @@ def test_staff_permissions_desk_vs_owner():
     assert "firstName" not in desk
     with_id = staff_allowed_fields("desk", {"correctClientIdentity": True}, keys)
     assert "firstName" in with_id
+    with_booking = staff_allowed_fields("desk", {"createBooking": True}, keys)
+    assert "addresses" in with_booking
+    assert desk_can_read_client_addresses({"createBooking": True}) is True
+    assert desk_can_write_client_addresses({"createBooking": True}) is True
+    assert desk_can_read_client_addresses({"viewAddresses": False}) is False
+    assert desk_can_read_client_addresses({"viewAddresses": True}) is True
+    assert desk_can_read_client_addresses({"editClientAddresses": True, "viewAddresses": False}) is True
 
 
 def test_build_staff_client_without_email():
@@ -107,6 +116,62 @@ def test_build_staff_client_without_email():
     assert client["firstName"] == "Ada"
     assert "Range Road 215" in client["addresses"][0]["line"]
     assert client["hasProfile"] is False
+
+
+def test_create_and_edit_address_round_trip_preserves_confirmation():
+    """Confirmed civic addresses survive create + partial profile edits."""
+    created = build_staff_client(
+        {
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "phone": "780-555-0100",
+            "addresses": [{
+                "id": "ad-home",
+                "line": "10150 104 St NW, Edmonton, AB T5J 2R4",
+                "label": "Home",
+                "purpose": "home",
+                "lat": 53.54,
+                "lng": -113.49,
+                "postal": "T5J 2R4",
+                "mapboxId": "mbx-downtown",
+                "clientConfirmed": True,
+                "confidence": "address",
+                "isDefault": True,
+            }],
+        },
+        user={"id": "u-owner"},
+    )
+    assert len(created["addresses"]) == 1
+    assert created["addresses"][0]["clientConfirmed"] is True
+    assert created["addresses"][0]["mapboxId"] == "mbx-downtown"
+    assert created["addresses"][0]["line"]
+
+    doc, _, changed = merge_client_patch(
+        created,
+        {"phone": "780-555-9999", "preferredName": "Ada"},
+        role="owner",
+        perms={},
+    )
+    assert "addresses" not in doc
+    assert "phone" in changed
+
+    edited, _, addr_changed = merge_client_patch(
+        created,
+        {
+            "addresses": [{
+                **created["addresses"][0],
+                "unit": "12",
+                "access": "Buzz 4",
+            }],
+        },
+        role="desk",
+        perms={"createBooking": True},
+    )
+    assert addr_changed == ["addresses"]
+    assert edited["addresses"][0]["clientConfirmed"] is True
+    assert edited["addresses"][0]["unit"] == "12"
+    assert edited["addresses"][0]["mapboxId"] == "mbx-downtown"
+    assert edited["addresses"][0]["lat"] == 53.54
 
 
 def test_identity_correction_requires_verification():

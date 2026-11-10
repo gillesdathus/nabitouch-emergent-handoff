@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ClientSelector } from "@/components/clients/ClientSelector";
 import { useDemo } from "@/store/DemoStore";
 import { quote, todayISO, money, slotsFor, fmtTime, staffActor, designatedTherapist, CANONICAL_PRACTITIONER_ID, CANONICAL_PRACTITIONER_NAME } from "@/lib/domain";
+import { preferredBookingAddress } from "@/lib/booking-selection";
 import { BOOKING_SOURCES } from "@/lib/workspaces";
 import { apiError } from "@/lib/api";
 
@@ -28,6 +29,36 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
   const [f, setF] = useState(() => bookingDefaults({ clientId, firstService, therapistId, defaultSource }));
   const [selectedClient, setSelectedClient] = useState(null);
   const [err, setErr] = useState("");
+  const [hydrating, setHydrating] = useState(false);
+
+  const hydrateClient = async (row) => {
+    if (!row?.id) {
+      setSelectedClient(null);
+      return null;
+    }
+    // Search hits historically omitted addresses. Load the workspace book when missing.
+    if (Array.isArray(row.addresses)) {
+      setSelectedClient(row);
+      return row;
+    }
+    setHydrating(true);
+    try {
+      const workspace = await api.clientWorkspace(row.id);
+      const merged = {
+        ...row,
+        ...(workspace?.client || {}),
+        addresses: workspace?.client?.addresses || [],
+      };
+      setSelectedClient(merged);
+      return merged;
+    } catch (error) {
+      setSelectedClient(row);
+      setErr(apiError(error) || "Could not load the client's saved addresses.");
+      return row;
+    } finally {
+      setHydrating(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -35,8 +66,8 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
     setF(next);
     setErr("");
     if (clientId) {
-      const known = idx.clients?.[clientId] || (state.clients || []).find((row) => row.id === clientId) || null;
-      setSelectedClient(known);
+      const known = idx.clients?.[clientId] || (state.clients || []).find((row) => row.id === clientId) || { id: clientId };
+      hydrateClient(known);
     } else {
       setSelectedClient(null);
     }
@@ -47,24 +78,50 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value, ...(k !== "time" ? { time: "" } : {}) }));
   const s = idx.services[f.serviceSlug];
   const c = selectedClient || idx.clients[f.clientId] || (state.clients || []).find((row) => row.id === f.clientId);
-  const addr = c?.addresses?.find((item) => item.clientConfirmed === true) || c?.addresses?.[0];
-  const addressReady = f.locationType === "clinic" || addr?.clientConfirmed === true;
+  const addr = preferredBookingAddress(c);
+  const addressReady = f.locationType === "clinic" || (addr?.clientConfirmed === true && String(addr?.line || "").trim());
   const zone = (state.zones || []).find((z) => z.id === addr?.zoneId);
   const q = quote({ service: s, duration: f.duration, zone, client: c, promotions: [], settings: idx.settings, locationType: f.locationType });
   const slots = slotsFor(f.date, therapistId, state.appointments, f.duration).filter((x) => x.available);
 
-  const onClientChange = (row) => {
+  const onClientChange = async (row) => {
     // Changing clients must not wipe service / date / practitioner / other booking fields.
-    setSelectedClient(row);
-    setF((x) => ({ ...x, clientId: row?.id || "" }));
     setErr("");
+    setF((x) => ({ ...x, clientId: row?.id || "" }));
+    if (!row) {
+      setSelectedClient(null);
+      return;
+    }
+    await hydrateClient(row);
   };
 
   const save = async () => {
     setErr("");
+    if (f.locationType === "home" && !addressReady) {
+      setErr("This saved address cannot be used for a mobile visit until it is confirmed.");
+      return;
+    }
     const appointment = {
       serviceSlug: f.serviceSlug, duration: Number(f.duration), date: f.date, time: f.time, locationType: f.locationType,
-      address: f.locationType === "clinic" ? { line: idx.settings?.clinic?.address || "Clinic" } : { ...addr, notes: "" },
+      address: f.locationType === "clinic"
+        ? { line: idx.settings?.clinic?.address || "Clinic" }
+        : {
+            id: addr.id,
+            line: addr.line,
+            unit: addr.unit || "",
+            access: addr.access || "",
+            notes: "",
+            postal: addr.postal || "",
+            lat: addr.lat,
+            lng: addr.lng,
+            zoneId: addr.zoneId,
+            mapboxId: addr.mapboxId || "",
+            clientConfirmed: true,
+            confidence: addr.confidence || "address",
+            label: addr.label,
+            purpose: addr.purpose,
+          },
+      addressId: f.locationType === "clinic" ? undefined : addr?.id,
       pricing: q, paymentMethod: "self", insuranceId: null,
       preferences: { goals: [], focus: [], notes: `Booked by staff (${f.source}). Notes do not change the purchased service.` },
       checkedIn: f.source === "walk_in", feedback: null,
@@ -79,6 +136,13 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
       setErr(apiError(error));
     }
   };
+
+  const missingAddress = f.locationType === "home" && !addressReady;
+  const addressHint = missingAddress
+    ? (Array.isArray(c?.addresses) && c.addresses.length === 0
+      ? "This client has no saved address for a mobile visit."
+      : "This saved address has not been confirmed for a mobile visit.")
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -110,10 +174,13 @@ export function NewBookingDialog({ open, onClose, clientId, defaultSource = "pho
           <label><span className="nb-label">Date</span><input type="date" className="nb-input" value={f.date} onChange={set("date")} data-testid="nb-date-input" /></label>
           <label className="sm:col-span-2"><span className="nb-label">Time</span><select className="nb-input" value={f.time} onChange={set("time")} data-testid="nb-time-select"><option value="">Select an open time…</option>{slots.map((x) => <option key={x.time} value={x.time}>{fmtTime(x.time)}</option>)}</select></label>
         </div>
-        <p className="text-xs text-nb-mute">Address: {f.locationType === "clinic" ? (idx.settings?.clinic?.address || "Clinic") : (addr?.line || "—")} · Total {money(q.total)} (incl. travel & GST).</p>
-        {f.locationType === "home" && !addressReady && <p data-testid="nb-address-unconfirmed" className="text-sm text-amber-800">This saved address has not been confirmed for a mobile visit.</p>}
+        <p className="text-xs text-nb-mute" data-testid="nb-address-line">
+          Address: {f.locationType === "clinic" ? (idx.settings?.clinic?.address || "Clinic") : (hydrating ? "Loading…" : (addr?.line || "—"))}
+          {" · "}Total {money(q.total)} (incl. travel & GST).
+        </p>
+        {addressHint && <p data-testid="nb-address-unconfirmed" className="text-sm text-amber-800">{addressHint}</p>}
         {err && <p className="text-sm text-rose-700" data-testid="nb-error">{err}</p>}
-        <button disabled={!f.time || !f.clientId || !addressReady} onClick={save} data-testid="nb-save-btn" className="nb-btn-primary w-full">Create booking</button>
+        <button disabled={!f.time || !f.clientId || !addressReady || hydrating} onClick={save} data-testid="nb-save-btn" className="nb-btn-primary w-full">Create booking</button>
       </DialogContent>
     </Dialog>
   );
