@@ -578,6 +578,15 @@ def build_billing_router(db, coll, add_audit, user_from):
         client = await coll("clients").find_one({"id": client_id}, {"_id": 0}) if client_id else None
         if not client:
             raise HTTPException(400, "Choose a patient for this invoice")
+        # Return existing drafts before eligibility revalidation: safe retry after reservation.
+        request_key = body.get("idempotencyKey")
+        if request_key:
+            prior = await db.nt_invoices.find_one(
+                {"idempotencyKey": request_key, "origin": "manual"}, {"_id": 0})
+            if prior:
+                if prior.get("clientId") != client_id:
+                    raise HTTPException(409, "Invoice request key belongs to another client")
+                return await view_for(user, prior)
         practitioner_id = str(body.get("practitionerId") or "").strip() or None
         practitioner = await coll("practitioners").find_one({"id": practitioner_id}, {"_id": 0}) if practitioner_id else None
         service_date = str(body.get("serviceDate") or now().date().isoformat())
