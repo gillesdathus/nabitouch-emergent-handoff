@@ -69,7 +69,12 @@ jobs:
         run: docker compose -f deploy/qa/compose.yml down -v
   frontend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shard the suite so a single Vitest worker cannot accumulate past the runner heap.
+        shard: [1, 2]
     defaults:
       run:
         working-directory: frontend
@@ -84,16 +89,18 @@ jobs:
         run: npm install --global yarn@1.22.22 --ignore-scripts
       - name: Frozen dependency installation
         run: yarn install --frozen-lockfile --ignore-scripts --non-interactive
-      - name: Vitest
+      - name: Vitest shard ${{ matrix.shard }}/2
         env:
-          # Full suite previously OOM'd the default ~2GB Node heap on ubuntu-24.04.
+          # Full suite previously OOM'd even at 6GB when run as one process.
           NODE_OPTIONS: --max-old-space-size=6144
-        run: yarn test --pool=forks --maxWorkers=2
+        run: yarn test --pool=forks --maxWorkers=1 --shard=${{ matrix.shard }}/2
       - name: Build with safe example origin
+        if: matrix.shard == 1
         env:
           REACT_APP_BACKEND_URL: https://example.com
         run: yarn build
       - name: Dependency vulnerability review
+        if: matrix.shard == 1
         shell: bash
         run: |
           mkdir -p ../test_reports
@@ -104,7 +111,7 @@ jobs:
           if [ "$audit_status" -gt 31 ]; then exit "$audit_status"; fi
           node ../scripts/check_frontend_audit.cjs ../test_reports/frontend-audit.jsonl
       - name: Upload dependency audit only
-        if: always()
+        if: always() && matrix.shard == 1
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: frontend-dependency-audit
